@@ -1,0 +1,66 @@
+settings:
+  seed: 0
+
+data:
+  # --- shapes ---
+  state_dim: 2         # [θ, θ_dot]
+  action_dim: 1        # torque T
+
+  # --- domains ---
+  initial_set:         # [[θ_lo, θ_hi], [θdot_lo, θdot_hi]]
+    - [0.3, 1.7]       # larger than [1.0, 1.175]
+    - [-0.8, 0.8]      # larger than [0.0, 0.2]
+  action_range: 
+    - [-2.0, 2.0]
+
+  # --- physics ---
+  m: 0.5
+  L: 0.5
+  c: 0.0
+  g: 1.0
+
+  # --- integration ---
+  ode_step_size: 0.01          # internal ODE step (for sub-stepping)
+  control_step_size: 0.05      # outer step between (x,u) and x_next
+
+  # --- episodes / dataset ---
+  episode_length: 30
+  num_episodes: 2000
+  normalize: false
+
+  # --- saving ---
+  out_path: "output/data/single_pendulum.npz"
+  save_trajectories: true      # also save per-episode rollouts (optional)
+
+train:
+  out_dir: "output/runs/pendulum"
+  # ----- data split -----
+  train_valid_ratio: 0.9
+
+  # ----- model (MLPDynamics) -----
+  activation: "relu"            # {"relu","tanh"}
+  architecture: [128, 256, 256, 128]
+  n_history: 1                  # must be 1 (assumed in code)
+  n_rollout: 6                  # train horizon
+  n_rollout_valid: 6            # validation horizon
+
+  # ----- loss weighting -----
+  step_weight_ub: 2             # linear per-step weights in [1, ub]
+
+  # ----- augmentation -----
+  noise: 0.003                  # Gaussian std added to X and U during training
+
+  # ----- optimization -----
+  lr: 0.001
+  lr_params:
+    adam_beta1: 0.9
+  lr_scheduler:
+    type: "CosineAnnealingLR"
+    enabled: false               # if false -> constant LR
+
+  # ----- loop -----
+  n_epoch: 6
+  batch_size: 256
+
+  # ----- regularization -----
+  lam_l1_reg: 0.0               # L1 on all trainable params
