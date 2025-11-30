@@ -12,6 +12,8 @@ from models.dynamics import MLPDynamics
 from data.dataloader import build_loaders_from_npz
 from training.trainer import Trainer
 
+from utils.logging import PrintLogger, WandbLogger
+
 
 def _save_ckpt(path_base: str, model, opt_state, step: int, cfg: dict, stats: dict):
     os.makedirs(os.path.dirname(path_base) or ".", exist_ok=True)
@@ -52,6 +54,15 @@ if __name__ == "__main__":
              jnp.asarray(stats["u_mean"]), jnp.asarray(stats["u_std"]))
         )
 
+    # >>> NEW: choose logger based on config (basic WandB support)
+    
+    if bool(cfg["train"]["wandb"]["enabled"]):
+        logger = WandbLogger(
+            config=cfg,
+        )
+    else:
+        logger = PrintLogger()
+
     # trainer
     trainer = Trainer(
         model=model,
@@ -60,6 +71,7 @@ if __name__ == "__main__":
         save_fn=_save_ckpt,
         cfg_full=cfg,
         stats=stats,
+        logger=logger,
     )
 
     trainer.run()

@@ -64,3 +64,12 @@ train:
 
   # ----- regularization -----
   lam_l1_reg: 0.0               # L1 on all trainable params
+
+  # ----- wandb logging -----
+  wandb:
+    enabled: true
+    project: "single_pendulum"
+    run_name: "test"
+    mode: "online"               # {"online","offline","disabled"}
+    log_every: 10                # log every N training iterations
+    save_checkpoints: true       # save model checkpoints to wandb  

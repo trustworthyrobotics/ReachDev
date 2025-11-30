@@ -11,6 +11,7 @@ import numpy as np
 
 from training.losses_metrics import combined_loss, make_linear_step_weights
 
+from utils.logging import Logger
 
 def _noise_aug(X: jnp.ndarray, U: jnp.ndarray, std: float, key: jax.Array):
     if std <= 0:
@@ -19,22 +20,16 @@ def _noise_aug(X: jnp.ndarray, U: jnp.ndarray, std: float, key: jax.Array):
     return (X + std * jax.random.normal(k1, X.shape, X.dtype),
             U + std * jax.random.normal(k2, U.shape, U.dtype))
 
-
 def _l1_regularizer(params, lam: float):
     if lam <= 0:
         return 0.0
     leaves = jax.tree_leaves(eqx.filter(params, eqx.is_inexact_array))
     return lam * sum(jnp.sum(jnp.abs(p)) for p in leaves)
 
-
 class Trainer:
     """
     Owns: model, optimizer/scheduler, train/eval steps, loop, checkpoints.
-
-    Externally you provide:
-      - model (Equinox Module)
-      - loaders: objects with .epoch() yielding (X,U,_) batches
-      - stats (for saving), cfg dicts, and an out_dir + save_fn
+    Optional: logs via `logger` (WandB or print), without changing core logic.
     """
 
     def __init__(
@@ -47,6 +42,7 @@ class Trainer:
         cfg_full: Dict,
         stats: Optional[Dict] = None,
         seed: int = 0,
+        logger: Optional[Logger] = None,
     ):
         self.model = model
         self.train_loader = train_loader
@@ -57,6 +53,14 @@ class Trainer:
         self.cfg_full = cfg_full
         self.stats = stats or {}
         self.key = jax.random.PRNGKey(seed)
+
+        # >>> NEW: logger handling (PrintLogger or WandbLogger)
+        self.logger = logger
+        self._wandb_cfg = self.cfg["wandb"]
+        self._log_every = int(self._wandb_cfg["log_every"])
+        assert self._log_every > 0
+        self._save_ckpts_to_wandb = bool(self._wandb_cfg["save_checkpoints"])
+        self._wandb_enabled = bool(self._wandb_cfg["enabled"]) and (self.logger is not None)
 
         # scheduler
         steps_per_epoch = len(self.train_loader)
@@ -113,17 +117,33 @@ class Trainer:
         self._train_step = train_step
         self._eval_step = eval_step
 
+    def _current_lr(self) -> float:
+        try:
+            v = self.lr_schedule(self.global_step)
+            return float(np.asarray(v))
+        except Exception:
+            return float(self.cfg["lr"])
+
     # -------------- public loop --------------
 
     def run(self):
         for epoch in range(1, self.cfg["n_epoch"] + 1):
             # ---- train ----
             train_losses = []
-            for X, U, _ in self.train_loader.epoch():
+            for it, (X, U, _) in enumerate(self.train_loader.epoch()):
                 self.key, subk = jax.random.split(self.key)
                 self.model, self.opt_state, loss, _ = self._train_step(self.model, self.opt_state, X, U, subk)
                 train_losses.append(float(loss))
                 self.global_step += 1
+
+                # >>> NEW: optional lightweight per-iter WandB logging
+                if self._wandb_enabled and (self.global_step % self._log_every == 0):
+                    self.logger.log(
+                        {"train/iter_loss": float(loss), "lr": self._current_lr(),
+                         "epoch": epoch, "global_step": self.global_step},
+                        step=self.global_step
+                    )
+
             tr_loss = float(np.mean(train_losses)) if train_losses else float("nan")
 
             # ---- validate ----
@@ -133,11 +153,32 @@ class Trainer:
                 val_losses.append(float(vloss))
             va_loss = float(np.mean(val_losses)) if val_losses else float("nan")
 
-            print(f"[Epoch {epoch:03d}] train_loss={tr_loss:.6f}  val_loss={va_loss:.6f}")
+            # >>> NEW: epoch-level WandB logging
+            if self._wandb_enabled:
+                self.logger.log(
+                    {"train/loss": tr_loss, "val/loss": va_loss,
+                     "lr": self._current_lr(), "epoch": epoch,
+                     "global_step": self.global_step},
+                    step=self.global_step
+                )
 
             # ---- ckpt ----
             if va_loss < self.best_val:
                 self.best_val = va_loss
-                self.save_fn(f"{self.out_dir}/best_model", self.model, self.opt_state, self.global_step, self.cfg_full, self.stats)
+                path_base = f"{self.out_dir}/best_model"
+                self.save_fn(path_base, self.model, self.opt_state, self.global_step, self.cfg_full, self.stats)
+                # >>> NEW: upload to WandB if enabled
+                if self._wandb_enabled and self._save_ckpts_to_wandb:
+                    self.logger.save(path_base + ".eqx")
+                    self.logger.save(path_base + ".npz")
+
             if epoch == self.cfg["n_epoch"]:
-                self.save_fn(f"{self.out_dir}/last_model", self.model, self.opt_state, self.global_step, self.cfg_full, self.stats)
+                path_base = f"{self.out_dir}/last_model"
+                self.save_fn(path_base, self.model, self.opt_state, self.global_step, self.cfg_full, self.stats)
+                if self._wandb_enabled and self._save_ckpts_to_wandb:
+                    self.logger.save(path_base + ".eqx")
+                    self.logger.save(path_base + ".npz")
+
+        # >>> NEW: close WandB run (safe no-op for PrintLogger)
+        if self.logger is not None:
+            self.logger.finish()
