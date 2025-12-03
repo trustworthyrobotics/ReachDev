@@ -130,14 +130,16 @@ class Trainer:
         for epoch in range(1, self.cfg["n_epoch"] + 1):
             # ---- train ----
             train_losses = []
-            for it, (X, U, _) in enumerate(self.train_loader.epoch()):
+            for it, batch in enumerate(self.train_loader):
+                X = batch["observations"]
+                U = batch["actions"]
+                W = batch["weights"] # unused currently
                 self.key, subk = jax.random.split(self.key)
                 self.model, self.opt_state, loss, _ = self._train_step(self.model, self.opt_state, X, U, subk)
                 train_losses.append(float(loss))
                 self.global_step += 1
 
-                # >>> NEW: optional lightweight per-iter WandB logging
-                if self._wandb_enabled and (self.global_step % self._log_every == 0):
+                if (self.global_step % self._log_every == 0):
                     self.logger.log(
                         {"train/iter_loss": float(loss), "lr": self._current_lr(),
                          "epoch": epoch, "global_step": self.global_step},
@@ -148,26 +150,27 @@ class Trainer:
 
             # ---- validate ----
             val_losses = []
-            for Xv, Uv, _ in self.val_loader.epoch():
+            for val_batch in self.val_loader:
+                Xv = val_batch["observations"]
+                Uv = val_batch["actions"]
+                Wv = val_batch["weights"] # unused currently
                 vloss, _ = self._eval_step(self.model, Xv, Uv, self.T_valid)
                 val_losses.append(float(vloss))
             va_loss = float(np.mean(val_losses)) if val_losses else float("nan")
 
-            # >>> NEW: epoch-level WandB logging
-            if self._wandb_enabled:
-                self.logger.log(
-                    {"train/loss": tr_loss, "val/loss": va_loss,
-                     "lr": self._current_lr(), "epoch": epoch,
-                     "global_step": self.global_step},
-                    step=self.global_step
-                )
+            self.logger.log(
+                {"train/loss": tr_loss, "val/loss": va_loss,
+                    "lr": self._current_lr(), "epoch": epoch,
+                    "global_step": self.global_step},
+                step=self.global_step
+            )
 
             # ---- ckpt ----
             if va_loss < self.best_val:
                 self.best_val = va_loss
                 path_base = f"{self.out_dir}/best_model"
                 self.save_fn(path_base, self.model, self.opt_state, self.global_step, self.cfg_full, self.stats)
-                # >>> NEW: upload to WandB if enabled
+
                 if self._wandb_enabled and self._save_ckpts_to_wandb:
                     self.logger.save(path_base + ".eqx")
                     self.logger.save(path_base + ".npz")
@@ -179,6 +182,5 @@ class Trainer:
                     self.logger.save(path_base + ".eqx")
                     self.logger.save(path_base + ".npz")
 
-        # >>> NEW: close WandB run (safe no-op for PrintLogger)
         if self.logger is not None:
             self.logger.finish()

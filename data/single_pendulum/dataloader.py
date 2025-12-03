@@ -110,12 +110,12 @@ class TrajectoryDataLoader:
             return self.N // self.B
         return (self.N + self.B - 1) // self.B
 
-    def epoch(self) -> Iterator[Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
+    def __iter__(self) -> Iterator[Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
         """
         Iterate once over all windows.
 
         Yields:
-          X: (B, 1, Dx), U: (B, T, Du), Y: (B, T, Dx).
+          X: (B, T+1, Dx), U: (B, T, Du), Y: (B, T, Dx). Y = X[:,1:].
         """
         key = self.key
         if self.shuffle:
@@ -130,10 +130,14 @@ class TrajectoryDataLoader:
                 break
             batch = self._gather(idx)
             X, U = batch
-            Y = X[:, 1:, :]  # next states
+            # Y = X[:, 1:, :]  # next states
             # X = X[:, 0:1, :]  # initial states
+            data_dict = {"observations": X, 
+                         "actions": U, 
+                         "weights": jnp.ones((X.shape[0], self.T)), 
+                        }
 
-            yield X, U, Y
+            yield data_dict
 
         self.key = key  # persist PRNG
 
@@ -177,24 +181,21 @@ def load_npz_as_dataset(npz_path: str) -> TrajectoryDataset:
     return TrajectoryDataset(X_traj=X_traj, U_traj=U_traj, stats=None)
 
 
-def build_loaders_from_npz(
-    npz_path: str,
-    seq_len: int,
-    batch_size: int,
-    train_ratio: float = 0.9,
-    *,
-    normalize: bool = True,
-    seed: int = 0,
+def build_loaders(
+    config: dict,
 ) -> Tuple[TrajectoryDataLoader, TrajectoryDataLoader, Dict[str, np.ndarray]]:
     """
     High-level helper: load -> split -> (optional) normalize -> build loaders.
     Returns (train_loader, val_loader, stats_dict).
     """
-    full = load_npz_as_dataset(npz_path)
-    train_ds, val_ds = full.split_episodes(train_ratio=train_ratio, seed=seed)
+    full = load_npz_as_dataset(config["data"]["out_path"])
+    seed = int(config["settings"]["seed"])
+    seq_len = int(config["train"]["n_rollout"])
+    batch_size = int(config["train"]["batch_size"])
+    train_ds, val_ds = full.split_episodes(train_ratio=config["train"]["train_valid_ratio"], seed=seed)
 
     stats = None
-    if normalize:
+    if config["data"]["normalize"]:
         stats = train_ds.fit_standardizer()
         train_ds = train_ds.apply_standardizer(stats)
         val_ds = val_ds.apply_standardizer(stats)
@@ -209,10 +210,12 @@ def build_loaders_from_npz(
 # -------- example usage --------
 if __name__ == "__main__":
     path = "output/data/single_pendulum.npz"
-    tr_loader, va_loader, stats = build_loaders_from_npz(
+    tr_loader, va_loader, stats = build_loaders(
         path, seq_len=10, batch_size=128, train_ratio=0.9, normalize=True, seed=0
     )
     print("Train iters per epoch:", len(tr_loader))
-    for X, U, Y in tr_loader.epoch():
-        print("Batch shapes:", X.shape, U.shape, Y.shape)
+    for batch in tr_loader:
+        X = batch["observations"]
+        U = batch["actions"]
+        print("Batch shapes:", X.shape, U.shape)
         break

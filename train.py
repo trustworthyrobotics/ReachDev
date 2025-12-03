@@ -9,7 +9,6 @@ import equinox as eqx
 import numpy as np
 
 from models.dynamics import MLPDynamics
-from data.dataloader import build_loaders_from_npz
 from training.trainer import Trainer
 
 from utils.logging import PrintLogger, WandbLogger
@@ -34,28 +33,18 @@ if __name__ == "__main__":
 
     os.makedirs(tr_cfg["out_dir"], exist_ok=True)
     # loaders
-    train_loader, val_loader, stats = build_loaders_from_npz(
-        npz_path=data_cfg["out_path"],
-        seq_len=tr_cfg["n_rollout"],
-        batch_size=tr_cfg["batch_size"],
-        train_ratio=tr_cfg["train_valid_ratio"],
-        normalize=data_cfg["normalize"],
-        seed=cfg["settings"]["seed"],
-    )
+    if "single_pendulum" in args.config:
+        from data.single_pendulum.dataloader import build_loaders
+    elif "T_pushing" in args.config:
+        from data.T_pushing.dataloader import build_loaders
+    else:
+        raise ValueError(f"Unknown task in config path: {args.config}")
+    train_loader, val_loader, stats = build_loaders(cfg)
 
     # model
     key = jax.random.PRNGKey(cfg["settings"]["seed"])
-    model = MLPDynamics(key=key, config=cfg)
-    if stats:
-        model = eqx.tree_at(
-            lambda m: (m.x_mean, m.x_std, m.u_mean, m.u_std),
-            model,
-            (jnp.asarray(stats["x_mean"]), jnp.asarray(stats["x_std"]),
-             jnp.asarray(stats["u_mean"]), jnp.asarray(stats["u_std"]))
-        )
+    model = MLPDynamics(key=key, config=cfg, stats=stats)
 
-    # >>> NEW: choose logger based on config (basic WandB support)
-    
     if bool(cfg["train"]["wandb"]["enabled"]):
         logger = WandbLogger(
             config=cfg,

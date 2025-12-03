@@ -26,7 +26,7 @@ data:
   # --- episodes / dataset ---
   episode_length: 30
   num_episodes: 2000
-  normalize: false
+  normalize: true
 
   # --- saving ---
   out_path: "output/data/single_pendulum.npz"
@@ -67,7 +67,7 @@ train:
 
   # ----- wandb logging -----
   wandb:
-    enabled: true
+    enabled: false
     project: "single_pendulum"
     run_name: "test"
     mode: "online"               # {"online","offline","disabled"}

@@ -62,6 +62,7 @@ class MLPDynamics(eqx.Module):
         *,
         key: PRNGKey,
         config: dict,
+        stats: Optional[dict] = None,
     ):
         data_cfg = config["data"]
         train_cfg = config["train"]
@@ -95,6 +96,12 @@ class MLPDynamics(eqx.Module):
             # final_activation=lambda y: y,  # identity
             key=key,
         )
+
+        # normalization stats
+        self.x_mean = None if stats is None else jnp.asarray(stats["x_mean"])
+        self.x_std = None if stats is None else jnp.asarray(stats["x_std"])
+        self.u_mean = None if stats is None else jnp.asarray(stats["u_mean"])
+        self.u_std = None if stats is None else jnp.asarray(stats["u_std"])
 
     # --------------------------- helpers ---------------------------
 
