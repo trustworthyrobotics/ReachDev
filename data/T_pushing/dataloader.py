@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import os
 from typing import Dict, Optional, Union
 from typing import Iterator
 import pickle, numpy as np
@@ -106,12 +107,12 @@ def load_dynamics_dataset(config: dict,
       [x1-xp, y1-yp, ..., xK-xp, yK-yp, xp, yp, vx, vy]  ==  [rel(2K), pos(2), vel(2)]
     """
     # ---- Load and normalize ----
-    data_file_name = config["data"]["out_path"]
+    data_file_name = os.path.join(config["data"]["out_path"], "data.p")
     with open(data_file_name, "rb") as fp:
-        eps = pickle.load(fp)  # list of [T, 2K+4]
+        episodes = pickle.load(fp)  # list of [T, 2K+4]
 
     scale = float(config["data"]["scale"])
-    eps = [ep.astype(np.float32) / scale for ep in eps]
+    episodes = [ep.astype(np.float32) / scale for ep in episodes]
 
     # ---- Config & dims ----
     train_cfg = config["train"]
@@ -120,13 +121,6 @@ def load_dynamics_dataset(config: dict,
     train_ratio = float(train_cfg["train_valid_ratio"])
     noise_std   = float(train_cfg["noise"]) if phase == "train" else 0.0
     augment_en  = bool(config["data"]["augment"])
-
-    # Split episodes
-    num_train = int(len(eps) * train_ratio)
-    if phase == "train": episodes = eps[:num_train]
-    elif phase == "valid": episodes = eps[num_train:]
-    else: raise AssertionError(f"Unknown phase {phase}")
-    assert len(episodes) > 0, "No episodes after split."
 
     T_ep = int(episodes[0].shape[0])
     D    = int(episodes[0].shape[1])              # D = 2K + 4
@@ -152,6 +146,18 @@ def load_dynamics_dataset(config: dict,
     obs = np.asarray(obs_list, dtype=np.float32)        # [M, n_sample, 2K]
     pusher_pos = np.asarray(pos_list, dtype=np.float32) # [M, n_sample, 2]
     act = np.asarray(act_list, dtype=np.float32)        # [M, n_sample, 2]
+
+    num_train = int(obs.shape[0] * train_ratio)
+    if phase == "train":
+        obs = obs[:num_train]
+        pusher_pos = pusher_pos[:num_train]
+        act = act[:num_train]
+    elif phase == "valid":
+        obs = obs[num_train:]
+        pusher_pos = pusher_pos[num_train:]
+        act = act[num_train:]
+    else:
+        raise AssertionError(f"Unknown phase {phase}")
 
     # ---- Train-time noise on observations ----
     if phase == "train" and noise_std > 0.0:

@@ -2,15 +2,15 @@ settings:
   seed: 0
 
 data:
-  out_path: "output/data/T_pushing/"
+  out_path: "output/data/T_pushing_test/"
   state_dim: 8
   action_dim: 2
   action_bound: 30
   stem_size: [30, 90] # [10,60]
   bar_size: [120, 30] # [60,10]
   pusher_size: 5
-  num_episodes: 32000
-  num_workers: 48 # 48
+  num_episodes: 10
+  num_workers: 1 # 48
   episode_length: 30
   training: True
   saving: True
@@ -25,7 +25,7 @@ data:
   hn_th: 0.03 # pick error>=hn_th
 
 train:
-  out_dir: "output/runs/T_pushing"
+  out_dir: "output/runs/T_pushing_test"
   train_valid_ratio: 0.9
   activation: "relu"
   architecture: [128, 256, 256, 128]
@@ -33,20 +33,20 @@ train:
   n_rollout: 6
   n_rollout_valid: 6
   step_weight_ub: 2
-  noise: 0.001 # std of the Gaussian noise to training data
+  noise: 0 # std of the Gaussian noise to training data
   lr: 0.001
   lr_params:
     adam_beta1: 0.9
   lr_scheduler:
     type: "CosineAnnealingLR"
-    enabled: True
-  n_epoch: 20
-  batch_size: 512
-  lam_l1_reg: 0 # 2.0e-4 # l1 regularization
-  wandb:
     enabled: true
-    project: "T_pushing"
+  n_epoch: 1000
+  batch_size: 128
+  lam_l1_reg: 0.0e-8 # 2.0e-4 # l1 regularization
+  wandb:
+    enabled: false
+    project: "T_pushing_test"
     run_name: "test"
     mode: "online"               # {"online","offline","disabled"}
-    log_every: 50                # log every N training iterations
+    log_every: 20                # log every N training iterations
     save_checkpoints: false       # save model checkpoints to wandb  

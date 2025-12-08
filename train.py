@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import equinox as eqx
 import numpy as np
 
-from models.dynamics import MLPDynamics
+from models.dynamics import MLPDynamics, T_Dynammics
 from training.trainer import Trainer
 
 from utils.logging import PrintLogger, WandbLogger
@@ -22,7 +22,8 @@ def _save_ckpt(path_base: str, model, opt_state, step: int, cfg: dict, stats: di
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="configs/single_pendulum.yaml")
+    # parser.add_argument("--config", type=str, default="configs/single_pendulum.yaml")
+    parser.add_argument("--config", type=str, default="configs/T_pushing.yaml")
     args = parser.parse_args()
 
     with open(args.config, "r") as f:
@@ -43,7 +44,10 @@ if __name__ == "__main__":
 
     # model
     key = jax.random.PRNGKey(cfg["settings"]["seed"])
-    model = MLPDynamics(key=key, config=cfg, stats=stats)
+    if "single_pendulum" in args.config:
+        model = MLPDynamics(config=cfg, stats=stats, key=key)
+    elif "T_pushing" in args.config:
+        model = T_Dynammics(config=cfg, stats=stats, key=key)
 
     if bool(cfg["train"]["wandb"]["enabled"]):
         logger = WandbLogger(
@@ -63,4 +67,6 @@ if __name__ == "__main__":
         logger=logger,
     )
 
+    # with jax.disable_jit():
+    #     trainer.run()
     trainer.run()

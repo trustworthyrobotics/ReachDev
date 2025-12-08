@@ -23,7 +23,7 @@ def _noise_aug(X: jnp.ndarray, U: jnp.ndarray, std: float, key: jax.Array):
 def _l1_regularizer(params, lam: float):
     if lam <= 0:
         return 0.0
-    leaves = jax.tree_leaves(eqx.filter(params, eqx.is_inexact_array))
+    leaves = jax.tree.leaves(eqx.filter(params, eqx.is_inexact_array))
     return lam * sum(jnp.sum(jnp.abs(p)) for p in leaves)
 
 class Trainer:
@@ -128,6 +128,8 @@ class Trainer:
 
     def run(self):
         for epoch in range(1, self.cfg["n_epoch"] + 1):
+            if epoch == self.cfg["n_epoch"]:
+                print("Final epoch reached.")
             # ---- train ----
             train_losses = []
             for it, batch in enumerate(self.train_loader):

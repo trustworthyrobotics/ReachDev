@@ -17,8 +17,6 @@ state: relative position of keypoints of object to pusher: x1-xp, y1-yp, x2-xp, 
 pusher position: xp, yp
 pusher velocity: vx, vy
 data: (x1-xp, y1-yp, x2-xp, y2-yp, x3-xp, y3-yp, x4-xp, y4-yp, xp, yp, vx, vy)
-
-normalized: /data.scale
 """
 
 
@@ -62,7 +60,7 @@ def gen_data(config, process_id, seed, num_episode):
     # print(f"scale1: {scale1}, scale2: {scale2}")
     noise1 = get_truncated_normal(mean=0, sd=10, low=-20, upp=20)
     noise2 = get_truncated_normal(mean=0, sd=4, low=-10, upp=10)
-    action_bound = data_config["action_bound"] * scale * 1.05
+    action_bound = data_config["action_bound"] * 1.05
 
     # box_range = action_bound * 4
     box_range = 100
@@ -86,7 +84,7 @@ def gen_data(config, process_id, seed, num_episode):
         for i in range(2):
             env_dict = sim.update((x_pusher, y_pusher))
         # add the initial state to the episode
-        env_state = np.concatenate([env_dict["state"], env_dict["pusher_pos"], env_dict["action"]], axis=0) / scale
+        env_state = np.concatenate([env_dict["state"], env_dict["pusher_pos"], env_dict["action"]], axis=0)
         episode.append(env_state)
 
         # simulate an episode
@@ -137,7 +135,7 @@ def gen_data(config, process_id, seed, num_episode):
             env_dict = sim.update((x_pusher, y_pusher))
             # TODO: unify the API
             env_state = (
-                np.concatenate([env_dict["state"], env_dict["pusher_pos"], env_dict["action"]], axis=0) / scale
+                np.concatenate([env_dict["state"], env_dict["pusher_pos"], env_dict["action"]], axis=0)
             )
             episode[-1][-action_dim:] = env_state[-action_dim:]
             episode.append(env_state)
