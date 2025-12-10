@@ -174,7 +174,7 @@ def parallel_gen_data(args):
     gen_data(config, process_id, seed, num_episode)
     print(f"Process {process_id} finished in {time.time() - start_time} seconds")
 
-@hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing_test.yaml", version_base=None)
+@hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml", version_base=None)
 def main(config: DictConfig) -> None:
     data_config = config["data"]
     num_episodes, training, visualizing, saving, gif = (

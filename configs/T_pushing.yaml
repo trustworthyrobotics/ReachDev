@@ -51,3 +51,26 @@ train:
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: false       # save model checkpoints to wandb  
+planning:
+  out_path: "output/planning/${settings.task_name}"
+  horizon: 15
+  max_steps: 30
+  n_act_step: 6
+  num_test: 1
+  action_bound: 30
+  cost_norm: 1
+  only_final_cost: False
+  n_sample: 640
+  n_update_iter: 20
+  
+  use_last: False
+  reject_bad: True
+  mppi:
+    reward_weight: 1.0
+    noise_level: 0.05
+    # noise_decay: 0.95
+    # beta_filter: 0.7
+  cem:
+    elite_ratio: 0.05
+    min_n_elites: 10
+    cov_jitter: 1e-6

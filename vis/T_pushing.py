@@ -20,7 +20,7 @@ def plot_agent(agent_kp, c="blue", label=""):
     """agent_kp: np.array([agent.x,agent.y])"""
     plt.scatter(*agent_kp, s=30, c=c, label=label)
 
-def plot_frame(video_path, gt, pred, action, B, fps=10, xlim=(-1, 1), ylim=(-1, 1)):
+def plot_frame(video_path, gt, pred, B, fps=10, xlim=(-1, 1), ylim=(-1, 1)):
     """
     Save a GIF comparing GT vs Pred for one episode index B.
 
@@ -44,7 +44,6 @@ def plot_frame(video_path, gt, pred, action, B, fps=10, xlim=(-1, 1), ylim=(-1, 
         plot_Tee(pred[B, i, :8], c="orange", label="Pred")
 
         # Pusher positions
-        # plot_agent(action[B, i],       c="blue",   label="Action")      # if you want to visualize input action as a point
         plot_agent(gt[B, i, 8:],       c="green",  label="GT Agent")
         plot_agent(pred[B, i, 8:],     c="orange", label="Pred Agent")
 
@@ -85,7 +84,7 @@ def rel_to_abs_kp_plus_pusher(eps_denorm: np.ndarray) -> np.ndarray:
     return vis
 
 
-@hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing_test.yaml")
+@hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
 def main(config: DictConfig):
     data_dir = config["data"]["out_path"]
     model_dir = config["train"]["out_dir"]
@@ -130,8 +129,6 @@ def main(config: DictConfig):
     gt_vis = rel_to_abs_kp_plus_pusher(eps_denorm)         # [B,T,10]
     pred_vis = rel_to_abs_kp_plus_pusher(eps_pred_denorm)  # [B,T,10]
     print(f"vis error: {np.abs(pred_vis - gt_vis).mean()}")
-    # For the blue dot in your plotter, pass the pusher position (more meaningful than velocity)
-    action_for_plot = eps_denorm[:, :, 8:10]               # [B,T,2] = (x_p, y_p)
 
     # ----------------- write one GIF per episode -----------------
     out_dir = os.path.join("output", "vis", "T_pushing")
@@ -144,7 +141,6 @@ def main(config: DictConfig):
             out_path,
             gt=gt_vis,
             pred=pred_vis,
-            action=action_for_plot,
             B=b,
             fps=10,
             xlim=(0, window_size),

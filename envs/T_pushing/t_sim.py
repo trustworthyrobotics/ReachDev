@@ -121,9 +121,9 @@ some helper functions
 """
 
 
-def generate_init_target_states(init_poses, target_poses, param_dict, include_com=False):
-    init_states = get_keypoints_from_pose(init_poses[0], param_dict, include_com)
-    target_states = get_keypoints_from_pose(target_poses[0], param_dict, include_com)
+def generate_init_target_states(init_pose, target_pose, param_dict, include_com=False):
+    init_states = get_keypoints_from_pose(init_pose, param_dict, include_com)
+    target_states = get_keypoints_from_pose(target_pose, param_dict, include_com)
     return init_states.flatten(), target_states.flatten()
 
 
