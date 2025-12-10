@@ -102,7 +102,7 @@ def main():
     model_dir = cfg["train"]["out_dir"]
     scale = float(cfg["data"].get("scale", 1.0))  # data was normalized by /scale
 
-    eval_p_path = os.path.join(data_dir, "data.p")
+    eval_p_path = os.path.join(data_dir, "data_eval.p")
     model_path = os.path.join(model_dir, "last_model.eqx")
     model_def = T_Dynammics(config=cfg)
     with open(model_path, "rb") as f:
@@ -140,7 +140,7 @@ def main():
     # ----------------- build GT/PRED arrays for plot_frame -----------------
     gt_vis = rel_to_abs_kp_plus_pusher(eps_denorm)         # [B,T,10]
     pred_vis = rel_to_abs_kp_plus_pusher(eps_pred_denorm)  # [B,T,10]
-    print(f"vis error: {(pred_vis - gt_vis).mean()}")
+    print(f"vis error: {np.abs(pred_vis - gt_vis).mean()}")
     # For the blue dot in your plotter, pass the pusher position (more meaningful than velocity)
     action_for_plot = eps_denorm[:, :, 8:10]               # [B,T,2] = (x_p, y_p)
 

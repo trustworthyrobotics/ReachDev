@@ -33,14 +33,14 @@ train:
   n_rollout: 6
   n_rollout_valid: 6
   step_weight_ub: 2
-  noise: 0.001 # std of the Gaussian noise to training data
+  noise: 0.005 # std of the Gaussian noise to training data
   lr: 0.001
   lr_params:
     adam_beta1: 0.9
   lr_scheduler:
     type: "CosineAnnealingLR"
     enabled: True
-  n_epoch: 20
+  n_epoch: 100
   batch_size: 512
   lam_l1_reg: 0 # 2.0e-4 # l1 regularization
   wandb:

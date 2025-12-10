@@ -13,13 +13,6 @@ from training.losses_metrics import combined_loss, make_linear_step_weights
 
 from utils.logging import Logger
 
-def _noise_aug(X: jnp.ndarray, U: jnp.ndarray, std: float, key: jax.Array):
-    if std <= 0:
-        return X, U
-    k1, k2 = jax.random.split(key, 2)
-    return (X + std * jax.random.normal(k1, X.shape, X.dtype),
-            U + std * jax.random.normal(k2, U.shape, U.dtype))
-
 def _l1_regularizer(params, lam: float):
     if lam <= 0:
         return 0.0
@@ -81,7 +74,6 @@ class Trainer:
         self.T_train = int(self.cfg["n_rollout"])
         self.T_valid = int(self.cfg["n_rollout_valid"])
         self.step_weights = make_linear_step_weights(self.T_train, float(self.cfg["step_weight_ub"]))
-        self.noise_std = float(self.cfg["noise"])
 
         self._build_steps()
 
@@ -92,13 +84,10 @@ class Trainer:
         lam_l1 = float(self.cfg["lam_l1_reg"])
         T = self.T_train
         w = self.step_weights
-        noise_std = self.noise_std
         optim = self.optim
 
         @eqx.filter_jit
         def train_step(model, opt_state, X, U, key):
-            X, U = _noise_aug(X, U, std=noise_std, key=key)
-
             def loss_fn(m):
                 loss, metrics = combined_loss(m, X, U, T=T, step_weights=w, aux_weight=0.0)
                 loss = loss + _l1_regularizer(m, lam_l1)
