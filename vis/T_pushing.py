@@ -1,13 +1,13 @@
-import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 import imageio.v2 as iio
 from io import BytesIO
 import os
 import pickle
-import yaml
 import jax.numpy as jnp
 import equinox as eqx
+import hydra
+from omegaconf import DictConfig
 
 from models.dynamics import T_Dynammics
 
@@ -85,26 +85,15 @@ def rel_to_abs_kp_plus_pusher(eps_denorm: np.ndarray) -> np.ndarray:
     return vis
 
 
-
-def main():
-    config_path = "configs/T_pushing_test.yaml"
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default=config_path, help="Path to the config file."
-    )
-    args = parser.parse_args()
-    # -----------------------------
-    # 1) Load config and resources
-    # -----------------------------
-    with open(args.config, "r") as f:
-        cfg = yaml.safe_load(f)
-
-    data_dir = cfg["data"]["out_path"]
-    model_dir = cfg["train"]["out_dir"]
-    scale = float(cfg["data"].get("scale", 1.0))  # data was normalized by /scale
+@hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing_test.yaml")
+def main(config: DictConfig):
+    data_dir = config["data"]["out_path"]
+    model_dir = config["train"]["out_dir"]
+    scale = float(config["data"].get("scale", 1.0))  # data was normalized by /scale
 
     eval_p_path = os.path.join(data_dir, "data_eval.p")
     model_path = os.path.join(model_dir, "last_model.eqx")
-    model_def = T_Dynammics(config=cfg)
+    model_def = T_Dynammics(config=config)
     with open(model_path, "rb") as f:
         model: T_Dynammics = eqx.tree_deserialise_leaves(f, model_def)
 
@@ -118,7 +107,7 @@ def main():
     eps_arr = np.array(eval_data)  # [B, T, 12]
 
     B, T, _ = eps_arr.shape
-    scale = float(cfg["data"]["scale"])
+    scale = float(config["data"]["scale"])
 
     # Everything inside file is normalized by /scale → denormalize for visualization
     eps_denorm = eps_arr.astype(np.float32)               # [B,T,12], unnormalized
@@ -146,7 +135,7 @@ def main():
 
     # ----------------- write one GIF per episode -----------------
     out_dir = os.path.join("output", "vis", "T_pushing")
-    window_size = cfg["data"]["window_size"]
+    window_size = config["data"]["window_size"]
     os.makedirs(out_dir, exist_ok=True)
     B = min(B, 10)
     for b in range(B):

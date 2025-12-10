@@ -1,8 +1,9 @@
 settings:
   seed: 0
+  task_name: "T_pushing_test"
 
 data:
-  out_path: "output/data/T_pushing_test/"
+  out_path: "output/data/${settings.task_name}"
   state_dim: 8
   action_dim: 2
   action_bound: 30
@@ -25,7 +26,7 @@ data:
   hn_th: 0.03 # pick error>=hn_th
 
 train:
-  out_dir: "output/runs/T_pushing_test"
+  out_dir: "output/runs/${settings.task_name}"
   train_valid_ratio: 0.9
   activation: "relu"
   architecture: [128, 256, 256, 128]
@@ -45,7 +46,7 @@ train:
   lam_l1_reg: 0.0e-8 # 2.0e-4 # l1 regularization
   wandb:
     enabled: false
-    project: "T_pushing_test"
+    project: "${settings.task_name}"
     run_name: "test"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 20                # log every N training iterations

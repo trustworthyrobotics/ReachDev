@@ -1,5 +1,6 @@
 *.pyc
 output/
+outputs/
 .DS_Store
 .vscode/
 wandb/

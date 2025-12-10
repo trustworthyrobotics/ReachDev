@@ -2,11 +2,11 @@ import time
 import numpy as np
 import random
 import pickle
-import sys, os
+import os
 import math
-import yaml
-import argparse
 from multiprocessing import Pool
+import hydra
+from omegaconf import DictConfig
 
 from envs.T_pushing.helper import rand_float, get_truncated_normal, gen_act
 import envs.T_pushing.t_sim as t_sim
@@ -174,15 +174,8 @@ def parallel_gen_data(args):
     gen_data(config, process_id, seed, num_episode)
     print(f"Process {process_id} finished in {time.time() - start_time} seconds")
 
-
-def main() -> None:
-    config_path = "configs/T_pushing.yaml"
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default=config_path, help="Path to the config file."
-    )
-    args = parser.parse_args()
-    with open(args.config, "r") as file:
-        config = yaml.safe_load(file)
+@hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing_test.yaml", version_base=None)
+def main(config: DictConfig) -> None:
     data_config = config["data"]
     num_episodes, training, visualizing, saving, gif = (
         data_config["num_episodes"],

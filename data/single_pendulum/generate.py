@@ -6,6 +6,9 @@ import os
 import jax
 import jax.numpy as jnp
 from jax import lax
+import hydra
+from omegaconf import DictConfig
+
 from envs.single_pendulum import SinglePendulumEnv
 from vis.pendulum import save_pendulum_gif
 
@@ -61,11 +64,9 @@ def batched_rollout(env: SinglePendulumEnv, dcfg: dict, key: jax.Array):
     return X_traj, U_traj
 
 
-def main(config_path: str):
-    with open(config_path, "r") as f:
-        cfg = yaml.safe_load(f)
+@hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="single_pendulum.yaml")
+def main(cfg: DictConfig):
     dcfg = cfg["data"]
-
 
     _assert(dcfg)
     env = SinglePendulumEnv.from_config(cfg)
@@ -84,7 +85,8 @@ def main(config_path: str):
     # Or: X_traj, U_traj = jax.jit(batched_rollout)(env, dcfg_flat, key)
 
     out_path = dcfg["out_path"]
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    os.makedirs(out_path, exist_ok=True)
+    out_path = os.path.join(out_path, "data.npz")
     np.savez(
         out_path,
         X_traj=np.array(X_traj, dtype=np.float32),
@@ -108,7 +110,4 @@ def main(config_path: str):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="configs/single_pendulum.yaml")
-    args = parser.parse_args()
-    main(args.config)
+    main()

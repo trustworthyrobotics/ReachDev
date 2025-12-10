@@ -117,8 +117,6 @@ class Trainer:
 
     def run(self):
         for epoch in range(1, self.cfg["n_epoch"] + 1):
-            if epoch == self.cfg["n_epoch"]:
-                print("Final epoch reached.")
             # ---- train ----
             train_losses = []
             for it, batch in enumerate(self.train_loader):

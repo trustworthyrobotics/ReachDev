@@ -1,5 +1,6 @@
 settings:
   seed: 0
+  task_name: "single_pendulum"
 
 data:
   # --- shapes ---
@@ -29,11 +30,11 @@ data:
   normalize: true
 
   # --- saving ---
-  out_path: "output/data/single_pendulum.npz"
+  out_path: "output/data/${settings.task_name}"
   save_trajectories: true      # also save per-episode rollouts (optional)
 
 train:
-  out_dir: "output/runs/pendulum"
+  out_dir: "output/runs/${settings.task_name}"
   # ----- data split -----
   train_valid_ratio: 0.9
 
@@ -68,7 +69,7 @@ train:
   # ----- wandb logging -----
   wandb:
     enabled: false
-    project: "single_pendulum"
+    project: "${settings.task_name}"
     run_name: "test"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 10                # log every N training iterations

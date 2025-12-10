@@ -1,14 +1,6 @@
 import torch
-from matplotlib import pyplot as plt
 import numpy as np
-from matplotlib import cm
 import random
-import math
-import re
-import cv2
-from PIL import Image
-from io import TextIOWrapper
-import os, psutil
 from scipy.stats import truncnorm
 
 """
@@ -54,65 +46,62 @@ def calculate_com(x_i, y_i, m_i):
 
 def keypoints_to_pose_2d_SVD(kp1, kp2):
     """
-    Calculate the 2D pose transformation from keypoints using SVD supporting batch processing with torch tensors.
+    Estimate 2D rigid transform (x, y, theta) aligning kp1 -> kp2 via batched Kabsch (SVD).
 
-    Parameters:
-    - kp1: 2D keypoints in the original frame. Shape: (n, 2) array
-    - kp2: 2D keypoints in the target frame. Shape: (batch_size, n, 2) tensor or (n, 2) array
+    Parameters
+    ----------
+    kp1 : array-like, shape (n, 2)
+        Source keypoints (shared for the whole batch).
+    kp2 : array-like, shape (n, 2) or (batch_size, n, 2)
+        Target keypoints. If (n,2), treated as a single batch.
 
-    Returns:
-    - pose: 2D pose transformations for each batch, Shape: (batch_size, 3) or (3,)
-            each containing 2D position (x, y) and rotation angle in radians.
+    Returns
+    -------
+    pose : ndarray, shape (3,) or (batch_size, 3)
+        (tx, ty, theta) per batch, where theta is in radians.
     """
-    # Convert inputs to torch.Tensor if they are numpy.ndarray
-    original_is_ndarray = False
-    if isinstance(kp2, np.ndarray):
-        original_is_ndarray = True
-        kp1 = torch.tensor(kp1, dtype=torch.float32)
-        kp2 = torch.tensor(kp2, dtype=torch.float32)
-    elif isinstance(kp2, torch.Tensor):
-        kp1 = torch.tensor(kp1, dtype=torch.float32, device=kp2.device)
-    kp1 = kp1.unsqueeze(0)
-    original_in_batch = True
-    if kp2.dim() == 2:
-        original_in_batch = False
-        kp2 = kp2.unsqueeze(0)
+    kp1 = np.asarray(kp1, dtype=np.float64)
+    kp2 = np.asarray(kp2, dtype=np.float64)
 
-    # Center the keypoints
-    kp1_center = kp1.mean(dim=1, keepdim=True)
-    kp2_center = kp2.mean(dim=1, keepdim=True)
-    kp1_centered = kp1 - kp1_center
-    kp2_centered = kp2 - kp2_center
+    single = (kp2.ndim == 2)
+    if single:
+        kp2 = kp2[None, ...]        # (1, n, 2)
+    kp1 = kp1[None, ...]            # (1, n, 2); broadcasts against kp2
 
-    # Compute the covariance matrix for each batch
-    H = torch.matmul(kp1_centered.transpose(-2, -1), kp2_centered)
+    # Centers
+    kp1_center = kp1.mean(axis=1, keepdims=True)          # (1, 1, 2)
+    kp2_center = kp2.mean(axis=1, keepdims=True)          # (B, 1, 2)
 
-    # Perform SVD
-    U, S, Vt = torch.linalg.svd(H, full_matrices=True)
+    # Zero-mean
+    kp1c = kp1 - kp1_center                               # (1, n, 2) -> broadcast
+    kp2c = kp2 - kp2_center                               # (B, n, 2)
 
-    # Compute the rotation matrix
-    R = torch.matmul(Vt.transpose(-2, -1), U.transpose(-2, -1))
-    # Ensure the determinant of the rotation matrix is 1 (correcting for reflection if necessary)
-    det_R = torch.linalg.det(R)
-    reflection_correction = torch.diag_embed(torch.ones(R.shape[:-1], device=R.device))
-    reflection_correction[:, -1, -1] = torch.sign(det_R)
-    R = torch.matmul(Vt.transpose(-2, -1), reflection_correction.matmul(U.transpose(-2, -1)))
+    # Batched covariance H = kp1c^T @ kp2c  -> (B, 2, 2)
+    H = np.einsum('bni,bnj->bij', kp1c, kp2c)
 
-    # Compute the translation vector
-    t = (kp2_center - torch.matmul(R, kp1_center.transpose(-2, -1)).transpose(-2, -1)).squeeze(1)
+    # Batched SVD
+    U, S, Vt = np.linalg.svd(H, full_matrices=True)       # each (B, 2, 2), (B,2), (B,2,2)
 
-    # Compute the rotation angle in radians
-    theta = torch.atan2(R[:, 1, 0], R[:, 0, 0])
+    # Rotation with reflection handling: R = V * D * U^T, where D fixes det(R)=+1
+    R_raw = Vt.transpose(0, 2, 1) @ U.transpose(0, 2, 1)  # (B, 2, 2)
+    det_R = np.linalg.det(R_raw)                          # (B,)
 
-    # Concatenate translation and rotation to form the pose
-    pose = torch.cat((t, theta.unsqueeze(-1)), dim=1)
+    D = np.tile(np.eye(2)[None, ...], (R_raw.shape[0], 1, 1))  # (B,2,2)
+    D[:, 1, 1] = np.sign(det_R)                                # diag=[1, sign(det)]
 
-    # Convert back to numpy.ndarray if the original input was ndarray
-    if not original_in_batch:
-        pose = pose.squeeze(0)
-    if original_is_ndarray:
-        pose = pose.numpy()
+    R = Vt.transpose(0, 2, 1) @ D @ U.transpose(0, 2, 1)  # (B, 2, 2)
 
+    # Translation: t = mu2 - R * mu1
+    mu1 = kp1_center.transpose(0, 2, 1)                   # (1, 2, 1)
+    mu2 = kp2_center.transpose(0, 2, 1)                   # (B, 2, 1)
+    t = (mu2 - R @ mu1).transpose(0, 2, 1).squeeze(1)     # (B, 2)
+
+    # Angle
+    theta = np.arctan2(R[:, 1, 0], R[:, 0, 0])            # (B,)
+
+    pose = np.concatenate([t, theta[:, None]], axis=1)    # (B, 3)
+    if single:
+        pose = pose[0]
     return pose
 
 def get_truncated_normal(mean=0, sd=1, low=-10, upp=10):
