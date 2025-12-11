@@ -6,11 +6,11 @@ import hydra
 from omegaconf import DictConfig
 import jax
 import jax.numpy as jnp
-import equinox as eqx
 from pyparsing import Dict
+import json
 
 from envs.T_pushing.t_sim import generate_init_target_states, T_Sim
-from models.dynamics import T_Dynammics
+from models.dynamics import load_t_dynamics_model
 from planning.planner import MPPIPlanner, CEMPlanner
 
 
@@ -68,12 +68,8 @@ def main(config: DictConfig):
     num_test = planning_config["num_test"]
     init_pusher_pos_list, init_pose_list, target_pusher_pos_list, target_pose_list = generate_test_cases(seed, num_test)
 
-    model_dir = config["train"]["out_dir"]
-    model_path = os.path.join(model_dir, "last_model.eqx")
-    model_def = T_Dynammics(config=config)
-    with open(model_path, "rb") as f:
-        model: T_Dynammics = eqx.tree_deserialise_leaves(f, model_def)
-
+    model_path = os.path.join( config["train"]["out_dir"], "last_model.eqx")
+    model = load_t_dynamics_model(config=config, model_path=model_path)
     param_dict = {"stem_size": data_config["stem_size"], 
                 "bar_size": data_config["bar_size"], 
                 "pusher_size": data_config["pusher_size"],
@@ -177,10 +173,16 @@ def main(config: DictConfig):
         # save results
         out_dir = os.path.join(planning_config["out_path"], "planning_results", f"T_pushing", f"test_case_{i:04d}")
         os.makedirs(out_dir, exist_ok=True)
-        planning_res_path = os.path.join(out_dir, "planning_res.npy")
-        np.save(planning_res_path, planning_res_list)
-        gt_states_path = os.path.join(out_dir, "gt_states.npy")
-        np.save(gt_states_path, np.array(gt_states))
+        # planning_res_path = os.path.join(out_dir, "planning_res.npy")
+        # np.save(planning_res_path, planning_res_list)
+        # gt_states_path = os.path.join(out_dir, "gt_states.npy")
+        # np.save(gt_states_path, np.array(gt_states))
+        planning_res_path = os.path.join(out_dir, "planning_res.json")
+        with open(planning_res_path, "w") as f:
+            json.dump(planning_res_list, f, indent=4, separators=(",", ": "))
+        gt_states_path = os.path.join(out_dir, "gt_states.json")
+        with open(gt_states_path, "w") as f:
+            json.dump(gt_states, f, indent=4, separators=(",", ": "))
         env.save_gif(os.path.join(out_dir, "planning_vis.gif"))
         env.close()
 

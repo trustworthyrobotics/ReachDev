@@ -7,8 +7,9 @@ import equinox as eqx
 import numpy as np
 import hydra
 from omegaconf import DictConfig, OmegaConf
+from jax2onnx import to_onnx
 
-from models.dynamics import MLPDynamics, T_Dynammics
+from models.dynamics import MLPDynamics, T_Dynamics
 from training.trainer import Trainer
 
 from utils.logging import PrintLogger, WandbLogger
@@ -17,6 +18,7 @@ from utils.logging import PrintLogger, WandbLogger
 def _save_ckpt(path_base: str, model, opt_state, step: int, cfg: dict, stats: dict):
     os.makedirs(os.path.dirname(path_base) or ".", exist_ok=True)
     eqx.tree_serialise_leaves(path_base + ".eqx", model)
+    to_onnx(model, [("B", d) for d in model._input_dims()], return_mode="file", output_path = path_base + ".onnx")
     np.savez(path_base + ".npz", step=np.array(step), config=np.array([yaml.dump(OmegaConf.to_yaml(cfg))]), **(stats or {}))
 
 
@@ -40,7 +42,7 @@ def main(config: DictConfig) -> None:
     if "single_pendulum" in task_name:
         model = MLPDynamics(config=config, stats=stats, key=key)
     elif "T_pushing" in task_name:
-        model = T_Dynammics(config=config, stats=stats, key=key)
+        model = T_Dynamics(config=config, stats=stats, key=key)
 
     if bool(config["train"]["wandb"]["enabled"]):
         logger = WandbLogger(

@@ -65,9 +65,7 @@ class SamplingPlannerBase(eqx.Module):
         """Return (key, result_dict) with at least {'act_seq':(H,Du), 'best_reward':...}."""
         raise NotImplementedError
 
-    # optional thin wrapper if you want parity with torch’s trajectory_optimization
     def trajectory_optimization(self, key:PRNGKey, state_cur:Array, init_action_seq:Array, skip:bool=False, *args, **kwargs)->Dict:
-        """Keeps your Torch API shape, but delegates to `plan`."""
         if skip:
             # evaluate the given init_action_seq (1,H,Du)
             rewards, aux = self._evaluate(state_cur, init_action_seq[None,...], *args, **kwargs)

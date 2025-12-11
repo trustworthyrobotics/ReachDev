@@ -1,6 +1,6 @@
 # models/mlp_dynamics_eqx.py
 from __future__ import annotations
-from typing import Callable, Iterable, Optional, Tuple, Union, Sequence
+from typing import Callable, Iterable, List, Optional, Tuple, Union, Sequence
 
 import jax
 import jax.numpy as jnp
@@ -84,7 +84,7 @@ class MLPDynamics(eqx.Module):
         else:
             raise ValueError(f"Unsupported activation: {self.activation_name}")
 
-        in_dim = self._input_dim()
+        in_dim = sum(self._input_dims())
         out_dim = self.Dx  # predict Δx or x_next
 
         self.mlp = eqx.nn.MLP(
@@ -104,10 +104,9 @@ class MLPDynamics(eqx.Module):
         self.u_std = None if stats is None else jnp.asarray(stats["u_std"])
 
     # --------------------------- helpers ---------------------------
-
-    def _input_dim(self) -> int:
+    def _input_dims(self) -> List[int]:
         # (x,u) per step → Dx+Du; with n_history steps → n_history*(Dx+Du)
-        return self.n_history * (self.Dx + self.Du)
+        return self.n_history * self.Dx, self.n_history * self.Du
 
     def _maybe_norm_x(self, x: Array) -> Array:
         if (self.x_mean is not None) and (self.x_std is not None):
@@ -162,7 +161,7 @@ class MLPDynamics(eqx.Module):
         return jnp.swapaxes(X_seq, 0, 1)  # (B,T,Dx)
 
 
-class T_Dynammics(MLPDynamics):
+class T_Dynamics(MLPDynamics):
     def forward(self, x: Array, u: Array) -> Array:
         """
         One-step model inference.
@@ -196,3 +195,11 @@ class T_Dynammics(MLPDynamics):
 
     def forward(self, x: Array, u: Array) -> Array:
         return x + jax.vmap(self.mlp)(jnp.concatenate([x, u], axis=-1)) - u.repeat(4,axis=-1)
+
+    __call__ = forward
+
+def load_t_dynamics_model(config: dict, model_path: str) -> T_Dynamics:
+    model_def = T_Dynamics(config=config)
+    with open(model_path, "rb") as f:
+        model: T_Dynamics = eqx.tree_deserialise_leaves(f, model_def)
+    return model

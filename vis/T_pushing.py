@@ -9,7 +9,7 @@ import equinox as eqx
 import hydra
 from omegaconf import DictConfig
 
-from models.dynamics import T_Dynammics
+from models.dynamics import load_t_dynamics_model
 
 def plot_Tee(tee_kp, c="orange", label=""):
     """tee_kp: np.array([TL.x,TL.y,TC.x,TC.y,TR.x,TR.y,B.x,B.y])"""
@@ -91,10 +91,8 @@ def main(config: DictConfig):
     scale = float(config["data"].get("scale", 1.0))  # data was normalized by /scale
 
     eval_p_path = os.path.join(data_dir, "data_eval.p")
-    model_path = os.path.join(model_dir, "last_model.eqx")
-    model_def = T_Dynammics(config=config)
-    with open(model_path, "rb") as f:
-        model: T_Dynammics = eqx.tree_deserialise_leaves(f, model_def)
+    model_path = os.path.join( config["train"]["out_dir"], "last_model.eqx")
+    model = load_t_dynamics_model(config=config, model_path=model_path)
 
     # -----------------------------
     # 2) Load eval data
