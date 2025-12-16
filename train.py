@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import yaml
 import jax
+jax.config.update("jax_enable_x64", True)
+jax.config.update("jax_default_matmul_precision", "highest")
 import equinox as eqx
 import numpy as np
 import hydra
@@ -22,7 +24,7 @@ def _save_ckpt(path_base: str, model, opt_state, step: int, cfg: dict, stats: di
     np.savez(path_base + ".npz", step=np.array(step), config=np.array([yaml.dump(OmegaConf.to_yaml(cfg))]), **(stats or {}))
 
 
-@hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml", version_base=None)
+@hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing_test.yaml", version_base=None)
 def main(config: DictConfig) -> None:
     tr_cfg = config["train"]
 

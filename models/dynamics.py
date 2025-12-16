@@ -43,6 +43,7 @@ class MLP(eqx.Module):
                 in_size,
                 hidden_size_list[0],
                 key=keys[0],
+                dtype=jnp.float32
             )
         )
         # Hidden layers
@@ -52,6 +53,7 @@ class MLP(eqx.Module):
                     hidden_size_list[i - 1],
                     hidden_size_list[i],
                     key=keys[i],
+                    dtype=jnp.float32
                 )
             )
         # Output layer
@@ -60,6 +62,7 @@ class MLP(eqx.Module):
                 hidden_size_list[-1],
                 out_size,
                 key=keys[-1],
+                dtype=jnp.float32
             )
         )
 
@@ -112,7 +115,7 @@ class MLPDynamics(eqx.Module):
     default_rollout_T: int = eqx.field(static=True)
 
     # ---- learnable parts ----
-    mlp: eqx.nn.MLP
+    mlp: MLP
 
     # ---- (optional) normalization stats, kept non-trainable ----
     x_mean: Optional[Array] = None

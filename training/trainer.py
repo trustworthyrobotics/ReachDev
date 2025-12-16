@@ -2,6 +2,10 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
+import sys
+sys.path.append('CROWN_Reach')
+from CROWN_Reach.src.reachability import DTPlanReach
+from CROWN_Reach.src.utils.box_set import calculate_volume
 
 import jax
 import jax.numpy as jnp
@@ -47,7 +51,6 @@ class Trainer:
         self.stats = stats or {}
         self.key = jax.random.PRNGKey(seed)
 
-        # >>> NEW: logger handling (PrintLogger or WandbLogger)
         self.logger = logger
         self._wandb_cfg = self.cfg["wandb"]
         self._log_every = int(self._wandb_cfg["log_every"])
@@ -75,6 +78,17 @@ class Trainer:
         self.T_valid = int(self.cfg["n_rollout_valid"])
         self.step_weights = make_linear_step_weights(self.T_train, float(self.cfg["step_weight_ub"]))
 
+        # reachability analyzer
+        def f_wrapper(x):
+            state_next = self.model(x)
+            action_next = x[self.model.Dx:]
+            return jnp.concatenate([state_next, action_next], axis=-1)
+
+        self.reach_analyzer = DTPlanReach(f_wrapper, state_dim=self.model.Dx, action_dim=self.model.Du, nn_dyn=True, n_steps_per_plan=1, step_size=1)
+        self.noise = float(self.cfg["noise"])
+        self.batch_size = self.cfg["batch_size"]
+        self.reach_every = int(self.cfg["reach_every"])
+
         self._build_steps()
 
         self.best_val = np.inf
@@ -99,11 +113,31 @@ class Trainer:
             return model, opt_state, loss, metrics
 
         @eqx.filter_jit
+        def reach_train_step(model, opt_state, X, U, key):
+            def loss_fn(m):
+                loss, metrics = combined_loss(m, X, U, T=T, step_weights=w, aux_weight=0.0)
+                loss = loss + _l1_regularizer(m, lam_l1)
+                X_init = jnp.concatenate([X[:, 0, :], jnp.zeros_like(U[:, 0, :])], axis=-1)
+                _, reach_lo, reach_up, _, _ = self.reach_analyzer.verify(X_init-self.noise, X_init+self.noise, n_total_steps=self.T_train, action_seq=U[:, None])
+                reach_vol = calculate_volume(reach_lo.reshape(-1, self.T_train + 1, self.model.Dx+self.model.Du), reach_up.reshape(-1, self.T_train + 1, self.model.Dx+self.model.Du))
+                reach_penalty = jnp.log(1 + reach_vol / self.batch_size) * 0.01
+                metrics['reach_volume'] = reach_vol
+                metrics['reach_penalty'] = reach_penalty
+                loss = loss + reach_penalty
+                return loss, metrics
+
+            (loss, metrics), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(model)
+            updates, opt_state = optim.update(grads, opt_state, params=eqx.filter(model, eqx.is_inexact_array))
+            model = eqx.apply_updates(model, updates)
+            return model, opt_state, loss, metrics
+
+        @eqx.filter_jit
         def eval_step(model, X, U, T_eval):
             loss, metrics = combined_loss(model, X, U, T=T_eval, step_weights=None, aux_weight=0.0)
             return loss, metrics
 
         self._train_step = train_step
+        self._reach_train_step = reach_train_step
         self._eval_step = eval_step
 
     def _current_lr(self) -> float:
@@ -119,19 +153,26 @@ class Trainer:
         for epoch in range(1, self.cfg["n_epoch"] + 1):
             # ---- train ----
             train_losses = []
+            latest_reach_vol = 0
+            latest_reach_penalty = 0
             for it, batch in enumerate(self.train_loader):
                 X = batch["observations"]
                 U = batch["actions"]
                 W = batch["weights"] # unused currently
                 self.key, subk = jax.random.split(self.key)
-                self.model, self.opt_state, loss, _ = self._train_step(self.model, self.opt_state, X, U, subk)
+                if self.global_step % self.reach_every == 0:
+                    self.model, self.opt_state, loss, metrics = self._reach_train_step(self.model, self.opt_state, X, U, subk)
+                    latest_reach_vol = metrics["reach_volume"]
+                    latest_reach_penalty = metrics["reach_penalty"]
+                else:
+                    self.model, self.opt_state, loss, metrics = self._train_step(self.model, self.opt_state, X, U, subk)
                 train_losses.append(float(loss))
                 self.global_step += 1
 
                 if (self.global_step % self._log_every == 0):
                     self.logger.log(
-                        {"train/iter_loss": float(loss), "lr": self._current_lr(),
-                         "epoch": epoch, "global_step": self.global_step},
+                        {"train/iter_loss": float(loss), "train/reach_volume": float(latest_reach_vol), "train/reach_penalty": float(latest_reach_penalty),
+                         "lr": self._current_lr(), "epoch": epoch, "global_step": self.global_step},
                         step=self.global_step
                     )
 
@@ -149,6 +190,7 @@ class Trainer:
 
             self.logger.log(
                 {"train/loss": tr_loss, "val/loss": va_loss,
+                 "train/reach_volume": float(latest_reach_vol), "train/reach_penalty": float(latest_reach_penalty),
                     "lr": self._current_lr(), "epoch": epoch,
                     "global_step": self.global_step},
                 step=self.global_step
