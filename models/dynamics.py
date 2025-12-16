@@ -11,6 +11,71 @@ Array = jnp.ndarray
 PRNGKey = jax.Array
 
 
+class MLP(eqx.Module):
+    layers: Tuple[Union[eqx.nn.Linear, Callable], ...]
+    in_size: Union[int, str]
+    out_size: Union[int, str]
+    hidden_size_list: Iterable[int]
+    depth: int
+    """Standard Multi-Layer Perceptron; also known as a feed-forward network."""
+    def __init__(
+        self,
+        in_size: Union[int, str],
+        out_size: Union[int, str],
+        hidden_size_list: Iterable[int],
+        *,
+        key: PRNGKey,
+    ):
+        """**Arguments**:
+
+        - `in_size`: The input size. The input to the module should be a vector of
+            shape `(in_features,)`
+        - `out_size`: The output size. The output from the module will be a vector
+            of shape `(out_features,)`.
+        """
+        depth = len(hidden_size_list)
+        keys = jax.random.split(key, depth + 1)
+        layers = []
+
+        # Input layer
+        layers.append(
+            eqx.nn.Linear(
+                in_size,
+                hidden_size_list[0],
+                key=keys[0],
+            )
+        )
+        # Hidden layers
+        for i in range(1, depth):
+            layers.append(
+                eqx.nn.Linear(
+                    hidden_size_list[i - 1],
+                    hidden_size_list[i],
+                    key=keys[i],
+                )
+            )
+        # Output layer
+        layers.append(
+            eqx.nn.Linear(
+                hidden_size_list[-1],
+                out_size,
+                key=keys[-1],
+            )
+        )
+
+        self.layers = tuple(layers)
+        self.in_size = in_size
+        self.out_size = out_size
+        self.hidden_size_list = hidden_size_list
+        self.depth = depth
+
+    def forward(self, x: Array) -> Array:
+        for layer in self.layers[:-1]:
+            x = jax.nn.relu(layer(x))
+        x = self.layers[-1](x)
+        return x
+    __call__ = forward
+
 class MLPDynamics(eqx.Module):
     """
     Equinox MLP for discrete dynamics modeling.
@@ -87,16 +152,21 @@ class MLPDynamics(eqx.Module):
         in_dim = sum(self._input_dims())
         out_dim = self.Dx  # predict Δx or x_next
 
-        self.mlp = eqx.nn.MLP(
+        # self.mlp = eqx.nn.MLP(
+        #     in_size=in_dim,
+        #     out_size=out_dim,
+        #     width_size=self.arch[0],
+        #     depth=len(self.arch),
+        #     activation=act,
+        #     # final_activation=lambda y: y,  # identity
+        #     key=key,
+        # )
+        self.mlp = MLP(
             in_size=in_dim,
             out_size=out_dim,
-            width_size=self.arch[0],
-            depth=len(self.arch),
-            activation=act,
-            # final_activation=lambda y: y,  # identity
+            hidden_size_list=self.arch,
             key=key,
         )
-
         # normalization stats
         self.x_mean = None if stats is None else jnp.asarray(stats["x_mean"])
         self.x_std = None if stats is None else jnp.asarray(stats["x_std"])
@@ -160,6 +230,32 @@ class MLPDynamics(eqx.Module):
         _, X_seq = jax.lax.scan(step_fn, x0, U_tm)  # (T,B,Dx)
         return jnp.swapaxes(X_seq, 0, 1)  # (B,T,Dx)
 
+    # --------------------------- batchless onnx for JAX ---------------------------
+    def forward_batchless_onnx(self, inp: Array) -> Array:
+        x = inp[:self.Dx]
+        u = inp[-self.Du:]
+        x_n = self._maybe_norm_x(x)
+        u_n = self._maybe_norm_u(u)
+        h = jnp.concatenate([x_n, u_n], axis=0)  # (in_dim)
+        y = self.mlp(h)                # (Dx)
+
+        return self._maybe_denorm_x(x_n + y)
+
+
+    # --------------------------- batch onnx for torch ---------------------------
+    def forward_batch_onnx(self, inp: Array) -> Array:
+        x = inp[:, :self.Dx]
+        u = inp[:, -self.Du:]
+        x_n = self._maybe_norm_x(x)
+        u_n = self._maybe_norm_u(u)
+        h = jnp.concatenate([x_n, u_n], axis=1)  # (in_dim)
+        y = jax.vmap(self.mlp)(h)                # (Dx)
+
+        return self._maybe_denorm_x(x_n + y)
+
+
+    __call__ = forward_batchless_onnx
+    # __call__ = forward_batch_onnx
 
 class T_Dynamics(MLPDynamics):
     def forward(self, x: Array, u: Array) -> Array:
@@ -196,7 +292,17 @@ class T_Dynamics(MLPDynamics):
     def forward(self, x: Array, u: Array) -> Array:
         return x + jax.vmap(self.mlp)(jnp.concatenate([x, u], axis=-1)) - u.repeat(4,axis=-1)
 
-    __call__ = forward
+    def forward_batchless_onnx(self, inp):
+        x = inp[:self.Dx]
+        u = inp[-self.Du:]
+        output = x + self.mlp(jnp.concatenate([x, u], axis=0)) - u.repeat(4,axis=-1)
+        return output
+    
+    def forward_batch_onnx(self, inp):
+        x = inp[:, :self.Dx]
+        u = inp[:, -self.Du:]
+        output = x + jax.vmap(self.mlp)(jnp.concatenate([x, u], axis=1)) - u.repeat(4,axis=-1)
+        return output
 
 def load_t_dynamics_model(config: dict, model_path: str) -> T_Dynamics:
     model_def = T_Dynamics(config=config)

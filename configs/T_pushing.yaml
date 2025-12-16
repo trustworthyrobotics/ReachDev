@@ -29,7 +29,8 @@ train:
   out_dir: "output/runs/${settings.task_name}"
   train_valid_ratio: 0.9
   activation: "relu"
-  architecture: [128, 256, 256, 128]
+  architecture: [96, 96, 96]
+  # architecture: [128, 128, 128]
   n_history: 1
   n_rollout: 6
   n_rollout_valid: 6
@@ -50,11 +51,11 @@ train:
     run_name: "test"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
-    save_checkpoints: false       # save model checkpoints to wandb  
+    save_checkpoints: true       # save model checkpoints to wandb  
 planning:
   out_path: "output/planning/${settings.task_name}"
   horizon: 15
-  max_steps: 30
+  max_steps: 20
   n_act_step: 6
   num_test: 1
   action_bound: 30

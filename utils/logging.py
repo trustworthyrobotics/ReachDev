@@ -32,7 +32,6 @@ class PrintLogger(Logger):
 
 class WandbLogger(Logger):
     def __init__(self, *, config: dict):
-        self.wandb = wandb
         wandb_cfg = config["train"]["wandb"]
         project = wandb_cfg["project"]
         name = wandb_cfg["run_name"]
@@ -53,7 +52,7 @@ class WandbLogger(Logger):
     def save(self, path: str):
         # Upload a file as an artifact-like attachment
         if os.path.exists(path):
-            self.wandb.save(path)
+            wandb.save(path)
 
     def finish(self):
         self.run.finish()

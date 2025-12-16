@@ -18,7 +18,7 @@ from utils.logging import PrintLogger, WandbLogger
 def _save_ckpt(path_base: str, model, opt_state, step: int, cfg: dict, stats: dict):
     os.makedirs(os.path.dirname(path_base) or ".", exist_ok=True)
     eqx.tree_serialise_leaves(path_base + ".eqx", model)
-    to_onnx(model, [("B", d) for d in model._input_dims()], return_mode="file", output_path = path_base + ".onnx")
+    to_onnx(model, [(sum(model._input_dims()),)], return_mode="file", output_path = path_base + ".onnx", opset=19)
     np.savez(path_base + ".npz", step=np.array(step), config=np.array([yaml.dump(OmegaConf.to_yaml(cfg))]), **(stats or {}))
 
 
@@ -46,7 +46,7 @@ def main(config: DictConfig) -> None:
 
     if bool(config["train"]["wandb"]["enabled"]):
         logger = WandbLogger(
-            config=config,
+            config= OmegaConf.to_container(config, resolve=True)
         )
     else:
         logger = PrintLogger()
