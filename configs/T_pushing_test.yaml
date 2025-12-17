@@ -20,10 +20,6 @@ data:
   scale: 100 # normalize the data, (x,y)/scale
   window_size: 500
   augment: False
-  enable_hnm: True
-  weight_factor: 1 # weight the data in the loss function, exp(w*diff)
-  weight_ub: 16 # exp(w*diff)<=weight_ub
-  hn_th: 0.03 # pick error>=hn_th
 
 train:
   out_dir: "output/runs/${settings.task_name}"
@@ -31,24 +27,24 @@ train:
   activation: "relu"
   architecture: [64, 64]
   n_history: 1
-  n_rollout: 3
+  n_rollout: 2
   n_rollout_valid: 6
   step_weight_ub: 2
-  noise: 0.003 # std of the Gaussian noise to training data
-  lr: 0.001
+  noise: 0.001 # std of the Gaussian noise to training data
+  lr: 0.01
   lr_params:
     adam_beta1: 0.9
   lr_scheduler:
     type: "CosineAnnealingLR"
     enabled: true
-  n_epoch: 10
-  reach_every: 20
-  batch_size: 8
+  n_epoch: 100
+  reach_every: 1
+  batch_size: 16
   lam_l1_reg: 0.0e-8 # 2.0e-4 # l1 regularization
   wandb:
     enabled: false
     project: "${settings.task_name}"
-    run_name: "test"
+    run_name: "${train.architecture}_ep${train.n_epoch}_bs${train.batch_size}_lr${train.lr}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 20                # log every N training iterations
     save_checkpoints: false       # save model checkpoints to wandb  

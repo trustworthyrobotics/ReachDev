@@ -28,7 +28,9 @@ def _save_ckpt(path_base: str, model, opt_state, step: int, cfg: dict, stats: di
 def main(config: DictConfig) -> None:
     tr_cfg = config["train"]
 
-    os.makedirs(tr_cfg["out_dir"], exist_ok=True)
+    run_name = tr_cfg["wandb"]["run_name"]
+    tr_cfg["out_dir"] = os.path.join(tr_cfg["out_dir"], run_name)
+    os.makedirs(tr_cfg["out_dir"], exist_ok=True)   
     # loaders
     task_name = config["settings"]["task_name"]
     if "single_pendulum" in task_name:

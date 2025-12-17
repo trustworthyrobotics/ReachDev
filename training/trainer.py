@@ -118,9 +118,19 @@ class Trainer:
                 loss, metrics = combined_loss(m, X, U, T=T, step_weights=w, aux_weight=0.0)
                 loss = loss + _l1_regularizer(m, lam_l1)
                 X_init = jnp.concatenate([X[:, 0, :], jnp.zeros_like(U[:, 0, :])], axis=-1)
-                _, reach_lo, reach_up, _, _ = self.reach_analyzer.verify(X_init-self.noise, X_init+self.noise, n_total_steps=self.T_train, action_seq=U[:, None])
-                reach_vol = calculate_volume(reach_lo.reshape(-1, self.T_train + 1, self.model.Dx+self.model.Du), reach_up.reshape(-1, self.T_train + 1, self.model.Dx+self.model.Du))
-                reach_penalty = jnp.log(1 + reach_vol / self.batch_size) * 0.01
+                # _, reach_lo, reach_up, _, _ = self.reach_analyzer.verify(X_init-self.noise, X_init+self.noise, n_total_steps=self.T_train, action_seq=U[:, None])
+                # reach_vol = (reach_up - reach_lo).sum()
+
+                def f_wrapper(x):
+                    state_next = m(x)
+                    action_next = x[m.Dx:]
+                    return jnp.concatenate([state_next, action_next], axis=-1)
+                _, r_lo, r_up, _, _ = self.reach_analyzer.verify_w_model(f_wrapper, X_init-self.noise, X_init+self.noise, n_total_steps=self.T_train, action_seq=U[:, None])
+                # reach_vol = (r_up - r_lo).sum()
+
+                reach_vol = calculate_volume(r_lo.reshape(-1, self.T_train + 1, self.model.Dx+self.model.Du), r_up.reshape(-1, self.T_train + 1, self.model.Dx+self.model.Du))
+                lam_reach = self._current_lr()
+                reach_penalty = jnp.log(1 + reach_vol / self.batch_size) * lam_reach
                 metrics['reach_volume'] = reach_vol
                 metrics['reach_penalty'] = reach_penalty
                 loss = loss + reach_penalty
@@ -172,6 +182,7 @@ class Trainer:
                 if (self.global_step % self._log_every == 0):
                     self.logger.log(
                         {"train/iter_loss": float(loss), "train/reach_volume": float(latest_reach_vol), "train/reach_penalty": float(latest_reach_penalty),
+                         "train/mse": float(metrics["mse"]),
                          "lr": self._current_lr(), "epoch": epoch, "global_step": self.global_step},
                         step=self.global_step
                     )
@@ -191,6 +202,8 @@ class Trainer:
             self.logger.log(
                 {"train/loss": tr_loss, "val/loss": va_loss,
                  "train/reach_volume": float(latest_reach_vol), "train/reach_penalty": float(latest_reach_penalty),
+                 "train/mse": float(metrics["mse"]),
+                 "val/mse": float(metrics["mse"]),
                     "lr": self._current_lr(), "epoch": epoch,
                     "global_step": self.global_step},
                 step=self.global_step

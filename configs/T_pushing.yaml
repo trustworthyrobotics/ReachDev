@@ -20,10 +20,6 @@ data:
   scale: 100 # normalize the data, (x,y)/scale
   window_size: 500
   augment: False
-  enable_hnm: True
-  weight_factor: 1 # weight the data in the loss function, exp(w*diff)
-  weight_ub: 16 # exp(w*diff)<=weight_ub
-  hn_th: 0.03 # pick error>=hn_th
 
 train:
   out_dir: "output/runs/${settings.task_name}"
@@ -48,7 +44,7 @@ train:
   wandb:
     enabled: true
     project: "${settings.task_name}"
-    run_name: "test"
+    run_name: "${train.architecture}_ep${train.n_epoch}_bs${train.batch_size}_lr${train.lr}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  
