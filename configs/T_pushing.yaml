@@ -28,7 +28,7 @@ train:
   architecture: [96, 96, 96]
   # architecture: [128, 128, 128]
   n_history: 1
-  n_rollout: 6
+  n_rollout: 3
   n_rollout_valid: 6
   step_weight_ub: 2
   noise: 0.005 # std of the Gaussian noise to training data
@@ -39,12 +39,18 @@ train:
     type: "CosineAnnealingLR"
     enabled: True
   n_epoch: 100
+  reach:
+    mode: "after" # {"none","mid","after"}
+    every: 2 # only for "mid" and "after" mode, every N batches
+    after: 0.6 # only for "after" mode, after N*n_epoch epochs
+    eps: 0.001
+    weight: 0.001
   batch_size: 512
   lam_l1_reg: 0 # 2.0e-4 # l1 regularization
   wandb:
     enabled: true
-    project: "${settings.task_name}"
-    run_name: "${train.architecture}_ep${train.n_epoch}_bs${train.batch_size}_lr${train.lr}"
+    project: "${settings.task_name}_reach"
+    run_name: "${train.architecture}_ep${train.n_epoch}_bs${train.batch_size}_lr${train.lr}_reach${train.reach.mode}_${train.reach.every}_${train.reach.after}_eps${train.reach.eps}_w${train.reach.weight}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  

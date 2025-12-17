@@ -85,9 +85,15 @@ class Trainer:
             return jnp.concatenate([state_next, action_next], axis=-1)
 
         self.reach_analyzer = DTPlanReach(f_wrapper, state_dim=self.model.Dx, action_dim=self.model.Du, nn_dyn=True, n_steps_per_plan=1, step_size=1)
-        self.noise = float(self.cfg["noise"])
+
         self.batch_size = self.cfg["batch_size"]
-        self.reach_every = int(self.cfg["reach_every"])
+        reach_cfg = self.cfg.get("reach", {})
+        self.reach_mode = reach_cfg.get("mode", "none")
+        assert self.reach_mode in ["none", "mid", "after"]
+        self.reach_every = int(reach_cfg.get("every", 1))
+        self.reach_after = float(reach_cfg.get("after", 0.5))
+        self.reach_eps = float(reach_cfg.get("eps", 0.0))
+        self.reach_weight = float(reach_cfg.get("weight", 0.0))
 
         self._build_steps()
 
@@ -118,19 +124,18 @@ class Trainer:
                 loss, metrics = combined_loss(m, X, U, T=T, step_weights=w, aux_weight=0.0)
                 loss = loss + _l1_regularizer(m, lam_l1)
                 X_init = jnp.concatenate([X[:, 0, :], jnp.zeros_like(U[:, 0, :])], axis=-1)
-                # _, reach_lo, reach_up, _, _ = self.reach_analyzer.verify(X_init-self.noise, X_init+self.noise, n_total_steps=self.T_train, action_seq=U[:, None])
+                # _, reach_lo, reach_up, _, _ = self.reach_analyzer.verify(X_init-self.reach_eps, X_init+self.reach_eps, n_total_steps=self.T_train, action_seq=U[:, None])
                 # reach_vol = (reach_up - reach_lo).sum()
 
                 def f_wrapper(x):
                     state_next = m(x)
                     action_next = x[m.Dx:]
                     return jnp.concatenate([state_next, action_next], axis=-1)
-                _, r_lo, r_up, _, _ = self.reach_analyzer.verify_w_model(f_wrapper, X_init-self.noise, X_init+self.noise, n_total_steps=self.T_train, action_seq=U[:, None])
+                _, r_lo, r_up, _, _ = self.reach_analyzer.verify_w_model(f_wrapper, X_init-self.reach_eps, X_init+self.reach_eps, n_total_steps=self.T_train, action_seq=U[:, None])
                 # reach_vol = (r_up - r_lo).sum()
 
                 reach_vol = calculate_volume(r_lo.reshape(-1, self.T_train + 1, self.model.Dx+self.model.Du), r_up.reshape(-1, self.T_train + 1, self.model.Dx+self.model.Du))
-                lam_reach = self._current_lr()
-                reach_penalty = jnp.log(1 + reach_vol / self.batch_size) * lam_reach
+                reach_penalty = jnp.log(1 + reach_vol / self.batch_size) * self.reach_weight
                 metrics['reach_volume'] = reach_vol
                 metrics['reach_penalty'] = reach_penalty
                 loss = loss + reach_penalty
@@ -160,7 +165,11 @@ class Trainer:
     # -------------- public loop --------------
 
     def run(self):
+        # immediately enable reachability only for "mid" mode
+        reach_enabled = self.reach_mode == "mid"
         for epoch in range(1, self.cfg["n_epoch"] + 1):
+            if self.reach_mode == "after" and epoch >= int(self.reach_after * self.cfg["n_epoch"]):
+                reach_enabled = True
             # ---- train ----
             train_losses = []
             latest_reach_vol = 0
@@ -170,7 +179,7 @@ class Trainer:
                 U = batch["actions"]
                 W = batch["weights"] # unused currently
                 self.key, subk = jax.random.split(self.key)
-                if self.global_step % self.reach_every == 0:
+                if reach_enabled and self.global_step % self.reach_every == 0:
                     self.model, self.opt_state, loss, metrics = self._reach_train_step(self.model, self.opt_state, X, U, subk)
                     latest_reach_vol = metrics["reach_volume"]
                     latest_reach_penalty = metrics["reach_penalty"]
