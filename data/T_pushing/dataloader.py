@@ -125,7 +125,13 @@ def load_dynamics_dataset(config: dict,
     T_ep = int(episodes[0].shape[0])
     D    = int(episodes[0].shape[1])              # D = 2K + 4
     assert D >= 6 and D % 2 == 0, "Format must be [2K relative, 2 pos, 2 vel]."
-
+    num_train = int(len(episodes) * train_ratio)
+    if phase == "train":
+        episodes = episodes[:num_train]
+    elif phase == "valid":
+        episodes = episodes[num_train:]
+    else:
+        raise AssertionError(f"Unknown phase {phase}")
     rel_dim = D - 4
     pos0, pos1 = rel_dim, rel_dim + 2
     vel0, vel1 = rel_dim + 2, rel_dim + 4
@@ -146,18 +152,6 @@ def load_dynamics_dataset(config: dict,
     obs = np.asarray(obs_list, dtype=np.float32)        # [M, n_sample, 2K]
     pusher_pos = np.asarray(pos_list, dtype=np.float32) # [M, n_sample, 2]
     act = np.asarray(act_list, dtype=np.float32)        # [M, n_sample, 2]
-
-    num_train = int(obs.shape[0] * train_ratio)
-    if phase == "train":
-        obs = obs[:num_train]
-        pusher_pos = pusher_pos[:num_train]
-        act = act[:num_train]
-    elif phase == "valid":
-        obs = obs[num_train:]
-        pusher_pos = pusher_pos[num_train:]
-        act = act[num_train:]
-    else:
-        raise AssertionError(f"Unknown phase {phase}")
 
     # ---- Train-time noise on observations ----
     if phase == "train" and noise_std > 0.0:

@@ -39,12 +39,15 @@ train:
     enabled: true
   n_epoch: 100
   reach:
-    mode: "after" # {"none","mid","after"}
+    mode: "mid" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
     after: 0.5 # only for "after" mode, after N*n_epoch epochs
-    eps: 0.001
+    eps_min: 0.0001
+    eps_max: 0.001
+    splits: {0: 2, 1: 2}
     weight: 0.001
-  batch_size: 16
+    batch_size: 8
+  batch_size: 128
   lam_l1_reg: 0.0e-8 # 2.0e-4 # l1 regularization
   wandb:
     enabled: false
