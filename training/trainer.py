@@ -110,6 +110,7 @@ class Trainer:
     def _build_steps(self):
         lam_l1 = float(self.cfg["lam_l1_reg"])
         T = self.T_train
+        T_eval = self.T_valid
         w = self.step_weights
         optim = self.optim
 
@@ -125,36 +126,40 @@ class Trainer:
             model = eqx.apply_updates(model, updates)
             return model, opt_state, loss, metrics
 
+        def reach_penalty_fn(m, X, U, T_reach, key):
+            # pick a random subset for reachability
+            bs = self.reach_batch_size
+            if X.shape[0] > bs:
+                perm = jax.random.permutation(key, X.shape[0])
+                idxs = perm[:bs]
+                reach_X = X[idxs]
+                reach_U = U[idxs]
+            state_init = reach_X[:, 0, :]
+            curr_eps = self.reach_eps_schedule(self.global_step)
+            state_lo = state_init - curr_eps
+            state_up = state_init + curr_eps
+
+            def f_wrapper(x):
+                state_next = m(x)
+                action_next = x[m.Dx:]
+                return jnp.concatenate([state_next, action_next], axis=-1)
+            X_lo = jnp.concatenate([state_lo, jnp.zeros_like(reach_U[:, 0, :])], axis=-1)
+            X_up = jnp.concatenate([state_up, jnp.zeros_like(reach_U[:, 0, :])], axis=-1)
+            X_lo, X_up = prepare_initial_set_v2(X_lo, X_up, splits_cfg=self.reach_splits)
+            _, r_lo, r_up, _, _ = self.reach_analyzer.verify_w_model(f_wrapper, X_lo, X_up, n_total_steps=T_reach, action_seq=reach_U.repeat(X_up.shape[0]//reach_U.shape[0], axis=0)[:, None])
+            # reach_vol = (r_up - r_lo).sum()
+
+            reach_vol = calculate_volume(r_lo.reshape(-1, T_reach + 1, self.model.Dx+self.model.Du), r_up.reshape(-1, T_reach + 1, self.model.Dx+self.model.Du))
+            reach_penalty = jnp.log(1 + reach_vol / r_lo.shape[0]) * self.reach_weight
+            return reach_vol, reach_penalty
+
         @eqx.filter_jit
         def reach_train_step(model, opt_state, X, U, key):
             def loss_fn(m):
                 loss, metrics = combined_loss(m, X, U, T=T, step_weights=w, aux_weight=0.0)
                 loss = loss + _l1_regularizer(m, lam_l1)
+                reach_vol, reach_penalty = reach_penalty_fn(m, X, U, T_reach=T, key=key)
 
-                # pick a random subset for reachability
-                bs = self.reach_batch_size
-                if X.shape[0] > bs:
-                    perm = jax.random.permutation(key, X.shape[0])
-                    idxs = perm[:bs]
-                    reach_X = X[idxs]
-                    reach_U = U[idxs]
-                state_init = reach_X[:, 0, :]
-                curr_eps = self.reach_eps_schedule(self.global_step)
-                state_lo = state_init - curr_eps
-                state_up = state_init + curr_eps
-
-                def f_wrapper(x):
-                    state_next = m(x)
-                    action_next = x[m.Dx:]
-                    return jnp.concatenate([state_next, action_next], axis=-1)
-                X_lo = jnp.concatenate([state_lo, jnp.zeros_like(reach_U[:, 0, :])], axis=-1)
-                X_up = jnp.concatenate([state_up, jnp.zeros_like(reach_U[:, 0, :])], axis=-1)
-                X_lo, X_up = prepare_initial_set_v2(X_lo, X_up, splits_cfg=self.reach_splits)
-                _, r_lo, r_up, _, _ = self.reach_analyzer.verify_w_model(f_wrapper, X_lo, X_up, n_total_steps=self.T_train, action_seq=reach_U.repeat(X_up.shape[0]//reach_U.shape[0], axis=0)[:, None])
-                # reach_vol = (r_up - r_lo).sum()
-
-                reach_vol = calculate_volume(r_lo.reshape(-1, self.T_train + 1, self.model.Dx+self.model.Du), r_up.reshape(-1, self.T_train + 1, self.model.Dx+self.model.Du))
-                reach_penalty = jnp.log(1 + reach_vol / r_lo.shape[0]) * self.reach_weight
                 metrics['reach_volume'] = reach_vol
                 metrics['reach_penalty'] = reach_penalty
                 loss = loss + reach_penalty
@@ -166,14 +171,22 @@ class Trainer:
             return model, opt_state, loss, metrics
 
         @eqx.filter_jit
-        def eval_step(model, X, U, T_eval):
+        def eval_step(model, X, U, key):
             loss, metrics = combined_loss(model, X, U, T=T_eval, step_weights=None, aux_weight=0.0)
+            return loss, metrics
+
+        @eqx.filter_jit
+        def reach_eval_step(model, X, U, key):
+            loss, metrics = combined_loss(model, X, U, T=T_eval, step_weights=None, aux_weight=0.0)
+            reach_vol, reach_penalty = reach_penalty_fn(model, X, U, T_reach=T_eval, key=key)
+            metrics['reach_volume'] = reach_vol
+            metrics['reach_penalty'] = reach_penalty
             return loss, metrics
 
         self._train_step = train_step
         self._reach_train_step = reach_train_step
         self._eval_step = eval_step
-
+        self._reach_eval_step = reach_eval_step
     def _current_lr(self) -> float:
         try:
             v = self.lr_schedule(self.global_step)
@@ -223,7 +236,11 @@ class Trainer:
                 Xv = val_batch["observations"]
                 Uv = val_batch["actions"]
                 Wv = val_batch["weights"] # unused currently
-                vloss, _ = self._eval_step(self.model, Xv, Uv, self.T_valid)
+                self.key, subk = jax.random.split(self.key)
+                if reach_enabled:
+                    vloss, vmetrics = self._reach_eval_step(self.model, Xv, Uv, subk)
+                else:
+                    vloss, vmetrics = self._eval_step(self.model, Xv, Uv, subk)
                 val_losses.append(float(vloss))
             va_loss = float(np.mean(val_losses)) if val_losses else float("nan")
 
@@ -231,7 +248,8 @@ class Trainer:
                 {"train/loss": tr_loss, "val/loss": va_loss,
                  "train/reach_volume": float(latest_reach_vol), "train/reach_penalty": float(latest_reach_penalty),
                  "train/mse": float(metrics["mse"]),
-                 "val/mse": float(metrics["mse"]),
+                 "val/reach_volume": float(vmetrics.get("reach_volume", 0.0)), "val/reach_penalty": float(vmetrics.get("reach_penalty", 0.0)),
+                 "val/mse": float(vmetrics["mse"]),
                     "lr": self._current_lr(), "epoch": epoch,
                     "global_step": self.global_step},
                 step=self.global_step
