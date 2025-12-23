@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import equinox as eqx
 import optax
 import numpy as np
-
+import time
 from training.losses_metrics import combined_loss, make_linear_step_weights
 
 from utils.logging import Logger
@@ -94,7 +94,7 @@ class Trainer:
         self.reach_after = float(reach_cfg.get("after", 0.5))
         self.reach_eps_min = float(reach_cfg.get("eps_min", 0.0))
         self.reach_eps_max = float(reach_cfg.get("eps_max", 0.01))
-        self.reach_eps_schedule = lambda step: min(
+        self.reach_eps_schedule = lambda step: jnp.minimum(
             self.reach_eps_max,
             self.reach_eps_min + (self.reach_eps_max - self.reach_eps_min) * (step / self.total_steps)
         )
@@ -106,6 +106,7 @@ class Trainer:
 
         self.best_val = np.inf
         self.global_step = 0
+        self.global_step_jax = jnp.array(0)
 
     def _build_steps(self):
         lam_l1 = float(self.cfg["lam_l1_reg"])
@@ -126,16 +127,22 @@ class Trainer:
             model = eqx.apply_updates(model, updates)
             return model, opt_state, loss, metrics
 
-        def reach_penalty_fn(m, X, U, T_reach, key):
+        reach_bs = self.reach_batch_size
+        reach_splits = self.reach_splits
+        reach_weight = self.reach_weight
+        verify_w_model = self.reach_analyzer.verify_w_model
+        D = self.model.Dx + self.model.Du
+
+        def reach_penalty_fn(m, reach_X, reach_U, key, step):
+            T_reach = reach_U.shape[1]
             # pick a random subset for reachability
-            bs = self.reach_batch_size
-            if X.shape[0] > bs:
-                perm = jax.random.permutation(key, X.shape[0])
-                idxs = perm[:bs]
-                reach_X = X[idxs]
-                reach_U = U[idxs]
+            if reach_X.shape[0] > reach_bs:
+                perm = jax.random.permutation(key, reach_X.shape[0])
+                idxs = perm[:reach_bs]
+                reach_X = reach_X[idxs]
+                reach_U = reach_U[idxs]
             state_init = reach_X[:, 0, :]
-            curr_eps = self.reach_eps_schedule(self.global_step)
+            curr_eps = self.reach_eps_schedule(step)
             state_lo = state_init - curr_eps
             state_up = state_init + curr_eps
 
@@ -145,20 +152,20 @@ class Trainer:
                 return jnp.concatenate([state_next, action_next], axis=-1)
             X_lo = jnp.concatenate([state_lo, jnp.zeros_like(reach_U[:, 0, :])], axis=-1)
             X_up = jnp.concatenate([state_up, jnp.zeros_like(reach_U[:, 0, :])], axis=-1)
-            X_lo, X_up = prepare_initial_set_v2(X_lo, X_up, splits_cfg=self.reach_splits)
-            _, r_lo, r_up, _, _ = self.reach_analyzer.verify_w_model(f_wrapper, X_lo, X_up, n_total_steps=T_reach, action_seq=reach_U.repeat(X_up.shape[0]//reach_U.shape[0], axis=0)[:, None])
+            X_lo, X_up = prepare_initial_set_v2(X_lo, X_up, splits_cfg=reach_splits)
+            _, r_lo, r_up, _ = verify_w_model(f_wrapper, X_lo, X_up, n_total_steps=T_reach, action_seq=reach_U.repeat(X_up.shape[0]//reach_U.shape[0], axis=0)[:, None])
             # reach_vol = (r_up - r_lo).sum()
 
-            reach_vol = calculate_volume(r_lo.reshape(-1, T_reach + 1, self.model.Dx+self.model.Du), r_up.reshape(-1, T_reach + 1, self.model.Dx+self.model.Du))
-            reach_penalty = jnp.log(1 + reach_vol / r_lo.shape[0]) * self.reach_weight
+            reach_vol = calculate_volume(r_lo.reshape(-1, T_reach + 1, D), r_up.reshape(-1, T_reach + 1, D))
+            reach_penalty = jnp.log(1 + reach_vol / r_lo.shape[0]) * reach_weight
             return reach_vol, reach_penalty
 
         @eqx.filter_jit
-        def reach_train_step(model, opt_state, X, U, key):
+        def reach_train_step(model, opt_state, X, U, key, step):
             def loss_fn(m):
                 loss, metrics = combined_loss(m, X, U, T=T, step_weights=w, aux_weight=0.0)
                 loss = loss + _l1_regularizer(m, lam_l1)
-                reach_vol, reach_penalty = reach_penalty_fn(m, X, U, T_reach=T, key=key)
+                reach_vol, reach_penalty = reach_penalty_fn(m, X, U, key=key, step=step)
 
                 metrics['reach_volume'] = reach_vol
                 metrics['reach_penalty'] = reach_penalty
@@ -176,9 +183,9 @@ class Trainer:
             return loss, metrics
 
         @eqx.filter_jit
-        def reach_eval_step(model, X, U, key):
+        def reach_eval_step(model, X, U, key, step):
             loss, metrics = combined_loss(model, X, U, T=T_eval, step_weights=None, aux_weight=0.0)
-            reach_vol, reach_penalty = reach_penalty_fn(model, X, U, T_reach=T_eval, key=key)
+            reach_vol, reach_penalty = reach_penalty_fn(model, X, U, key=key, step=step)
             metrics['reach_volume'] = reach_vol
             metrics['reach_penalty'] = reach_penalty
             return loss, metrics
@@ -187,6 +194,7 @@ class Trainer:
         self._reach_train_step = reach_train_step
         self._eval_step = eval_step
         self._reach_eval_step = reach_eval_step
+
     def _current_lr(self) -> float:
         try:
             v = self.lr_schedule(self.global_step)
@@ -212,14 +220,22 @@ class Trainer:
                 W = batch["weights"] # unused currently
                 self.key, subk = jax.random.split(self.key)
                 if reach_enabled and self.global_step % self.reach_every == 0:
-                    self.model, self.opt_state, loss, metrics = self._reach_train_step(self.model, self.opt_state, X, U, subk)
+                    # start_time = time.time()
+                    self.model, self.opt_state, loss, metrics = self._reach_train_step(self.model, self.opt_state, X, U, subk, self.global_step_jax)
+                    # jax.block_until_ready(loss)
+                    # end_time = time.time()
+                    # print(f"_reach_train_step time: {end_time - start_time} seconds")
                     latest_reach_vol = metrics["reach_volume"]
                     latest_reach_penalty = metrics["reach_penalty"]
                 else:
+                    # start_time = time.time()
                     self.model, self.opt_state, loss, metrics = self._train_step(self.model, self.opt_state, X, U, subk)
+                    # jax.block_until_ready(loss)
+                    # end_time = time.time()
+                    # print(f"_train_step time: {end_time - start_time} seconds")
                 train_losses.append(float(loss))
                 self.global_step += 1
-
+                self.global_step_jax = self.global_step_jax + 1
                 if (self.global_step % self._log_every == 0):
                     self.logger.log(
                         {"train/iter_loss": float(loss), "train/reach_volume": float(latest_reach_vol), "train/reach_penalty": float(latest_reach_penalty),
@@ -238,7 +254,7 @@ class Trainer:
                 Wv = val_batch["weights"] # unused currently
                 self.key, subk = jax.random.split(self.key)
                 if reach_enabled:
-                    vloss, vmetrics = self._reach_eval_step(self.model, Xv, Uv, subk)
+                    vloss, vmetrics = self._reach_eval_step(self.model, Xv, Uv, subk, self.global_step_jax)
                 else:
                     vloss, vmetrics = self._eval_step(self.model, Xv, Uv, subk)
                 val_losses.append(float(vloss))

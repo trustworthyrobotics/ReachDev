@@ -38,7 +38,7 @@ train:
   lr_scheduler:
     type: "CosineAnnealingLR"
     enabled: True
-  n_epoch: 1
+  n_epoch: 100
   reach:
     mode: "after" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
@@ -51,9 +51,9 @@ train:
   batch_size: 512
   lam_l1_reg: 0 # 2.0e-4 # l1 regularization
   wandb:
-    enabled: false
+    enabled: true
     project: "${settings.task_name}_reach"
-    run_name: "${train.architecture}_ep${train.n_epoch}_bs${train.batch_size}_lr${train.lr}_reach${train.reach.mode}_${train.reach.every}_${train.reach.after}_eps${train.reach.eps}_w${train.reach.weight}"
+    run_name: "{train.reach.mode}_{train.reach.every}_${train.reach.after}_eps${train.reach.eps_min}_${train.reach.eps_max}_w${train.reach.weight}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  
