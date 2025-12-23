@@ -46,14 +46,14 @@ train:
     eps_min: 0.0001
     eps_max: 0.001
     splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
-    weight: 0.0001
+    weight: 0.0005
     batch_size: 8
   batch_size: 512
   lam_l1_reg: 0 # 2.0e-4 # l1 regularization
   wandb:
     enabled: true
     project: "${settings.task_name}_reach"
-    run_name: "{train.reach.mode}_{train.reach.every}_${train.reach.after}_eps${train.reach.eps_min}_${train.reach.eps_max}_w${train.reach.weight}"
+    run_name: "${train.reach.mode}_${train.reach.every}_${train.reach.after}_eps${train.reach.eps_min}_${train.reach.eps_max}_w${train.reach.weight}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  
