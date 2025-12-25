@@ -247,7 +247,7 @@ class DynamicsDataloader:
 
 def build_loaders(
     config: dict,
-) -> tuple[ DynamicsDataloader, DynamicsDataloader, Optional[Dict[str, np.ndarray]] ]:
+) -> tuple[ DynamicsDataloader, DynamicsDataloader]:
     """
     Builds train and valid dataloaders from config.
     Also returns the full dataset stats (DynamicsDataset) for reference.
@@ -274,7 +274,7 @@ def build_loaders(
         drop_last=False,
     )
 
-    return dl_train, dl_valid, None
+    return dl_train, dl_valid
 
 if __name__ == "__main__":
     # simple test

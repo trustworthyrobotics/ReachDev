@@ -29,9 +29,8 @@ class Trainer:
         model,
         train_loader,
         val_loader,
-        save_fn,                # callable(path_base, model, opt_state, step, cfg, stats)
+        save_fn,                # callable(path_base, model, opt_state, step, cfg)
         cfg_full: Dict,
-        stats: Optional[Dict] = None,
         seed: int = 0,
         logger: Optional[Logger] = None,
     ):
@@ -42,7 +41,6 @@ class Trainer:
         self.out_dir = self.cfg["out_dir"]
         self.save_fn = save_fn
         self.cfg_full = cfg_full
-        self.stats = stats or {}
         self.key = jax.random.PRNGKey(seed)
 
         self.logger = logger
@@ -278,7 +276,7 @@ class Trainer:
             if va_loss < self.best_val:
                 self.best_val = va_loss
                 path_base = f"{self.out_dir}/best_model"
-                self.save_fn(path_base, self.model, self.opt_state, self.global_step, self.cfg_full, self.stats)
+                self.save_fn(path_base, self.model, self.opt_state, self.global_step, self.cfg_full)
 
                 if self._wandb_enabled and self._save_ckpts_to_wandb:
                     self.logger.save(path_base + ".eqx")
@@ -286,7 +284,8 @@ class Trainer:
 
             if epoch == self.cfg["n_epoch"]:
                 path_base = f"{self.out_dir}/last_model"
-                self.save_fn(path_base, self.model, self.opt_state, self.global_step, self.cfg_full, self.stats)
+                self.save_fn(path_base, self.model, self.opt_state, self.global_step, self.cfg_full
+                )
                 if self._wandb_enabled and self._save_ckpts_to_wandb:
                     self.logger.save(path_base + ".eqx")
                     self.logger.save(path_base + ".npz")
