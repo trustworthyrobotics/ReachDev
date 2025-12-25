@@ -79,7 +79,7 @@ def multistep_free_rollout_loss(
     mse_t = jnp.mean(err**2, axis=(0, 2))
 
     if step_weights is not None:
-        w = step_weights.astype(jnp.float32)
+        w = step_weights[:X_pred.shape[1]]  # (T,)
         w = w / jnp.sum(w)
         loss = jnp.sum(mse_t * w)
     else:
@@ -136,10 +136,12 @@ def combined_loss(
     T: Optional[int] = None,
     step_weights: Optional[Array] = None,
     aux_weight: float = 0.0,
+    lam_jac: float = 0.0,
 ) -> Tuple[Array, Dict[str, Array]]:
     """
     Free-rollout loss + λ * 1-step auxiliary (optional).
     """
+    T = int(T or U.shape[1])
     loss_free, m_free = multistep_free_rollout_loss(model, X, U, T=T, step_weights=step_weights)
     if aux_weight > 0.0:
         loss_1s, m_1s = onestep_teacher_forcing_loss(model, X, U, T=T)
@@ -148,8 +150,37 @@ def combined_loss(
     else:
         loss = loss_free
         metrics = {**m_free, "loss": loss}
+    if lam_jac > 0.0:
+        jac_loss = jacobian_reg_loss(model, X, U, T=T)
+        loss = loss + lam_jac * jac_loss
+        metrics['jacobian_reg_loss'] = jac_loss
     return loss, metrics
 
+def jacobian_reg_loss(model, X: jnp.ndarray, U: jnp.ndarray, T: int):
+    """
+    Computes the Frobenius norm of the Jacobian df/dx along a trajectory.
+    
+    Args:
+        model: The Equinox model
+        X: (B, T+1, Dx) states
+        U: (B, T, Du) actions
+        T: Horizon to calculate regularization
+    """
+    # 2. Use vmap to compute Jacobians over the batch and time
+    # This gives us (B, T, Dx, Dx) tensor
+    batch_jac_fn = jax.vmap(jax.vmap(jax.jacobian(model.forward_single, argnums=0)))
+    
+    # We only need the first T states to predict the next T states
+    states = X[:, :T, :]
+    actions = U[:, :T, :]
+    
+    jacobians = batch_jac_fn(states, actions)
+    
+    # 3. Calculate Frobenius Norm: sqrt(sum of squares of all elements)
+    # We often use the squared Frobenius norm for easier optimization
+    jac_loss = jnp.mean(jnp.square(jacobians))
+    
+    return jac_loss
 
 # ------------------------------ metrics ------------------------------
 

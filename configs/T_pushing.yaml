@@ -28,8 +28,9 @@ train:
   architecture: [96, 96, 96]
   # architecture: [128, 128, 128]
   n_history: 1
-  n_rollout: 3
+  n_rollout: 6
   n_rollout_valid: 6
+  inc_horizon: true
   step_weight_ub: 2
   noise: 0.005 # std of the Gaussian noise to training data
   lr: 0.001
@@ -40,19 +41,19 @@ train:
     enabled: True
   n_epoch: 100
   reach:
-    mode: "after" # {"none","mid","after"}
+    mode: "none" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
-    after: 0.8 # only for "after" mode, after N*n_epoch epochs
-    eps_min: 0.0001
-    eps_max: 0.001
-    splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
-    weight: 0.0005
-    batch_size: 8
+    after: 0.6 # only for "after" mode, after N*n_epoch epochs
+    eps_min: 0.005
+    eps_max: 0.02
+    # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
+    weight: 0.001
+    # batch_size: 8
   batch_size: 512
-  lam_l1_reg: 0 # 2.0e-4 # l1 regularization
+  lam_jac_reg: 2.0e-3 # 2.0e-4 # jacobian regularization weight
   wandb:
     enabled: true
-    project: "${settings.task_name}_reach"
+    project: "${settings.task_name}_reach2"
     run_name: "${train.reach.mode}_${train.reach.every}_${train.reach.after}_eps${train.reach.eps_min}_${train.reach.eps_max}_w${train.reach.weight}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations

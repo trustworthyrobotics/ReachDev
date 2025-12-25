@@ -261,39 +261,42 @@ class MLPDynamics(eqx.Module):
     # __call__ = forward_batch_onnx
 
 class T_Dynamics(MLPDynamics):
-    def forward(self, x: Array, u: Array) -> Array:
-        """
-        One-step model inference.
-        If n_history==1, x=(B,Dx), u=(B,Du).
-        """
-        tc,tl,tr,bt = x[..., 0:2],x[..., 2:4],x[..., 4:6],x[..., 6:8]
-        block_angle = [
-            jnp.arctan2((tl - tc)[...,1],(tl - tc)[...,0]),
-            jnp.arctan2((tc - tr)[...,1],(tc - tr)[...,0]),
-            jnp.arctan2((bt - tc)[...,1],(bt - tc)[...,0])+jnp.pi*3/2,
-            jnp.arctan2((tl - tr)[...,1],(tl - tr)[...,0]),
-        ][-2]
-        transition_matrix = jnp.zeros(x.shape[:-1] + (2, 2))
-        transition_matrix = transition_matrix.at[..., 0, 0].set( jnp.cos(block_angle))
-        transition_matrix = transition_matrix.at[..., 0, 1].set(-jnp.sin(block_angle))
-        transition_matrix = transition_matrix.at[..., 1, 0].set( jnp.sin(block_angle))
-        transition_matrix = transition_matrix.at[..., 1, 1].set( jnp.cos(block_angle))
-        local_state = ((x.reshape(x.shape[0],-1,2) - tc[:,None,:]) @ transition_matrix).reshape(x.shape[0],-1)
-        local_action = ((u - tc)[:,None,:] @ transition_matrix).reshape(u.shape[0],-1)
-        x_n = self._maybe_norm_x(local_state)
-        u_n = self._maybe_norm_u(local_action)
-        h = jnp.concatenate([x_n, u_n], axis=-1)  # (B, in_dim)
-        y = jax.vmap(self.mlp)(h)                # (B, Dx)
-        output = local_state + y
-        output = (output.reshape(x.shape[0],-1,2) @ transition_matrix.transpose((0,2,1)) + tc[:,None,:]).reshape(x.shape[0],-1)
-        return self._maybe_denorm_x(output)
+    # def forward(self, x: Array, u: Array) -> Array:
+    #     """
+    #     One-step model inference.
+    #     If n_history==1, x=(B,Dx), u=(B,Du).
+    #     """
+    #     tc,tl,tr,bt = x[..., 0:2],x[..., 2:4],x[..., 4:6],x[..., 6:8]
+    #     block_angle = [
+    #         jnp.arctan2((tl - tc)[...,1],(tl - tc)[...,0]),
+    #         jnp.arctan2((tc - tr)[...,1],(tc - tr)[...,0]),
+    #         jnp.arctan2((bt - tc)[...,1],(bt - tc)[...,0])+jnp.pi*3/2,
+    #         jnp.arctan2((tl - tr)[...,1],(tl - tr)[...,0]),
+    #     ][-2]
+    #     transition_matrix = jnp.zeros(x.shape[:-1] + (2, 2))
+    #     transition_matrix = transition_matrix.at[..., 0, 0].set( jnp.cos(block_angle))
+    #     transition_matrix = transition_matrix.at[..., 0, 1].set(-jnp.sin(block_angle))
+    #     transition_matrix = transition_matrix.at[..., 1, 0].set( jnp.sin(block_angle))
+    #     transition_matrix = transition_matrix.at[..., 1, 1].set( jnp.cos(block_angle))
+    #     local_state = ((x.reshape(x.shape[0],-1,2) - tc[:,None,:]) @ transition_matrix).reshape(x.shape[0],-1)
+    #     local_action = ((u - tc)[:,None,:] @ transition_matrix).reshape(u.shape[0],-1)
+    #     x_n = self._maybe_norm_x(local_state)
+    #     u_n = self._maybe_norm_u(local_action)
+    #     h = jnp.concatenate([x_n, u_n], axis=-1)  # (B, in_dim)
+    #     y = jax.vmap(self.mlp)(h)                # (B, Dx)
+    #     output = local_state + y
+    #     output = (output.reshape(x.shape[0],-1,2) @ transition_matrix.transpose((0,2,1)) + tc[:,None,:]).reshape(x.shape[0],-1)
+    #     return self._maybe_denorm_x(output)
 
-    def forward(self, x: Array, u: Array) -> Array:
-        return x + jax.vmap(self.mlp)(jnp.concatenate([x, u], axis=-1))
+    # def forward(self, x: Array, u: Array) -> Array:
+    #     return x + jax.vmap(self.mlp)(jnp.concatenate([x, u], axis=-1))
 
 
     def forward(self, x: Array, u: Array) -> Array:
         return x + jax.vmap(self.mlp)(jnp.concatenate([x, u], axis=-1)) - u.repeat(4,axis=-1)
+
+    def forward_single(self, x: Array, u: Array) -> Array:
+        return x + self.mlp(jnp.concatenate([x, u], axis=-1)) - u.repeat(4,axis=-1)
 
     def forward_batchless_onnx(self, inp):
         x = inp[:self.Dx]
