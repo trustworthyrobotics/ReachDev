@@ -10,7 +10,7 @@ import numpy as np
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from jax2onnx import to_onnx
-
+from datetime import datetime
 from models.dynamics import MLPDynamics, T_Dynamics
 from training.trainer import Trainer
 
@@ -28,9 +28,12 @@ def _save_ckpt(path_base: str, model, opt_state, step: int, cfg: dict, stats: di
 def main(config: DictConfig) -> None:
     tr_cfg = config["train"]
 
-    run_name = tr_cfg["wandb"]["run_name"]
-    tr_cfg["out_dir"] = os.path.join(tr_cfg["out_dir"], run_name)
+    tr_cfg["wandb"]["run_name"] = f"{tr_cfg['wandb']['run_name']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    tr_cfg["out_dir"] = os.path.join(tr_cfg["out_dir"], tr_cfg["wandb"]["run_name"])
     os.makedirs(tr_cfg["out_dir"], exist_ok=True)   
+    # copy the config file to the output directory
+    with open(os.path.join(tr_cfg["out_dir"], "config.yaml"), "w") as f:
+        f.write(OmegaConf.to_yaml(config, resolve=True))
     # loaders
     task_name = config["settings"]["task_name"]
     if "single_pendulum" in task_name:

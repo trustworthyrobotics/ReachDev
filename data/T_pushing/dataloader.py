@@ -117,7 +117,7 @@ def load_dynamics_dataset(config: dict,
     # ---- Config & dims ----
     train_cfg = config["train"]
     n_his  = int(train_cfg["n_history"])
-    n_roll = int(train_cfg["n_rollout"] if phase == "train" else train_cfg["n_rollout_valid"])
+    n_roll = int(train_cfg["horizon_scheduler"]["T_final"] if phase == "train" else train_cfg["n_rollout_valid"])
     train_ratio = float(train_cfg["train_valid_ratio"])
     noise_std   = float(train_cfg["noise"]) if phase == "train" else 0.0
     augment_en  = bool(config["data"]["augment"])

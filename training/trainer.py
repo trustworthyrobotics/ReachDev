@@ -55,30 +55,32 @@ class Trainer:
         # scheduler
         steps_per_epoch = len(self.train_loader)
         self.total_steps = max(1, steps_per_epoch * self.cfg["n_epoch"])
-        if self.cfg["lr_scheduler"]["enabled"] and self.cfg["lr_scheduler"]["type"] == "Cosine": 
-            self.lr_schedule = optax.cosine_decay_schedule(init_value=self.cfg["lr"], decay_steps=self.total_steps, alpha=0.0)
-        elif self.cfg["lr_scheduler"]["enabled"] and self.cfg["lr_scheduler"]["type"] == "Linear":
-            self.lr_schedule = optax.linear_schedule(init_value=self.cfg["lr"], end_value=self.cfg["lr_scheduler"].get("end_value", 0.0), transition_steps=self.total_steps)
-        else:
-            self.lr_schedule = optax.constant_schedule(self.cfg["lr"])
+        if self.cfg["lr_scheduler"]["type"] == "cos": 
+            self.lr_schedule = optax.cosine_decay_schedule(init_value=self.cfg["lr_scheduler"]["lr_init"], decay_steps=self.total_steps, alpha=0.0)
+        elif self.cfg["lr_scheduler"]["type"] == "linear":
+            self.lr_schedule = optax.linear_schedule(init_value=self.cfg["lr_scheduler"]["lr_init"], end_value=self.cfg["lr_scheduler"].get("lr_final", 0.0), transition_steps=self.total_steps)
+        elif self.cfg["lr_scheduler"]["type"] == "const":
+            self.lr_schedule = optax.constant_schedule(self.cfg["lr_scheduler"]["lr_init"])
         # optimizer
-        b1 = float(self.cfg["lr_params"]["adam_beta1"])
         self.optim = optax.chain(
             optax.clip_by_global_norm(1.0),
-            optax.adam(learning_rate=self.lr_schedule, b1=b1)
+            optax.adam(learning_rate=self.lr_schedule)
         )
         self.opt_state = self.optim.init(eqx.filter(self.model, eqx.is_inexact_array))
 
         # weights & jit’d steps
-        self.T_train = int(self.cfg["n_rollout"])
         self.T_valid = int(self.cfg["n_rollout_valid"])
-        self.T_min = 1
-        if self.cfg.get("inc_horizon", False):
-            self.T_schedule = lambda epoch: self.T_min + round((self.T_train - self.T_min) * epoch / self.cfg["n_epoch"])
-        else:
-            self.T_schedule = lambda epoch: self.T_train
-        self.step_weights = make_linear_step_weights(self.T_train, float(self.cfg["step_weight_ub"]))
-
+        self.T_init = int(self.cfg["horizon_scheduler"]["T_init"])
+        self.T_final = int(self.cfg["horizon_scheduler"]["T_final"])
+        self.n_epoch = int(self.cfg["n_epoch"])
+        if self.cfg["horizon_scheduler"]["type"] == "linear":
+            self.T_schedule = lambda epoch: self.T_init + round((self.T_final - self.T_init) * epoch / self.n_epoch)
+        elif self.cfg["horizon_scheduler"]["type"] == "log":
+            log_alpha = self.cfg["horizon_scheduler"].get("log_alpha", 1.0)
+            self.T_schedule = lambda epoch: self.T_init + jnp.floor((self.T_final + 1 -1e-5 - self.T_init) * jnp.log1p(log_alpha * epoch / self.n_epoch) / jnp.log1p(log_alpha))
+        elif self.cfg["horizon_scheduler"]["type"] == "const":
+            self.T_schedule = lambda epoch: self.T_final
+        self.step_weights = make_linear_step_weights(self.T_final, float(self.cfg["step_weight_ub"]))
         # reachability analyzer
         def f_wrapper(x):
             state_next = self.model(x)
@@ -203,7 +205,7 @@ class Trainer:
         latest_reach_penalty = 0
         curr_reach_eps = 0.0
         for epoch in range(1, self.cfg["n_epoch"] + 1):
-            curr_T = self.T_schedule(epoch)
+            curr_T = int(self.T_schedule(epoch))
             if self.reach_mode == "after" and epoch >= int(self.reach_after * self.cfg["n_epoch"]):
                 reach_enabled = True
             # ---- train ----
@@ -267,7 +269,7 @@ class Trainer:
                  "train/mse": float(metrics["mse"]),
                  "val/reach_volume": float(vmetrics.get("reach_volume", 0.0)), "val/reach_penalty": float(vmetrics.get("reach_penalty", 0.0)),
                  "val/mse": float(vmetrics["mse"]),
-                    "lr": self._current_lr(), "epoch": epoch, "T": curr_T,
+                    "lr": self._current_lr(), "epoch": epoch, "T": int(curr_T),
                     "global_step": self.global_step},
                 step=self.global_step
             )

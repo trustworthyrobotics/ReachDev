@@ -112,7 +112,6 @@ class MLPDynamics(eqx.Module):
     n_history: int = eqx.field(static=True)
     activation_name: str = eqx.field(static=True)
     arch: Tuple[int, ...] = eqx.field(static=True)
-    default_rollout_T: int = eqx.field(static=True)
 
     # ---- learnable parts ----
     mlp: MLP
@@ -142,7 +141,6 @@ class MLPDynamics(eqx.Module):
         self.Du = int(data_cfg["action_dim"])
         self.n_history = int(train_cfg["n_history"])
         assert self.n_history == 1, "n_history must be == 1."
-        self.default_rollout_T = int(train_cfg["n_rollout"])
         self.activation_name = train_cfg["activation"]
 
         if self.activation_name == "relu":

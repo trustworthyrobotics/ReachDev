@@ -28,19 +28,18 @@ train:
   architecture: [96, 96, 96]
   # architecture: [128, 128, 128]
   n_history: 1
-  n_rollout: 6
   n_rollout_valid: 6
-  inc_horizon: true
+  horizon_scheduler:
+    type: "log" # log, linear, const
+    T_init: 1
+    T_final: 6
+    log_alpha: 3.0
   step_weight_ub: 2
   noise: 0.005 # std of the Gaussian noise to training data
-  lr: 0.001
-  lr_params:
-    adam_beta1: 0.9
   lr_scheduler:
-    # type: "Cosine"
-    type: "Linear"
-    enabled: True
-    end_value: 0.0002
+    type: "linear" # cos, linear, const
+    lr_init: 0.001
+    lr_final: 0.0001
   n_epoch: 25
   reach:
     mode: "mid" # {"none","mid","after"}
@@ -55,8 +54,8 @@ train:
   lam_jac_reg: 5.0e-3 # 2.0e-4 # jacobian regularization weight
   wandb:
     enabled: true
-    project: "${settings.task_name}_reach2"
-    run_name: "${train.batch_size}_${train.reach.mode}_${train.reach.every}_${train.reach.after}_eps${train.reach.eps_init}_${train.reach.eps_final}_w${train.reach.weight}_j${train.lam_jac_reg}"
+    project: "${settings.task_name}_reach3"
+    run_name: "${train.horizon_scheduler.type}_${train.lr_scheduler.type}_${train.batch_size}_${train.reach.mode}_${train.reach.every}_${train.reach.after}_eps${train.reach.eps_init}_${train.reach.eps_final}_w${train.reach.weight}_j${train.lam_jac_reg}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  
