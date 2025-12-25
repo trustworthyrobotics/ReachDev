@@ -56,7 +56,7 @@ train:
   lr_params:
     adam_beta1: 0.9
   lr_scheduler:
-    type: "CosineAnnealingLR"
+    type: "Cosine"
     enabled: false               # if false -> constant LR
 
   # ----- loop -----

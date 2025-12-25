@@ -33,7 +33,7 @@ def rmse(x: Array, y: Array, axis=None) -> Array:
 
 # ---------------------------- core rollouts ---------------------------
 
-def free_rollout(model, X: Array, U: Array, T: int) -> Array:
+def free_rollout(model, X: Array, U: Array) -> Array:
     """
     Autoregressive rollout using model.rollout_model.
 
@@ -142,10 +142,10 @@ def combined_loss(
     else:
         loss = loss_free
         metrics = {**m_free, "loss": loss}
-    if lam_jac > 0.0:
-        jac_loss = jacobian_reg_loss(model, X, U)
-        loss = loss + lam_jac * jac_loss
-        metrics['jacobian_reg_loss'] = jac_loss
+
+    jac_loss = jacobian_reg_loss(model, X, U)
+    loss = loss + lam_jac * jac_loss
+    metrics['jacobian_reg_loss'] = jac_loss
     return loss, metrics
 
 def jacobian_reg_loss(model, X: jnp.ndarray, U: jnp.ndarray):

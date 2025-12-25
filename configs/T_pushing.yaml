@@ -37,24 +37,26 @@ train:
   lr_params:
     adam_beta1: 0.9
   lr_scheduler:
-    type: "CosineAnnealingLR"
+    # type: "Cosine"
+    type: "Linear"
     enabled: True
-  n_epoch: 100
+    end_value: 0.0002
+  n_epoch: 25
   reach:
-    mode: "none" # {"none","mid","after"}
+    mode: "mid" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
     after: 0.6 # only for "after" mode, after N*n_epoch epochs
-    eps_min: 0.005
-    eps_max: 0.02
+    eps_init: 0.05
+    eps_final: 0.02
     # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
     weight: 0.001
     # batch_size: 8
-  batch_size: 512
-  lam_jac_reg: 2.0e-3 # 2.0e-4 # jacobian regularization weight
+  batch_size: 128
+  lam_jac_reg: 5.0e-3 # 2.0e-4 # jacobian regularization weight
   wandb:
     enabled: true
     project: "${settings.task_name}_reach2"
-    run_name: "${train.reach.mode}_${train.reach.every}_${train.reach.after}_eps${train.reach.eps_min}_${train.reach.eps_max}_w${train.reach.weight}"
+    run_name: "${train.batch_size}_${train.reach.mode}_${train.reach.every}_${train.reach.after}_eps${train.reach.eps_init}_${train.reach.eps_final}_w${train.reach.weight}_j${train.lam_jac_reg}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  

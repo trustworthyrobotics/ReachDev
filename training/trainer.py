@@ -55,8 +55,10 @@ class Trainer:
         # scheduler
         steps_per_epoch = len(self.train_loader)
         self.total_steps = max(1, steps_per_epoch * self.cfg["n_epoch"])
-        if self.cfg["lr_scheduler"]["enabled"] and self.cfg["lr_scheduler"]["type"] == "CosineAnnealingLR": 
+        if self.cfg["lr_scheduler"]["enabled"] and self.cfg["lr_scheduler"]["type"] == "Cosine": 
             self.lr_schedule = optax.cosine_decay_schedule(init_value=self.cfg["lr"], decay_steps=self.total_steps, alpha=0.0)
+        elif self.cfg["lr_scheduler"]["enabled"] and self.cfg["lr_scheduler"]["type"] == "Linear":
+            self.lr_schedule = optax.linear_schedule(init_value=self.cfg["lr"], end_value=self.cfg["lr_scheduler"].get("end_value", 0.0), transition_steps=self.total_steps)
         else:
             self.lr_schedule = optax.constant_schedule(self.cfg["lr"])
         # optimizer
@@ -72,10 +74,7 @@ class Trainer:
         self.T_valid = int(self.cfg["n_rollout_valid"])
         self.T_min = 1
         if self.cfg.get("inc_horizon", False):
-            self.T_schedule = lambda epoch: min(
-                self.T_train, 
-                self.T_min + round((self.T_train - self.T_min) * epoch / self.cfg["n_epoch"])
-            )
+            self.T_schedule = lambda epoch: self.T_min + round((self.T_train - self.T_min) * epoch / self.cfg["n_epoch"])
         else:
             self.T_schedule = lambda epoch: self.T_train
         self.step_weights = make_linear_step_weights(self.T_train, float(self.cfg["step_weight_ub"]))
@@ -94,12 +93,9 @@ class Trainer:
         assert self.reach_mode in ["none", "mid", "after"]
         self.reach_every = int(reach_cfg.get("every", 1))
         self.reach_after = float(reach_cfg.get("after", 0.5))
-        self.reach_eps_min = float(reach_cfg.get("eps_min", 0.0))
-        self.reach_eps_max = float(reach_cfg.get("eps_max", 0.01))
-        self.reach_eps_schedule = lambda step: jnp.minimum(
-            self.reach_eps_max,
-            self.reach_eps_min + (self.reach_eps_max - self.reach_eps_min) * (step / self.total_steps)
-        )
+        self.reach_eps_init = float(reach_cfg.get("eps_init", 0.0))
+        self.reach_eps_final = float(reach_cfg.get("eps_final", 0.01))
+        self.reach_eps_schedule = lambda step: self.reach_eps_init + (self.reach_eps_final - self.reach_eps_init) * jnp.minimum(1.0, step / self.total_steps)
         self.reach_weight = float(reach_cfg.get("weight", 0.0))
         self.reach_splits = reach_cfg.get("splits", {})
         self.reach_batch_size = int(reach_cfg.get("batch_size", self.batch_size))
@@ -111,8 +107,8 @@ class Trainer:
         self.reach_eps = self.reach_eps_schedule(self.global_step)
 
     def _build_steps(self):
-        lam_jac = jnp.array(self.cfg["lam_jac_reg"])
-        aux_weight = jnp.array(0.0)
+        lam_jac = float(self.cfg["lam_jac_reg"])
+        aux_weight = float(self.cfg.get("aux_weight", 0.0))
         w = self.step_weights
         optim = self.optim
 
@@ -222,7 +218,7 @@ class Trainer:
                 self.key, subk = jax.random.split(self.key)
                 if reach_enabled and self.global_step % self.reach_every == 0:
                     # start_time = time.time()
-                    curr_reach_eps = self.reach_eps_schedule(self.global_step)
+                    curr_reach_eps = jnp.array(self.reach_eps_schedule(self.global_step))
                     self.model, self.opt_state, loss, metrics = self._reach_train_step(self.model, self.opt_state, X, U, subk, curr_reach_eps)
                     # jax.block_until_ready(loss)
                     # end_time = time.time()
