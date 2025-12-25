@@ -66,8 +66,8 @@ def main(config: DictConfig) -> None:
         logger=logger,
     )
 
-    with jax.disable_jit():
-        trainer.run()
+    # with jax.disable_jit():
+    #     trainer.run()
     trainer.run()
 
 if __name__ == "__main__":

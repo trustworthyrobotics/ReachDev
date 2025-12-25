@@ -209,7 +209,7 @@ class MLPDynamics(eqx.Module):
 
         return self._maybe_denorm_x(x_n + y)
 
-    def rollout_model(self, x0: Array, U: Array, T: Optional[int] = None) -> Array:
+    def rollout_model(self, x0: Array, U: Array) -> Array:
         """
         Autoregressive rollout:
           x_{t+1} = f(x_t, u_t)  (with history if enabled)
@@ -220,8 +220,7 @@ class MLPDynamics(eqx.Module):
         Returns:
           X_pred: (B, T, Dx)       predictions for x_{1:T}
         """
-        T = int(T or U.shape[1] if U.ndim == 3 else self.default_rollout_T)
-        assert U.ndim == 3 and U.shape[1] >= T, "U must be (B,T,Du)."
+        T = U.shape[1]
 
         # History buffer: last n_history states & actions.
         # For n_history=1, this is just (x_t, u_t).

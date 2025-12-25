@@ -175,12 +175,12 @@ class Trainer:
 
         @eqx.filter_jit
         def eval_step(model, X, U, key):
-            loss, metrics = combined_loss(model, X, U, step_weights=None, aux_weight=0.0)
+            loss, metrics = combined_loss(model, X, U, step_weights=None, aux_weight=aux_weight, lam_jac=lam_jac)
             return loss, metrics
 
         @eqx.filter_jit
         def reach_eval_step(model, X, U, key, curr_reach_eps):
-            loss, metrics = combined_loss(model, X, U, step_weights=None, aux_weight=0.0)
+            loss, metrics = combined_loss(model, X, U, step_weights=None, aux_weight=aux_weight, lam_jac=lam_jac)
             reach_vol, reach_penalty = reach_penalty_fn(model, X, U, key=key, curr_reach_eps=curr_reach_eps)
             metrics['reach_volume'] = reach_vol
             metrics['reach_penalty'] = reach_penalty
