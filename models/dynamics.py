@@ -85,7 +85,7 @@ class T_Dynamics(eqx.Module):
     Dx: int = eqx.field(static=True)
     Du: int = eqx.field(static=True)
     n_history: int = eqx.field(static=True)
-    activation_name: str = eqx.field(static=True)
+    delta_u: bool = eqx.field(static=True)
     arch: Tuple[int, ...] = eqx.field(static=True)
 
     # ---- learnable parts ----
@@ -107,7 +107,7 @@ class T_Dynamics(eqx.Module):
         self.Du = int(data_cfg["action_dim"])
         self.n_history = int(train_cfg["n_history"])
         assert self.n_history == 1, "n_history must be == 1."
-        self.activation_name = train_cfg["activation"]
+        self.delta_u = bool(train_cfg.get("delta_u", False))
 
         in_dim = sum(self._input_dims())
         out_dim = self.Dx  # predict Δx or x_next
@@ -126,23 +126,33 @@ class T_Dynamics(eqx.Module):
 
     # --------------------------- forward / rollout ---------------------------
     def forward(self, x: Array, u: Array) -> Array:
-        return x + jax.vmap(self.mlp)(jnp.concatenate([x, u], axis=-1)) - u.repeat(4,axis=-1)
+        output = x + jax.vmap(self.mlp)(jnp.concatenate([x, u], axis=-1))
+        if self.delta_u:
+            return output - u.repeat(self.Dx // self.Du, axis=-1)
+        return output
 
     def forward_single(self, x: Array, u: Array) -> Array:
-        return x + self.mlp(jnp.concatenate([x, u], axis=-1)) - u.repeat(4,axis=-1)
+        output = x + self.mlp(jnp.concatenate([x, u], axis=-1))
+        if self.delta_u:
+            return output - u.repeat(self.Dx // self.Du, axis=-1)
+        return output
 
     # --------------------------- batchless onnx for JAX ---------------------------
     def forward_batchless_onnx(self, inp):
         x = inp[:self.Dx]
         u = inp[-self.Du:]
-        output = x + self.mlp(jnp.concatenate([x, u], axis=0)) - u.repeat(4,axis=-1)
+        output = x + self.mlp(inp)
+        if self.delta_u:
+            return output - u.repeat(self.Dx // self.Du, axis=-1)
         return output
 
     # --------------------------- batch onnx for torch ---------------------------
     def forward_batch_onnx(self, inp):
         x = inp[:, :self.Dx]
         u = inp[:, -self.Du:]
-        output = x + jax.vmap(self.mlp)(jnp.concatenate([x, u], axis=1)) - u.repeat(4,axis=-1)
+        output = x + jax.vmap(self.mlp)(inp)
+        if self.delta_u:
+            return output - u.repeat(self.Dx // self.Du, axis=-1)
         return output
 
     __call__ = forward_batchless_onnx
