@@ -46,6 +46,9 @@ def gen_data(config, process_id, seed, num_episode):
                   "enable_vis": visualizing,
                   "window_size": window_size,}
 
+    frequency = data_config["frequency"]
+    n_sim_step = round(60 / frequency)
+
     num_transitions = random.randint(0, 6)
     transit_preiod = episode_length // (num_transitions + 1)
     lo, hi = window_size * 0.1, window_size * 0.9
@@ -82,7 +85,7 @@ def gen_data(config, process_id, seed, num_episode):
         y_pusher = rand_float(max(y_obj - box_range, lo), min(y_obj + box_range, hi))
         # allow the simulator to a resting position
         for i in range(2):
-            env_dict = sim.update((x_pusher, y_pusher))
+            env_dict = sim.update((x_pusher, y_pusher), n_sim_step=n_sim_step)
         # add the initial state to the episode
         env_state = np.concatenate([env_dict["state"], env_dict["pusher_pos"], env_dict["action"]], axis=0)
         episode.append(env_state)
@@ -132,7 +135,7 @@ def gen_data(config, process_id, seed, num_episode):
             dy = np.clip(dy, -action_bound, action_bound)
             x_pusher = np.clip(x_pusher + dx, lo, hi)
             y_pusher = np.clip(y_pusher + dy, lo, hi)
-            env_dict = sim.update((x_pusher, y_pusher))
+            env_dict = sim.update((x_pusher, y_pusher), n_sim_step=n_sim_step)
             # TODO: unify the API
             env_state = (
                 np.concatenate([env_dict["state"], env_dict["pusher_pos"], env_dict["action"]], axis=0)
@@ -177,6 +180,11 @@ def parallel_gen_data(args):
 @hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml", version_base=None)
 def main(config: DictConfig) -> None:
     data_config = config["data"]
+    frequency = data_config["frequency"]
+    if frequency != 60:
+        data_config["episode_length"] = data_config["episode_length"] * frequency
+        data_config["num_episodes"] = data_config["num_episodes"] // frequency
+
     num_episodes, training, visualizing, saving, gif = (
         data_config["num_episodes"],
         data_config["training"],

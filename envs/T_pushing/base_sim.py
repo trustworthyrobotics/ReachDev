@@ -12,7 +12,7 @@ import math
 import numpy as np
 import random
 import cv2
-import PIL
+import imageio.v2 as iio
 from PIL import Image, ImageSequence
 
 
@@ -264,7 +264,7 @@ class Base_Sim(object):
             return None
         return np.array(self.pusher_body.position)
 
-    def update(self, action, rel=True):
+    def update(self, action, rel=True, n_sim_step=60):
         """
         Once given a control action, run the simulation forward and return.
         """
@@ -282,8 +282,7 @@ class Base_Sim(object):
         theta = np.arctan2(uyf - uyi, uxf - uxi)
         length = np.linalg.norm(np.array([uxf - uxi, uyf - uyi]), ord=2)
         # length /= 1.5
-        n_sim_step = 60
-        step_dt = 1.0 / n_sim_step
+        step_dt = 1.0 / 60.0
         self.velocity = np.array([np.cos(theta), np.sin(theta)]) * length
         self.pusher_body.velocity = self.velocity.tolist()
 
@@ -375,7 +374,7 @@ class Base_Sim(object):
         cv2.circle(img, pusher_pos, self.pusher_size, self.pusher_color[:3], -1)
 
         # cv2 has BGR format, and flipped y-axis
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        # img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         img = cv2.flip(img, 0)
         if self.ENABLE_VIS:
             cv2.imshow("Simulator", img)
@@ -491,7 +490,7 @@ class Base_Sim(object):
         cap.release()
         cv2.destroyAllWindows()
 
-    def save_gif(self, filename="output_video.gif", fps=5):
+    def save_gif(self, filename="output_video.gif", fps=30):
         """
         Save the list of images as a gif.
 
@@ -504,8 +503,8 @@ class Base_Sim(object):
             return
         images = []
         for frame in self.image_list:
-            images.append(Image.fromarray(frame[:, :, ::-1]))
-        images[0].save(filename, save_all=True, append_images=images[1:], optimize=False, duration=3000 / len(self.image_list), loop=0)
+            images.append(np.array(frame))
+        iio.mimsave(filename, images, fps=fps)
         print(f"-----Gif saved as {filename} ----")
         # self.image_list = []
 
