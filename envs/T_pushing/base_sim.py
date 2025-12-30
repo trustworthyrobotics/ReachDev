@@ -300,10 +300,14 @@ class Base_Sim(object):
             "state": np.concatenate([self.get_kp_state(), self.get_static_state()]),
             "pusher_pos": self.get_pusher_position(),
             "action": self.velocity,
+            "com_pos": np.array(self.get_all_object_positions()).flatten(),
+            "angle": np.array(self.get_all_object_angles()).flatten(),
         }
         if rel:
             env_dict["state"][0::2] -= env_dict["pusher_pos"][0]
             env_dict["state"][1::2] -= env_dict["pusher_pos"][1]
+            env_dict["com_pos"][0::2] -= env_dict["pusher_pos"][0]
+            env_dict["com_pos"][1::2] -= env_dict["pusher_pos"][1]
         
         return env_dict
 

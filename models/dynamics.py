@@ -103,11 +103,17 @@ class T_Dynamics(eqx.Module):
         assert len(arch_list) >= 1, "Architecture must have at least one hidden layer."
         self.arch = tuple(int(x) for x in arch_list)
 
-        self.Dx = int(data_cfg["state_dim"])
+        pred_mode = str(train_cfg.get("pred_mode", "state"))
+        if pred_mode == "state":
+            self.Dx = int(data_cfg["state_dim"])
+        elif pred_mode == "pose":
+            self.Dx = int(data_cfg.get("pose_dim", 3))
         self.Du = int(data_cfg["action_dim"])
         self.n_history = int(train_cfg["n_history"])
         assert self.n_history == 1, "n_history must be == 1."
         self.delta_u = bool(train_cfg.get("delta_u", False))
+        if pred_mode == "pose":
+            self.delta_u = False  # override for pose prediction
 
         in_dim = sum(self._input_dims())
         out_dim = self.Dx  # predict Δx or x_next

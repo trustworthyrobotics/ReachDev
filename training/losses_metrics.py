@@ -1,6 +1,6 @@
 # trainers/losses_metrics.py
 from __future__ import annotations
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Callable
 
 import jax
 import jax.numpy as jnp
@@ -57,6 +57,7 @@ def multistep_free_rollout_loss(
     U: Array,
     *,
     step_weights: Optional[Array] = None,
+    transform_fn: Optional[Callable[[Array], Array]] = None,
 ) -> Tuple[Array, Dict[str, Array]]:
     """
     Multi-step free-rollout MSE with optional per-step weights.
@@ -70,6 +71,10 @@ def multistep_free_rollout_loss(
       metrics: dict with mse, rmse and per-step versions
     """
     X_pred, X_tgt = free_rollout(model, X, U)           # (B,T,Dx)
+    if transform_fn:
+        X_pred = transform_fn(X_pred)
+        X_tgt = transform_fn(X_tgt)
+
     err = X_pred - X_tgt                                     # (B,T,Dx)
 
     # Per-step MSE (averaged over batch and state dims): (T,)
@@ -91,57 +96,20 @@ def multistep_free_rollout_loss(
     return loss, metrics
 
 
-def onestep_teacher_forcing_loss(
-    model,
-    X: Array,
-    U: Array,
-) -> Tuple[Array, Dict[str, Array]]:
-    """
-    Teacher-forcing 1-step loss over a window:
-      predict x_{t+1} from x_t, u_t for t in [0..T-1].
-
-    Args:
-      X: (B, T+1, Dx)
-      U: (B, T,   Du)
-    """
-    x_t = X[:, :-1, :]             # (B,T,Dx)
-    u_t = U                       # (B,T,Du)
-    x_tp1 = X[:, 1:, :]           # (B,T,Dx)
-
-    # Flatten time into batch, run in one call, then unflatten.
-    B, TT, Dx = x_t.shape
-    x_pred = model.forward(x_t.reshape(B * TT, Dx), u_t.reshape(B * TT, -1))
-    x_pred = x_pred.reshape(B, TT, Dx)
-
-    err = x_pred - x_tp1
-    loss = jnp.mean(err**2)
-    metrics = {
-        "mse_1step": jnp.mean(err**2),
-        "rmse_1step": jnp.sqrt(jnp.mean(err**2)),
-    }
-    return loss, metrics
-
-
 def combined_loss(
     model,
     X: Array,
     U: Array,
     *,
     step_weights: Optional[Array] = None,
-    aux_weight: float = 0.0,
     lam_jac: float = 0.0,
+    transform_fn: Optional[Callable[[Array], Array]] = None,
 ) -> Tuple[Array, Dict[str, Array]]:
     """
     Free-rollout loss + λ * 1-step auxiliary (optional).
     """
-    loss_free, m_free = multistep_free_rollout_loss(model, X, U, step_weights=step_weights)
-    if aux_weight > 0.0:
-        loss_1s, m_1s = onestep_teacher_forcing_loss(model, X, U)
-        loss = loss_free + aux_weight * loss_1s
-        metrics = {**m_free, **m_1s, "loss": loss, "loss_free": loss_free, "loss_1step": loss_1s}
-    else:
-        loss = loss_free
-        metrics = {**m_free, "loss": loss}
+    loss, metrics = multistep_free_rollout_loss(model, X, U, step_weights=step_weights, transform_fn=transform_fn)
+    metrics.update({"loss": loss})
 
     jac_loss = jacobian_reg_loss(model, X, U)
     loss = loss + lam_jac * jac_loss
@@ -176,38 +144,5 @@ def l1_reg_loss(model):
             return acc + jnp.sum(jnp.abs(leaf))
     total_l1 = eqx.tree_reduce(leaf_l1, params, 0.0)
     return total_l1
-# ------------------------------ metrics ------------------------------
 
-def compute_rollout_metrics(
-    X_pred: Array,
-    X_tgt: Array,
-    *,
-    x_std: Optional[Array] = None,
-) -> Dict[str, Array]:
-    """
-    Extra metrics on a finished rollout.
-    Args:
-      X_pred, X_tgt: (B,T,Dx)
-      x_std: (Dx,) optional; if provided, report NRMSE using it.
-    """
-    err = X_pred - X_tgt
-    mse_all = jnp.mean(err**2)
-    rmse_all = jnp.sqrt(mse_all)
 
-    mse_t = jnp.mean(err**2, axis=(0, 2))          # (T,)
-    rmse_t = jnp.sqrt(mse_t + 1e-12)
-
-    out = {
-        "mse": mse_all,
-        "rmse": rmse_all,
-        "mse_per_step": mse_t,
-        "rmse_per_step": rmse_t,
-    }
-
-    if x_std is not None:
-        # Normalize per-state, then aggregate.
-        norm_err = err / (x_std[None, None, :] + 1e-8)
-        nrmse_all = jnp.sqrt(jnp.mean(norm_err**2))
-        out["nrmse"] = nrmse_all
-
-    return out

@@ -14,6 +14,8 @@ from tqdm import tqdm
 """
 output format: (state, pusher position, pusher velocity)
 state: relative position of keypoints of object to pusher: x1-xp, y1-yp, x2-xp, y2-yp, ...
+relative position of COM to pusher: xcom-xp, ycom-yp
+angle of object: theta
 pusher position: xp, yp
 pusher velocity: vx, vy
 data: (x1-xp, y1-yp, x2-xp, y2-yp, x3-xp, y3-yp, x4-xp, y4-yp, xp, yp, vx, vy)
@@ -87,7 +89,7 @@ def gen_data(config, process_id, seed, num_episode):
         for i in range(2):
             env_dict = sim.update((x_pusher, y_pusher), n_sim_step=n_sim_step)
         # add the initial state to the episode
-        env_state = np.concatenate([env_dict["state"], env_dict["pusher_pos"], env_dict["action"]], axis=0)
+        env_state = np.concatenate([env_dict["state"], env_dict["com_pos"], env_dict["angle"], env_dict["pusher_pos"], env_dict["action"]], axis=0)
         episode.append(env_state)
 
         # simulate an episode
@@ -138,7 +140,7 @@ def gen_data(config, process_id, seed, num_episode):
             env_dict = sim.update((x_pusher, y_pusher), n_sim_step=n_sim_step)
             # TODO: unify the API
             env_state = (
-                np.concatenate([env_dict["state"], env_dict["pusher_pos"], env_dict["action"]], axis=0)
+                np.concatenate([env_dict["state"], env_dict["com_pos"], env_dict["angle"], env_dict["pusher_pos"], env_dict["action"]], axis=0)
             )
             episode[-1][-action_dim:] = env_state[-action_dim:]
             episode.append(env_state)

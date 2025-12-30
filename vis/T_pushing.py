@@ -4,12 +4,15 @@ import imageio.v2 as iio
 from io import BytesIO
 import os
 import pickle
+import jax
 import jax.numpy as jnp
 import equinox as eqx
 import hydra
 from omegaconf import DictConfig
+import yaml
 
 from models.dynamics import load_t_dynamics_model
+from utils.T_pushing import pose_to_kp
 
 def plot_Tee(tee_kp, c="orange", label=""):
     """tee_kp: np.array([TL.x,TL.y,TC.x,TC.y,TR.x,TR.y,B.x,B.y])"""
@@ -84,11 +87,21 @@ def rel_to_abs_kp_plus_pusher(eps_denorm: np.ndarray) -> np.ndarray:
     return vis
 
 
-@hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
-def main(config: DictConfig):
-    data_dir = config["data"]["out_path"]
+def main():
+    model_dir = "output/runs/T_pushing/"
+    model_dir = model_dir + "log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_20251229_200957"
+    config_path = os.path.join(model_dir, "config.yaml")
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+    data_dir = "output/data/T_pushing_freq1"
     model_dir = config["train"]["out_dir"]
     scale = float(config["data"].get("scale", 1.0))  # data was normalized by /scale
+    pred_mode = config["train"].get("pred_mode", "state")
+    stem_size = jnp.array(config["data"]["stem_size"])
+    bar_size = jnp.array(config["data"]["bar_size"])
+    state_dim = config["data"]["state_dim"]
+    pose_dim = config["data"].get("pose_dim", 3)
+    action_dim = config["data"]["action_dim"]
 
     eval_p_path = os.path.join(data_dir, "data_eval.p")
     model_path = os.path.join( config["train"]["out_dir"], "last_model.eqx")
@@ -101,31 +114,44 @@ def main(config: DictConfig):
     # -----------------------------
     with open(eval_p_path, "rb") as f:
         eval_data = pickle.load(f)
-    eps_arr = np.array(eval_data)  # [B, T, 12]
+    eps_arr = np.array(eval_data)  # [B, T, 15]
 
     B, T, _ = eps_arr.shape
-    scale = float(config["data"]["scale"])
-
     # Everything inside file is normalized by /scale → denormalize for visualization
-    eps_denorm = eps_arr.astype(np.float32)               # [B,T,12], unnormalized
-    eps_norm = eps_denorm / scale                    # [B,T,12], normalized
+    eps_denorm = eps_arr.astype(np.float32)               # [B,T,15], unnormalized
+    eps_norm = eps_denorm / scale                    # [B,T,15], normalized
 
     # ----------------- actions (U) and initial states -----------------
     # U_t = (v_x, v_y) at time t; use first T-1 actions to predict next T-1 states.
-    U_norm = eps_norm[:, :-1, 10:12]                    # [B,T-1,2] normalized velocities
-    x0_norm = eps_norm[:, 0, :8]                         # [B,8]     normalized initial state
+    U_norm = eps_norm[:, :-1, -action_dim:]                    # [B,T-1,2] normalized velocities
+    if pred_mode == "state":
+        x0_norm = eps_norm[:, 0, :state_dim]                   # [B,8]    normalized initial state
+    elif pred_mode == "pose":
+        x0_norm = eps_norm[:, 0, state_dim:state_dim+pose_dim]                         # [B,3]     normalized initial state
+        x0_norm[:, -1] = x0_norm[:, -1] * scale  # denormalize angle
+        def transform_fn(pose):
+            B, T, D = pose.shape
+            pose = pose.reshape(-1, D)
+            kp = jax.vmap(pose_to_kp, in_axes=(0, None, None))(pose, stem_size, bar_size)
+            return kp.reshape(B, T, -1)
+    else:
+        raise ValueError(f"Unknown pred_mode: {pred_mode}")
 
     # ----------------- load model & rollout (batch) -----------------
     # rollout_model(x0: [B,Dx], U: [B,T-1,Du]) -> X_pred: [B,T-1,Dx]
     X_pred_norm = model.rollout_model(jnp.asarray(x0_norm), jnp.asarray(U_norm))
     # prepend x0 to get [B,T,Dx]
     X_pred_full_norm = jnp.concatenate([x0_norm[:, None, :], X_pred_norm], axis=1)
-    X_pred_full_denorm = np.asarray(X_pred_full_norm) * scale
-    eps_pred_denorm = np.concatenate([X_pred_full_denorm, eps_denorm[:, :, 8:12]], axis=-1)  # [B,T,12]
+    X_pred_full_denorm = X_pred_full_norm * scale
+    
+    if pred_mode == "pose":
+        # renormalize angle in predicted poses
+        X_pred_full_denorm = X_pred_full_denorm.at[:, :, -1].set(X_pred_full_denorm[:, :, -1] / scale)
+        X_pred_full_denorm = transform_fn(X_pred_full_denorm)
 
     # ----------------- build GT/PRED arrays for plot_frame -----------------
-    gt_vis = rel_to_abs_kp_plus_pusher(eps_denorm)         # [B,T,10]
-    pred_vis = rel_to_abs_kp_plus_pusher(eps_pred_denorm)  # [B,T,10]
+    gt_vis = rel_to_abs_kp_plus_pusher(np.concatenate([eps_denorm[..., :state_dim], eps_denorm[..., state_dim+pose_dim:]], axis=-1))         # [B,T,10]
+    pred_vis = rel_to_abs_kp_plus_pusher(np.concatenate([X_pred_full_denorm, eps_denorm[:, :, state_dim+pose_dim:]], axis=-1))  # [B,T,10]
     print(f"vis error: {np.abs(pred_vis - gt_vis).mean()}")
 
     # ----------------- write one GIF per episode -----------------

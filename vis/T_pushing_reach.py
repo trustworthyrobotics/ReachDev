@@ -5,6 +5,7 @@ from io import BytesIO
 import yaml
 import os
 import pickle
+import jax
 import jax.numpy as jnp
 from jax import random as jrandom
 import equinox as eqx
@@ -20,7 +21,7 @@ sys.path.append('CROWN_Reach')
 from CROWN_Reach.src.reachability import DTPlanReach
 from CROWN_Reach.src.utils.vis import visualize_flowpipe_time
 from models.dynamics import load_t_dynamics_model
-
+from utils.T_pushing import pose_to_kp
 
 import numpy as np
 from scipy.spatial import ConvexHull
@@ -169,19 +170,98 @@ def plot(r_lo, r_up, trajs, pxy, scale, window_size, file_name, zonotopes=None):
     print(f"Plot saved to {file_name}")
     plt.close()
 
+def plot_v2(r_lo, r_up, trajs, pxy, scale, window_size, file_name, transform_fn):
+    """
+    Method 1: Footprint Sweep Visualization.
+    Uses transform_fn([B, T, 3]) -> [B, T, 8] to draw T-shapes.
+    """
+    # 1. Preprocessing (Denormalization and coordinate shifting)
+    Dx = r_lo.shape[-1]
+    # Repeat pxy [1, T+1, 2] to match [..., 8] for 4 keypoints
+    pxy_rep = np.tile(pxy, (1, 1, Dx // pxy.shape[-1])) 
+    
+    r_lo[:, :, :2] = (r_lo[:, :, :2] + pxy_rep) * scale
+    r_up[:, :, :2] = (r_up[:, :, :2] + pxy_rep) * scale
+    trajs[:, :, :2] = (trajs[:, :, :2] + pxy_rep) * scale
+    pxy_scaled = pxy[0] * scale # [T+1, 2]
+
+    # 1. Setup Plot
+    fig, ax = plt.subplots(figsize=(8, 8))
+    cmap = plt.get_cmap("gist_rainbow")
+    
+    # r_lo shape is [1, T+1, 3] (assuming batch size 1 for the reach tube)
+    B_reach, T_plus_1, _ = r_lo.shape
+    T = T_plus_1 - 1
+    num_samples = 64
+    
+    # 2. Sample 64 trajectories within the reach tube bounds
+    # Resulting shape: [num_samples, T+1, 3]
+    low = r_lo[0]   # [T+1, 3]
+    high = r_up[0]  # [T+1, 3]
+    samples_pose = np.random.uniform(low, high, size=(num_samples, T + 1, 3))
+    
+    # 3. Transform all sample trajectories to keypoints
+    # Input: [64, T+1, 3] -> Output: [64, T+1, 8]
+    samples_kp = np.array(transform_fn(jnp.array(samples_pose)))  # [64, T+1, 8]
+
+    trajs_kp = np.array(transform_fn(jnp.array(trajs)))  # [n_traj, T+1, 8]
+    
+    # Drawing order provided: TL, TC, TR, B (0, 2, 1, 3) to draw top bar then stem
+    order = np.array([0, 2, 1, 3]) 
+
+    # 5. Plotting
+    for t in range(T + 1):
+        color = cmap(t / T)
+        
+        # # Plot 64 semitransparent T-shapes at this time step
+        # for s in range(num_samples):
+        #     tee_kp = samples_kp[s, t, :8] # [8]
+            
+        #     # Use your specific plotting logic
+        #     ax.plot(tee_kp[::2][order], tee_kp[1::2][order], 
+        #             color=color, alpha=0.5, linewidth=5)
+
+        for s in range(trajs_kp.shape[0]):
+            tee_kp = trajs_kp[s, t, :8]
+            ax.plot(tee_kp[::2][order], tee_kp[1::2][order], 
+                    color=color, alpha=1, linewidth=2)
+
+
+    # Plot Pusher Path in black
+    ax.plot(pxy_scaled[:, 0], pxy_scaled[:, 1], color='black', 
+            marker='o', markersize=4, label='Pusher', linewidth=2, zorder=10)
+
+    # Formatting
+    ax.set_aspect('equal')
+    ax.set_xlim(0, window_size)
+    ax.set_ylim(0, window_size)
+    ax.set_xlabel("X (mm)")
+    ax.set_ylabel("Y (mm)")
+    ax.set_title(f"T-Shape Footprint Sweep ({T} steps)")
+    
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.savefig(file_name, bbox_inches='tight')
+    print(f"Plot saved to {file_name}")
+    plt.close()
 
 # @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
 # def main(config: DictConfig):
 def main():
     model_dir = "output/runs/T_pushing/"
-    model_dir = model_dir + "log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_20251228_191734"
+    model_dir = model_dir + "log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_20251229_200957"
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     data_dir = config["data"]["out_path"]
     scale = float(config["data"].get("scale", 1.0))  # data was normalized by /scale
+    pred_mode = config["train"].get("pred_mode", "state")
+    stem_size = jnp.array(config["data"]["stem_size"])
+    bar_size = jnp.array(config["data"]["bar_size"])
+    state_dim = config["data"]["state_dim"]
+    pose_dim = config["data"].get("pose_dim", 3)
+    action_dim = config["data"]["action_dim"]
 
-    eval_p_path = os.path.join(data_dir, "data.p")
+    eval_p_path = os.path.join(data_dir, "data_eval.p")
     # model_path = os.path.join( model_dir, "last_model.eqx")
     model_path = os.path.join( model_dir, "best_model.eqx")
     model = load_t_dynamics_model(config=config, model_path=model_path)
@@ -200,37 +280,47 @@ def main():
     # -----------------------------
     with open(eval_p_path, "rb") as f:
         eval_data = pickle.load(f)
-    eps_arr = np.array(eval_data)  # [B, T, 12]
+    eps_arr = np.array(eval_data)  # [B, T, 15]
 
     B, T, _ = eps_arr.shape
-    state_dim = model.Dx
-    action_dim = model.Du
     scale = float(config["data"]["scale"])
     T_reach = config["train"]["n_rollout_valid"]
     T_reach = 10
     window_size = config["data"]["window_size"]
 
     # Everything inside file is normalized by /scale → denormalize for visualization
-    eps_denorm = eps_arr.astype(np.float32)               # [B,T,12], unnormalized
-    eps_norm = eps_denorm / scale                    # [B,T,12], normalized
+    eps_denorm = eps_arr.astype(np.float32)               # [B,T,15], unnormalized
+    eps_norm = eps_denorm / scale                    # [B,T,15], normalized
 
     selected_eps_idx = 0
-    state_init = jnp.array(eps_norm[selected_eps_idx, 0, :state_dim])[None]      # [1, Dx]
+    if pred_mode == "state":
+        state_init = jnp.array(eps_norm[selected_eps_idx, 0, :state_dim])[None]      # [1, Dx]
+        act_state_dim = state_dim
+    if pred_mode == "pose":
+        state_init = jnp.array(eps_norm[selected_eps_idx, 0, state_dim:state_dim+pose_dim])[None]      # [1, Dx]
+        state_init = state_init.at[0, -1].set(state_init[0, -1] * scale)  # denormalize angle
+        act_state_dim = pose_dim
+        def transform_fn(pose):
+            B, T, D = pose.shape
+            pose = pose.reshape(-1, D)
+            kp = jax.vmap(pose_to_kp, in_axes=(0, None, None))(pose, stem_size, bar_size)
+            return kp.reshape(B, T, -1)
     action_seq = jnp.array(eps_norm[selected_eps_idx, :T_reach, -action_dim:])[None]      # [1, T, Du]
 
     reach_eps = float(config["train"]["reach"]["eps_final"])
-    reach_eps = 0.02
+    # reach_eps = 0.02
     state_init_lo = state_init - reach_eps
     state_init_up = state_init + reach_eps
     z_init_lo = jnp.concatenate([state_init_lo, jnp.zeros((1, action_dim))], axis=-1) # [1, Dx+Du]
     z_init_up = jnp.concatenate([state_init_up, jnp.zeros((1, action_dim))], axis=-1) # [1, Dx+Du]
     reach_splits = config["train"]["reach"].get("splits", None)
-    # reach_splits = {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
+    n_split = 2 if pred_mode == "state" else 4
+    reach_splits = {i: n_split for i in range(act_state_dim)}
     z_init_lo, z_init_up = prepare_initial_set_v2(z_init_lo, z_init_up, splits_cfg=reach_splits)
 
     ts, r_lo, r_up, xF, _ = reach_analyzer.verify(z_init_lo, z_init_up, n_total_steps=T_reach, action_seq=action_seq.repeat(z_init_up.shape[0]//action_seq.shape[0], axis=0)[:, None])
-    r_lo = r_lo.reshape(-1, T_reach + 1, state_dim+action_dim)[..., :state_dim]  # [B, T+1, Dx]
-    r_up = r_up.reshape(-1, T_reach + 1, state_dim+action_dim)[..., :state_dim]  # [B, T+1, Dx]
+    r_lo = r_lo.reshape(-1, T_reach + 1, act_state_dim+action_dim)[..., :act_state_dim]  # [B, T+1, Dx]
+    r_up = r_up.reshape(-1, T_reach + 1, act_state_dim+action_dim)[..., :act_state_dim]  # [B, T+1, Dx]
 
     # aggregate volume over all partitions
     r_lo = jnp.min(r_lo, axis=0, keepdims=True)  # [1, T+1, Dx]
@@ -245,7 +335,7 @@ def main():
     sample_rollout = model.rollout_model(sample_state_init, action_seq.repeat(n_samples, axis=0))
     sample_rollout = jnp.concatenate([sample_state_init[:, None, :], sample_rollout], axis=1)  # [n_samples, T+1, Dx]
 
-    pxy = eps_norm[selected_eps_idx, :T_reach+1, state_dim:state_dim+2][None]  # [1, T+1, 2]
+    pxy = eps_norm[selected_eps_idx, :T_reach+1, state_dim+pose_dim:-action_dim][None]  # [1, T+1, 2]
 
     out_dir = os.path.join("output", "vis", "T_pushing")
     os.makedirs(out_dir, exist_ok=True)
@@ -257,16 +347,20 @@ def main():
     # exit()
     r_lo, r_up, sample_rollout, pxy, scale, window_size = np.load(arch_file_name).values()
 
-    # zonotopes = generate_zonotopes(
-    #     c=xF.P.c[:,:state_dim],          # [B, Dx]
-    #     L=xF.P.L[:, :state_dim, 1:state_dim+1],          # [B, Dx, Dx]
-    #     R_lo=xF.R.lo[:, :state_dim],    # [B, Dx]
-    #     R_up=xF.R.hi[:, :state_dim]     # [B, Dx]
-    # )
+    if pred_mode == "state":
+        # zonotopes = generate_zonotopes(
+        #     c=xF.P.c[:,:state_dim],          # [B, Dx]
+        #     L=xF.P.L[:, :state_dim, 1:state_dim+1],          # [B, Dx, Dx]
+        #     R_lo=xF.R.lo[:, :state_dim],    # [B, Dx]
+        #     R_up=xF.R.hi[:, :state_dim]     # [B, Dx]
+        # )
 
-    plot(r_lo, r_up, sample_rollout, pxy, scale, window_size, outfile)
+        plot(r_lo, r_up, sample_rollout, pxy, scale, window_size, outfile)
+    elif pred_mode == "pose":
+        plot_v2(r_lo, r_up, sample_rollout, pxy, scale, window_size, outfile, transform_fn)
 
-    for idx in range(state_dim):
+
+    for idx in range(act_state_dim):
         outfile = os.path.join(out_dir, f"reach_{idx}.png")
         visualize_flowpipe_time(
             times=ts,

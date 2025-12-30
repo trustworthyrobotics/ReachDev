@@ -15,6 +15,8 @@ import numpy as np
 import time
 from training.losses_metrics import combined_loss, make_linear_step_weights
 
+from utils.T_pushing import pose_to_kp
+
 from utils.logging import Logger
 
 class Trainer:
@@ -71,6 +73,21 @@ class Trainer:
         self.T_init = int(self.cfg["horizon_scheduler"]["T_init"])
         self.T_final = int(self.cfg["horizon_scheduler"]["T_final"])
         self.n_epoch = int(self.cfg["n_epoch"])
+        pred_mode = self.cfg.get("pred_mode", "state")
+        if pred_mode == "state":
+            self.transform_fn = None
+        elif pred_mode == "pose":
+            scale = float(self.cfg_full["data"].get("scale", 1.0))
+            stem_size = jnp.array(self.cfg_full["data"]["stem_size"]) / scale
+            bar_size = jnp.array(self.cfg_full["data"]["bar_size"]) / scale
+            def transform_fn(pose):
+                B, T, D = pose.shape
+                pose = pose.reshape(-1, D)
+                kp = jax.vmap(pose_to_kp, in_axes=(0, None, None))(pose, stem_size, bar_size)
+                return kp.reshape(B, T, -1)
+            self.transform_fn = transform_fn
+        else:
+            raise ValueError(f"Unknown pred_mode: {pred_mode}")
         if self.cfg["horizon_scheduler"]["type"] == "linear":
             self.T_schedule = lambda epoch: self.T_init + round((self.T_final - self.T_init) * epoch / self.n_epoch)
         elif self.cfg["horizon_scheduler"]["type"] == "log":
@@ -108,14 +125,13 @@ class Trainer:
 
     def _build_steps(self):
         lam_jac = float(self.cfg["lam_jac_reg"])
-        aux_weight = float(self.cfg.get("aux_weight", 0.0))
         w = self.step_weights
         optim = self.optim
 
         @eqx.filter_jit
         def train_step(model, opt_state, X, U, key):
             def loss_fn(m):
-                loss, metrics = combined_loss(m, X, U, step_weights=w, aux_weight=aux_weight, lam_jac=lam_jac)
+                loss, metrics = combined_loss(m, X, U, step_weights=w, lam_jac=lam_jac, transform_fn=self.transform_fn)
                 return loss, metrics
 
             (loss, metrics), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(model)
@@ -157,7 +173,7 @@ class Trainer:
         @eqx.filter_jit
         def reach_train_step(model, opt_state, X, U, key, curr_reach_eps):
             def loss_fn(m):
-                loss, metrics = combined_loss(m, X, U, step_weights=w, aux_weight=aux_weight, lam_jac=lam_jac)
+                loss, metrics = combined_loss(m, X, U, step_weights=w, lam_jac=lam_jac, transform_fn=self.transform_fn)
                 reach_vol, reach_penalty = reach_penalty_fn(m, X, U, key=key, curr_reach_eps=curr_reach_eps)
                 metrics['reach_volume'] = reach_vol
                 metrics['reach_penalty'] = reach_penalty
@@ -171,12 +187,12 @@ class Trainer:
 
         @eqx.filter_jit
         def eval_step(model, X, U, key):
-            loss, metrics = combined_loss(model, X, U, step_weights=None, aux_weight=aux_weight, lam_jac=lam_jac)
+            loss, metrics = combined_loss(model, X, U, step_weights=None, lam_jac=lam_jac, transform_fn=self.transform_fn)
             return loss, metrics
 
         @eqx.filter_jit
         def reach_eval_step(model, X, U, key, curr_reach_eps):
-            loss, metrics = combined_loss(model, X, U, step_weights=None, aux_weight=aux_weight, lam_jac=lam_jac)
+            loss, metrics = combined_loss(model, X, U, step_weights=None, lam_jac=lam_jac, transform_fn=self.transform_fn)
             reach_vol, reach_penalty = reach_penalty_fn(model, X, U, key=key, curr_reach_eps=curr_reach_eps)
             metrics['reach_volume'] = reach_vol
             metrics['reach_penalty'] = reach_penalty

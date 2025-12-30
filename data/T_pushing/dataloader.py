@@ -115,16 +115,18 @@ def load_dynamics_dataset(config: dict,
     episodes = [ep.astype(np.float32) / scale for ep in episodes]
 
     # ---- Config & dims ----
+    data_cfg = config["data"]
     train_cfg = config["train"]
     n_his  = int(train_cfg["n_history"])
     n_roll = int(train_cfg["horizon_scheduler"]["T_final"] if phase == "train" else train_cfg["n_rollout_valid"])
     train_ratio = float(train_cfg["train_valid_ratio"])
     noise_std   = float(train_cfg["noise"]) if phase == "train" else 0.0
     augment_en  = bool(config["data"]["augment"])
+    pred_mode   = str(train_cfg["pred_mode"])
+    assert pred_mode in ["state", "pose"], f"Unknown pred_mode {pred_mode}"
 
     T_ep = int(episodes[0].shape[0])
-    D    = int(episodes[0].shape[1])              # D = 2K + 4
-    assert D >= 6 and D % 2 == 0, "Format must be [2K relative, 2 pos, 2 vel]."
+
     num_train = int(len(episodes) * train_ratio)
     if phase == "train":
         episodes = episodes[:num_train]
@@ -132,25 +134,30 @@ def load_dynamics_dataset(config: dict,
         episodes = episodes[num_train:]
     else:
         raise AssertionError(f"Unknown phase {phase}")
-    rel_dim = D - 4
-    pos0, pos1 = rel_dim, rel_dim + 2
-    vel0, vel1 = rel_dim + 2, rel_dim + 4
+    state_dim = int(data_cfg["state_dim"])
+    pose_dim = int(data_cfg["pose_dim"])
+    action_dim = int(data_cfg["action_dim"])
 
     # Adjust n_roll and n_sample
     n_roll   = min(T_ep - n_his, n_roll)
     n_sample = n_his + n_roll
 
     # ---- Windowing ----
-    obs_list, pos_list, act_list = [], [], []
+    obs_list, pusher_pos_list, act_list = [], [], []
     for ep in episodes:
         for i in range(T_ep - n_sample + 1):
             win = ep[i:i + n_sample]                    # [n_sample, D]
-            obs_list.append(win[:, :rel_dim])           # [n_sample, 2K]
-            pos_list.append(win[:, pos0:pos1])          # [n_sample, 2]
-            act_list.append(win[:, vel0:vel1])          # [n_sample, 2]
-
+            if pred_mode == "state":
+                obs_list.append(win[:, :state_dim])           # [n_sample, 2K]
+            elif pred_mode == "pose":
+                obs_list.append(win[:, state_dim:state_dim+pose_dim])     # [n_sample, pose_dim]
+            pusher_pos_list.append(win[:, state_dim+pose_dim:-action_dim])  # [n_sample, 2]
+            act_list.append(win[:, -action_dim:])          # [n_sample, 2]
+    
     obs = np.asarray(obs_list, dtype=np.float32)        # [M, n_sample, 2K]
-    pusher_pos = np.asarray(pos_list, dtype=np.float32) # [M, n_sample, 2]
+    if pred_mode == "pose":
+        obs[:, :, -1] *= scale  # scale back the theta dimension
+    pusher_pos = np.asarray(pusher_pos_list, dtype=np.float32) # [M, n_sample, 2]
     act = np.asarray(act_list, dtype=np.float32)        # [M, n_sample, 2]
 
     # ---- Train-time noise on observations ----
