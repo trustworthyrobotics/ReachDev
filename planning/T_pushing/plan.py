@@ -125,7 +125,7 @@ def main(config: DictConfig):
         )
         scaled_target_state = target_state / scale
 
-        env = T_Sim(param_dict=param_dict, init_poses=[init_pose], target_poses=[target_pose])
+        env = T_Sim(param_dict=param_dict, init_poses=[init_pose], target_poses=[target_pose], pusher_pos=init_pusher_pos)
         for i in range(2):
             env_dict = env.update((init_pusher_pos[0], init_pusher_pos[1]), rel=False)
             env_state = np.concatenate([env_dict["state"][:state_dim], env_dict["pusher_pos"]], axis=0)
