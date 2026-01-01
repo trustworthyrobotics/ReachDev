@@ -99,31 +99,30 @@ def _maybe_augment_train(obs: np.ndarray,
     return obs_r, pos_r, act_r
 
 # ---------- main loader ----------
-def load_dynamics_dataset(config: dict,
+def load_dynamics_dataset(data_cfg: dict, train_cfg: dict,
                               phase: str,
-                              rng_key: Optional[jax.Array] = None) -> DynamicsDataset:
+                              seed: int = 0) -> DynamicsDataset:
     """
     Per-timestep vector (pre-normalized here):
       [x1-xp, y1-yp, ..., xK-xp, yK-yp, xp, yp, vx, vy]  ==  [rel(2K), pos(2), vel(2)]
     """
-    # ---- Load and normalize ----
-    data_file_name = os.path.join(config["data"]["out_path"], "data.p")
-    with open(data_file_name, "rb") as fp:
-        episodes = pickle.load(fp)  # list of [T, 2K+4]
-
-    scale = float(config["data"]["scale"])
-    episodes = [ep.astype(np.float32) / scale for ep in episodes]
 
     # ---- Config & dims ----
-    data_cfg = config["data"]
-    train_cfg = config["train"]
     n_his  = int(train_cfg["n_history"])
     n_roll = int(train_cfg["horizon_scheduler"]["T_final"] if phase == "train" else train_cfg["n_rollout_valid"])
     train_ratio = float(train_cfg["train_valid_ratio"])
     noise_std   = float(train_cfg["noise"]) if phase == "train" else 0.0
-    augment_en  = bool(config["data"]["augment"])
+    augment_en  = bool(data_cfg["augment"])
     pred_mode   = str(train_cfg["pred_mode"])
     assert pred_mode in ["state", "pose"], f"Unknown pred_mode {pred_mode}"
+
+    # ---- Load and normalize ----
+    data_file_name = os.path.join(data_cfg["out_path"], "data.p")
+    with open(data_file_name, "rb") as fp:
+        episodes = pickle.load(fp)  # list of [T, 2K+4]
+
+    scale = float(data_cfg["scale"])
+    episodes = [ep.astype(np.float32) / scale for ep in episodes]
 
     T_ep = int(episodes[0].shape[0])
 
@@ -162,14 +161,14 @@ def load_dynamics_dataset(config: dict,
 
     # ---- Train-time noise on observations ----
     if phase == "train" and noise_std > 0.0:
-        np.random.seed(int(config["settings"]["seed"]))
+        np.random.seed(seed)
         obs = obs + np.random.normal(0.0, noise_std, size=obs.shape).astype(obs.dtype)
 
     # ---- Train-time augmentation (single shared rotation) ----
     if phase == "train" and augment_en:
         # Use a deterministic seed derived from config['settings']['seed'] but offset so it doesn't
         # collide with the final shuffle’s RNG usage.
-        seed_aug = int(config["settings"]["seed"]) * 1664525 + 1013904223  # LCG-style mix
+        seed_aug = seed * 1664525 + 1013904223  # LCG-style mix
         obs, pusher_pos, act = _maybe_augment_train(obs, pusher_pos, act,
                                                     enabled=True, seed=seed_aug)
 
@@ -178,7 +177,7 @@ def load_dynamics_dataset(config: dict,
     weights = np.ones((M, n_roll), dtype=np.float32)
 
     # ---- Final shuffle (train & valid) ----
-    rng = np.random.default_rng(int(config["settings"]["seed"]))
+    rng = np.random.default_rng(seed)
     perm = rng.permutation(M)
     obs, act, pusher_pos, weights = obs[perm], act[perm], pusher_pos[perm], weights[perm]
 
@@ -253,22 +252,21 @@ class DynamicsDataloader:
             yield batch
 
 def build_loaders(
-    config: dict,
+    data_cfg: dict, train_cfg: dict, seed: int = 0
 ) -> tuple[ DynamicsDataloader, DynamicsDataloader]:
     """
     Builds train and valid dataloaders from config.
     Also returns the full dataset stats (DynamicsDataset) for reference.
     """
-    ds_train = load_dynamics_dataset(config, phase="train")
-    ds_valid = load_dynamics_dataset(config, phase="valid")
+    ds_train = load_dynamics_dataset(data_cfg, train_cfg, seed=seed, phase="train")
+    ds_valid = load_dynamics_dataset(data_cfg, train_cfg, seed=seed, phase="valid")
 
-    tr_cfg = config["train"]
-    batch_size = int(tr_cfg["batch_size"])
+    batch_size = int(train_cfg["batch_size"])
 
     dl_train = DynamicsDataloader(
         dataset=ds_train,
         batch_size=batch_size,
-        seed=int(config["settings"]["seed"]),
+        seed=seed,
         shuffle=True,
         drop_last=True,
     )
@@ -276,7 +274,7 @@ def build_loaders(
     dl_valid = DynamicsDataloader(
         dataset=ds_valid,
         batch_size=batch_size,
-        seed=int(config["settings"]["seed"]) + 1,
+        seed=seed + 1,
         shuffle=False,
         drop_last=False,
     )

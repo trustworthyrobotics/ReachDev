@@ -89,23 +89,25 @@ def rel_to_abs_kp_plus_pusher(eps_denorm: np.ndarray) -> np.ndarray:
 
 def main():
     model_dir = "output/runs/T_pushing/"
-    model_dir = model_dir + "log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_20251229_200957"
+    model_dir = model_dir + "log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_20260101_152547"
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     data_dir = "output/data/T_pushing_freq1"
-    model_dir = config["train"]["out_dir"]
-    scale = float(config["data"].get("scale", 1.0))  # data was normalized by /scale
-    pred_mode = config["train"].get("pred_mode", "state")
-    stem_size = jnp.array(config["data"]["stem_size"])
-    bar_size = jnp.array(config["data"]["bar_size"])
-    state_dim = config["data"]["state_dim"]
-    pose_dim = config["data"].get("pose_dim", 3)
-    action_dim = config["data"]["action_dim"]
+    data_cfg = config["data"]
+    train_cfg = config["train_dt_dyn"] if "train_dt_dyn" in config else config["train"]
+    model_dir = train_cfg["out_dir"]
+    scale = float(data_cfg.get("scale", 1.0))  # data was normalized by /scale
+    pred_mode = train_cfg.get("pred_mode", "state")
+    stem_size = jnp.array(data_cfg["stem_size"])
+    bar_size = jnp.array(data_cfg["bar_size"])
+    state_dim = data_cfg["state_dim"]
+    pose_dim = data_cfg.get("pose_dim", 3)
+    action_dim = data_cfg["action_dim"]
 
     eval_p_path = os.path.join(data_dir, "data_eval.p")
-    model_path = os.path.join( config["train"]["out_dir"], "last_model.eqx")
-    model = load_t_dynamics_model(config=config, model_path=model_path)
+    model_path = os.path.join(train_cfg["out_dir"], "best_model.eqx")
+    model = load_t_dynamics_model(data_config=data_cfg, train_config=train_cfg, model_path=model_path)
 
     # -----------------------------
     # 2) Load eval data
@@ -138,8 +140,8 @@ def main():
         raise ValueError(f"Unknown pred_mode: {pred_mode}")
 
     # ----------------- load model & rollout (batch) -----------------
-    # rollout_model(x0: [B,Dx], U: [B,T-1,Du]) -> X_pred: [B,T-1,Dx]
-    X_pred_norm = model.rollout_model(jnp.asarray(x0_norm), jnp.asarray(U_norm))
+    # rollout(x0: [B,Dx], U: [B,T-1,Du]) -> X_pred: [B,T-1,Dx]
+    X_pred_norm = model.rollout(jnp.asarray(x0_norm), jnp.asarray(U_norm))
     # prepend x0 to get [B,T,Dx]
     X_pred_full_norm = jnp.concatenate([x0_norm[:, None, :], X_pred_norm], axis=1)
     X_pred_full_denorm = X_pred_full_norm * scale
@@ -155,8 +157,8 @@ def main():
     print(f"vis error: {np.abs(pred_vis - gt_vis).mean()}")
 
     # ----------------- write one GIF per episode -----------------
-    out_dir = os.path.join("output", "vis", "T_pushing")
-    window_size = config["data"]["window_size"]
+    out_dir = model_dir
+    window_size = data_cfg["window_size"]
     os.makedirs(out_dir, exist_ok=True)
     B = min(B, 10)
     for b in range(B):

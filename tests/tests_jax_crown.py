@@ -20,7 +20,7 @@ model_path = "output/runs/T_pushing_test/last_model.eqx"
 config_path = "configs/T_pushing_test.yaml"
 with open(config_path, 'r') as f:
     config = yaml.safe_load(f)
-model=load_t_dynamics_model(config, model_path)
+model=load_t_dynamics_model(config["data"], config["train_dt_dyn"] if "train_dt_dyn" in config else config["train"], model_path)
 
 def f(x):
     return model(x)

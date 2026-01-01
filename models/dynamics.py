@@ -6,6 +6,8 @@ import jax
 import jax.numpy as jnp
 import equinox as eqx
 
+from utils.T_pushing import pose_to_kp
+
 
 Array = jnp.ndarray
 PRNGKey = jax.Array
@@ -87,32 +89,37 @@ class T_Dynamics(eqx.Module):
     n_history: int = eqx.field(static=True)
     delta_u: bool = eqx.field(static=True)
     arch: Tuple[int, ...] = eqx.field(static=True)
+    pred_mode: str = eqx.field(static=True)
+    stem_size: Array = eqx.field(static=True)
+    bar_size: Array = eqx.field(static=True)
 
     # ---- learnable parts ----
     mlp: MLP
 
     def __init__(
         self,
-        *,
-        config: dict,
+        data_cfg, 
+        train_cfg,
         key: PRNGKey = jax.random.PRNGKey(0),
     ):
-        data_cfg = config["data"]
-        train_cfg = config["train"]
         arch_list: Sequence[int] = train_cfg["architecture"]
         assert len(arch_list) >= 1, "Architecture must have at least one hidden layer."
         self.arch = tuple(int(x) for x in arch_list)
 
-        pred_mode = str(train_cfg.get("pred_mode", "state"))
-        if pred_mode == "state":
-            self.Dx = int(data_cfg["state_dim"])
-        elif pred_mode == "pose":
-            self.Dx = int(data_cfg.get("pose_dim", 3))
         self.Du = int(data_cfg["action_dim"])
         self.n_history = int(train_cfg["n_history"])
         assert self.n_history == 1, "n_history must be == 1."
         self.delta_u = bool(train_cfg.get("delta_u", False))
-        if pred_mode == "pose":
+
+        self.pred_mode = str(train_cfg.get("pred_mode", "state"))
+        if self.pred_mode == "state":
+            self.Dx = int(data_cfg["state_dim"])
+        elif self.pred_mode == "pose":
+            self.Dx = int(data_cfg["pose_dim"])
+            scale = float(data_cfg["scale"])
+            self.stem_size = jnp.array(data_cfg["stem_size"]) / scale
+            self.bar_size = jnp.array(data_cfg["bar_size"]) / scale
+
             self.delta_u = False  # override for pose prediction
 
         in_dim = sum(self._input_dims())
@@ -137,14 +144,14 @@ class T_Dynamics(eqx.Module):
             return output - u.repeat(self.Dx // self.Du, axis=-1)
         return output
 
-    def forward_single(self, x: Array, u: Array) -> Array:
+    def forward_batchless(self, x: Array, u: Array) -> Array:
         output = x + self.mlp(jnp.concatenate([x, u], axis=-1))
         if self.delta_u:
             return output - u.repeat(self.Dx // self.Du, axis=-1)
         return output
 
     # --------------------------- batchless onnx for JAX ---------------------------
-    def forward_batchless_onnx(self, inp):
+    def forward_batchless_single_input(self, inp):
         x = inp[:self.Dx]
         u = inp[-self.Du:]
         output = x + self.mlp(inp)
@@ -153,7 +160,7 @@ class T_Dynamics(eqx.Module):
         return output
 
     # --------------------------- batch onnx for torch ---------------------------
-    def forward_batch_onnx(self, inp):
+    def forward_batch_single_input(self, inp):
         x = inp[:, :self.Dx]
         u = inp[:, -self.Du:]
         output = x + jax.vmap(self.mlp)(inp)
@@ -161,10 +168,9 @@ class T_Dynamics(eqx.Module):
             return output - u.repeat(self.Dx // self.Du, axis=-1)
         return output
 
-    __call__ = forward_batchless_onnx
-    # __call__ = forward_batch_onnx
+    __call__ = forward_batchless_single_input
 
-    def rollout_model(self, x0: Array, U: Array) -> Array:
+    def rollout(self, x0: Array, U: Array) -> Array:
         """
         Autoregressive rollout:
           x_{t+1} = f(x_t, u_t)  (with history if enabled)
@@ -188,8 +194,17 @@ class T_Dynamics(eqx.Module):
         return jnp.swapaxes(X_seq, 0, 1)  # (B,T,Dx)
 
 
-def load_t_dynamics_model(config: dict, model_path: str) -> T_Dynamics:
-    model_def = T_Dynamics(config=config)
+    # transform pose to keypoints
+    def transform_fn(self, x):
+        if self.pred_mode != "pose":
+            return x
+        B, T, D = x.shape
+        x = x.reshape(-1, D)
+        kp = jax.vmap(pose_to_kp, in_axes=(0, None, None))(x, self.stem_size, self.bar_size)
+        return kp.reshape(B, T, -1)
+
+def load_t_dynamics_model(data_config: dict, train_config: dict, model_path: str) -> T_Dynamics:
+    model_def = T_Dynamics(data_config, train_config)
     with open(model_path, "rb") as f:
         model: T_Dynamics = eqx.tree_deserialise_leaves(f, model_def)
     return model

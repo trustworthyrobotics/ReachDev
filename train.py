@@ -26,7 +26,10 @@ def _save_ckpt(path_base: str, model, opt_state, step: int, cfg: dict):
 
 @hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml", version_base=None)
 def main(config: DictConfig) -> None:
-    tr_cfg = config["train"]
+    train_mode = config.get("train_mode", "dt_dyn")
+    assert train_mode in {"dt_dyn", "ct_dyn", "ct_ctl"}, f"Unknown train_mode: {train_mode}"
+    tr_cfg = config[f"train_{train_mode}"]
+    data_cfg = config["data"]
 
     tr_cfg["wandb"]["run_name"] = f"{tr_cfg['wandb']['run_name']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     tr_cfg["out_dir"] = os.path.join(tr_cfg["out_dir"], tr_cfg["wandb"]["run_name"])
@@ -40,16 +43,17 @@ def main(config: DictConfig) -> None:
         from data.T_pushing.dataloader import build_loaders
     else:
         raise ValueError(f"Unknown task in config path: {task_name}")
-    train_loader, val_loader = build_loaders(config)
+    train_loader, val_loader = build_loaders(data_cfg, tr_cfg, seed=config["settings"]["seed"])
 
     # model
     key = jax.random.PRNGKey(config["settings"]["seed"])
     if "T_pushing" in task_name:
-        model = T_Dynamics(config=config, key=key)
+        model = T_Dynamics(data_cfg, tr_cfg, key=key)
 
-    if bool(config["train"]["wandb"]["enabled"]):
+    if bool(tr_cfg["wandb"]["enabled"]):
         logger = WandbLogger(
-            config= OmegaConf.to_container(config, resolve=True)
+            config= OmegaConf.to_container(config, resolve=True),
+            train_mode=train_mode,
         )
     else:
         logger = PrintLogger()

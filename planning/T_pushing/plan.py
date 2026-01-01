@@ -63,13 +63,14 @@ def get_abs_states(state_seqs, pusher_start_pos, act_seqs):
 @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
 def main(config: DictConfig):
     data_config = config["data"]
+    train_config = config["train_dt_dyn"] if "train_dt_dyn" in config else config["train"]
     planning_config = config["planning"]
     seed = config["settings"]["seed"]
     num_test = planning_config["num_test"]
     init_pusher_pos_list, init_pose_list, target_pusher_pos_list, target_pose_list = generate_test_cases(seed, num_test)
 
-    model_path = os.path.join( config["train"]["out_dir"], "last_model.eqx")
-    model = load_t_dynamics_model(config=config, model_path=model_path)
+    model_path = os.path.join( train_config["out_dir"], "last_model.eqx")
+    model = load_t_dynamics_model(data_config=data_config, train_config=train_config, model_path=model_path)
     param_dict = {"stem_size": data_config["stem_size"], 
                 "bar_size": data_config["bar_size"], 
                 "pusher_size": data_config["pusher_size"],
@@ -91,7 +92,7 @@ def main(config: DictConfig):
     # [n_his=1, state_dim], [n_sample, horizon, action_dim] -> [n_sample, horizon, state_dim]
     def rollout_fn(state_cur: jnp.ndarray, act_seqs: jnp.ndarray) -> jnp.ndarray:
         state_cur = state_cur[None].repeat(act_seqs.shape[0], axis=0)
-        state_seqs = model.rollout_model(state_cur, act_seqs)
+        state_seqs = model.rollout(state_cur, act_seqs)
         return state_seqs
 
     # assume all are scaled

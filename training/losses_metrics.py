@@ -6,6 +6,10 @@ import jax
 import jax.numpy as jnp
 import equinox as eqx
 
+import sys
+sys.path.append('CROWN_Reach')
+from CROWN_Reach.src.reachability import DTPlanReach
+from CROWN_Reach.src.utils.box_set import calculate_volume, prepare_initial_set_v2
 
 Array = jnp.ndarray
 
@@ -21,32 +25,6 @@ def make_linear_step_weights(T: int, ub: float) -> Array:
         return jnp.array([1.0], dtype=jnp.float32)
     w = 1.0 + (jnp.arange(T, dtype=jnp.float32) * (ub - 1.0) / (T - 1))
     return jnp.minimum(w, jnp.array(ub, dtype=jnp.float32))
-
-
-def mse(x: Array, y: Array, axis=None) -> Array:
-    return jnp.mean((x - y) ** 2, axis=axis)
-
-
-def rmse(x: Array, y: Array, axis=None) -> Array:
-    return jnp.sqrt(mse(x, y, axis=axis))
-
-
-# ---------------------------- core rollouts ---------------------------
-
-def free_rollout(model, X: Array, U: Array) -> Array:
-    """
-    Autoregressive rollout using model.rollout_model.
-
-    Args:
-      X: (B, T+1, Dx)  ground-truth states
-      U: (B, T,   Du)  actions
-    Returns:
-      X_pred: (B, T, Dx) predicted states x_{1:T}
-      X_tgt : (B, T, Dx) target states   x_{1:T}
-    """
-    X_tgt = X[:, 1:, :]
-    X_pred = model.rollout_model(X[:, 0, :], U)
-    return X_pred, X_tgt
 
 
 # ------------------------------ losses -------------------------------
@@ -70,7 +48,8 @@ def multistep_free_rollout_loss(
       loss: scalar
       metrics: dict with mse, rmse and per-step versions
     """
-    X_pred, X_tgt = free_rollout(model, X, U)           # (B,T,Dx)
+    X_tgt = X[:, 1:, :]
+    X_pred = model.rollout(X[:, 0, :], U)           # (B,T,Dx)
     if transform_fn:
         X_pred = transform_fn(X_pred)
         X_tgt = transform_fn(X_tgt)
@@ -127,7 +106,7 @@ def jacobian_reg_loss(model, X: jnp.ndarray, U: jnp.ndarray):
     """
     # 2. Use vmap to compute Jacobians over the batch and time
     # This gives us (B, T, Dx, Dx) tensor
-    batch_jac_fn = jax.vmap(jax.vmap(jax.jacobian(model.forward_single, argnums=0)))
+    batch_jac_fn = jax.vmap(jax.vmap(jax.jacobian(model.forward_batchless, argnums=0)))
     
     # We only need the first T states to predict the next T states
     jacobians = batch_jac_fn(X[:, :-1, :], U)
@@ -146,3 +125,122 @@ def l1_reg_loss(model):
     return total_l1
 
 
+class MSELoss(eqx.Module):
+    """Handles multi-step rollout prediction error."""
+    def __call__(self, model, X, U, step_weights):
+        # Initial state x0
+        x_tgt = X[:, 1:, :]
+        # model.rollout handles DT vs CT (ODE) internally
+        x_pred = model.rollout(X[:, 0, :], U) 
+        
+        x_pred = model.transform_fn(x_pred)
+        x_tgt = model.transform_fn(x_tgt)
+
+        err_sq = (x_pred - x_tgt)**2
+        mse_t = jnp.mean(err_sq, axis=(0, 2)) # Average over Batch and Dims
+
+        w = step_weights[:x_pred.shape[1]]
+        w = w / jnp.sum(w)
+        loss = jnp.sum(mse_t * w)
+
+        return loss, {"mse": loss, "mse_per_step": mse_t}
+
+class JacobianReg(eqx.Module):
+    """Penalizes high sensitivity to stabilize reachability sets."""
+    def __call__(self, model, X, U):
+        # vmap over batch and time to compute df/dx
+        # Note: argnums=0 assumes model.forward(x, u)
+        batch_jac_fn = jax.vmap(jax.vmap(jax.jacobian(model.forward_batchless, argnums=0)))
+        jacobians = batch_jac_fn(X[:, :-1, :], U)
+        loss = jnp.mean(jnp.square(jacobians))
+        return loss, {"jac_reg": loss}
+
+class ReachabilityPenalty(eqx.Module):
+    """Calculates the volume of the reachable set."""
+    mode: str = eqx.field(static=True)
+    reach_analyzer: any # Your DTPlanReach or a CT equivalent
+    
+    def __init__(self, mode, state_dim, action_dim):
+        self.mode = mode
+        if mode == 'dt_dyn':
+            self.reach_analyzer = DTPlanReach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, n_steps_per_plan=1, step_size=1)
+        elif mode == 'ct_dyn':
+            raise NotImplementedError("CT dynamics reachability not implemented yet.")
+        elif mode == 'ct_ctl':
+            raise NotImplementedError("CT control reachability not implemented yet.")
+        else:
+            raise ValueError(f"Unknown mode for ReachabilityPenalty: {mode}")
+
+    def __call__(self, model, X, U, eps, reach_bs, key, splits_cfg):
+        T_reach = U.shape[1]
+        D = model.Dx + model.Du
+        # pick a random subset for reachability
+        if X.shape[0] > reach_bs:
+            perm = jax.random.permutation(key, X.shape[0])
+            idxs = perm[:reach_bs]
+            X = X[idxs]
+            U = U[idxs]
+        state_init = X[:, 0, :]
+        state_lo = state_init - eps
+        state_up = state_init + eps
+
+        if self.mode == 'dt_dyn':
+            def f_wrapper(x):
+                state_next = model(x)
+                action_next = x[model.Dx:]
+                return jnp.concatenate([state_next, action_next], axis=-1)
+        elif self.mode == 'ct_dyn':
+            raise NotImplementedError("CT dynamics reachability not implemented yet.")
+        elif self.mode == 'ct_ctl':
+            raise NotImplementedError("CT control reachability not implemented yet.")
+        else:
+            raise ValueError(f"Unknown mode for ReachabilityPenalty: {self.mode}")
+        X_lo = jnp.concatenate([state_lo, jnp.zeros_like(U[:, 0, :])], axis=-1)
+        X_up = jnp.concatenate([state_up, jnp.zeros_like(U[:, 0, :])], axis=-1)
+        X_lo, X_up = prepare_initial_set_v2(X_lo, X_up, splits_cfg=splits_cfg)
+        _, r_lo, r_up, _ = self.reach_analyzer.verify_w_model(f_wrapper, X_lo, X_up, n_total_steps=T_reach, action_seq=U.repeat(X_up.shape[0]//U.shape[0], axis=0)[:, None])
+
+        reach_vol = calculate_volume(r_lo.reshape(-1, T_reach + 1, D), r_up.reshape(-1, T_reach + 1, D), union_init=False, mode='sum') / r_lo.shape[0]
+        reach_penalty = jnp.log(1 + reach_vol)
+        return reach_penalty, {"reach_volume": reach_vol, "reach_penalty": reach_penalty}
+    
+
+class TotalLoss(eqx.Module):
+    mse_layer: MSELoss
+    jac_layer: JacobianReg
+    reach_layer: Optional[ReachabilityPenalty]
+    
+    # Weights and Configs
+    lam_jac: float
+    lam_reach: float
+    reach_splits: Dict
+
+    def __init__(self, mode: str, state_dim: int, action_dim: int, reach_cfg: dict, lam_jac: float = 0.0,):
+        
+        self.mse_layer = MSELoss()
+        self.jac_layer = JacobianReg()
+        if reach_cfg.get("mode", "none") != "none":
+            self.reach_layer = ReachabilityPenalty(mode, state_dim, action_dim)
+        else:
+            self.reach_layer = None
+        self.lam_jac = lam_jac
+        self.lam_reach = reach_cfg.get("weight", 0.0)
+        self.reach_splits = reach_cfg.get("splits", {})
+
+    def __call__(self, model, X, U, enable_reach, key, step_weights, reach_eps=0.0, reach_bs=32):
+        
+        # 1. Always compute MSE and Jacobian (Standard JAX code)
+        l_mse, m_mse = self.mse_layer(model, X, U, step_weights=step_weights)
+        l_jac, m_jac = self.jac_layer(model, X, U)
+        
+        total_loss = l_mse + (self.lam_jac * l_jac)
+        metrics = {**m_mse, **m_jac}
+
+        if enable_reach:
+            l_reach, m_reach = self.reach_layer(
+                model, X, U, reach_eps, reach_bs,
+                key, self.reach_splits
+            )
+            total_loss = total_loss + (self.lam_reach * l_reach)
+            metrics.update(m_reach)
+        return total_loss, metrics

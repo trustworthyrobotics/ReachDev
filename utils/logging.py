@@ -31,8 +31,8 @@ class PrintLogger(Logger):
 
 
 class WandbLogger(Logger):
-    def __init__(self, *, config: dict):
-        wandb_cfg = config["train"]["wandb"]
+    def __init__(self, *, config: dict, train_mode: str = "dt_dyn"):
+        wandb_cfg = config[f"train_{train_mode}"]["wandb"]
         project = wandb_cfg["project"]
         name = wandb_cfg["run_name"]
         mode = wandb_cfg["mode"]

@@ -227,12 +227,12 @@ def plot_v2(trajs, pxy, scale, window_size, file_name):
 # def main(config: DictConfig):
 def main():
     model_dir = "output/runs/T_pushing/"
-    model_dir = model_dir + "log_cos_128_mid_1_0.6_eps0.1_0.05_w0.002_j0.0_True_20251230_024648"
+    model_dir = model_dir + "log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_20260101_152547"
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     data_config = config["data"]
-    train_config = config["train"]
+    train_config = config["train_dt_dyn"] if "train_dt_dyn" in config else config["train"]
     data_dir = data_config["out_path"]
     
     scale = float(data_config["scale"])  # data was normalized by /scale
@@ -252,7 +252,7 @@ def main():
         eval_p_path = os.path.join(data_dir, "data.p")
     # model_path = os.path.join( model_dir, "last_model.eqx")
     model_path = os.path.join( model_dir, "best_model.eqx")
-    model = load_t_dynamics_model(config=config, model_path=model_path)
+    model = load_t_dynamics_model(data_config, train_config, model_path=model_path)
 
     def f_wrapper(x):
         state_next = model(x)
@@ -271,13 +271,13 @@ def main():
     eps_arr = np.array(eval_data)  # [B, T, 15]
 
     T_reach = train_config["n_rollout_valid"]
-    T_reach = 10
+    T_reach = 15
 
     # Everything inside file is normalized by /scale → denormalize for visualization
     eps_denorm = eps_arr.astype(np.float32)               # [B,T,15], unnormalized
     eps_norm = eps_denorm / scale                    # [B,T,15], normalized
 
-    selected_eps_idx = 43
+    selected_eps_idx = 430
     if pred_mode == "state":
         state_init = jnp.array(eps_norm[selected_eps_idx, 0, :state_dim])[None]      # [1, Dx]
         act_state_dim = state_dim
@@ -299,7 +299,7 @@ def main():
     state_init_up = state_init + reach_eps
     z_init_lo = jnp.concatenate([state_init_lo, jnp.zeros((1, action_dim))], axis=-1) # [1, Dx+Du]
     z_init_up = jnp.concatenate([state_init_up, jnp.zeros((1, action_dim))], axis=-1) # [1, Dx+Du]
-    reach_splits = config["train"]["reach"].get("splits", None)
+    reach_splits = train_config["reach"].get("splits", None)
     n_split = 2 if pred_mode == "state" else 4
     reach_splits = {i: n_split for i in range(act_state_dim)}
     z_init_lo, z_init_up = prepare_initial_set_v2(z_init_lo, z_init_up, splits_cfg=reach_splits)
@@ -373,10 +373,10 @@ def main():
     sample_state_init = z_init_lo[:, jnp.newaxis, :act_state_dim] + (z_init_up - z_init_lo)[:, jnp.newaxis, :act_state_dim] * raw_samples
     sample_state_init = sample_state_init.reshape(-1, act_state_dim)  # [n_samples, Dx]
 
-    sample_rollout = model.rollout_model(sample_state_init, action_seq.repeat(n_samples, axis=0))
+    sample_rollout = model.rollout(sample_state_init, action_seq.repeat(n_samples, axis=0))
     sample_rollout = jnp.concatenate([sample_state_init[:, None, :], sample_rollout], axis=1)  # [n_samples, T+1, Dx]
 
-    out_dir = os.path.join("output", "vis_eval" if use_eval else "vis", "T_pushing", f"{selected_eps_idx}_reach_eps{reach_eps}_steps{T_reach}_{n_split}_{pred_mode}_{enable_action_opt}_{n_opt_steps}")
+    out_dir = os.path.join(model_dir, f"{selected_eps_idx}_reach_eps{reach_eps}_steps{T_reach}_{n_split}_{pred_mode}_{enable_action_opt}_{n_opt_steps}")
     os.makedirs(out_dir, exist_ok=True)
 
     # save r_lo, r_up, sample_rollout, pusher_pos_seq, scale, window_size
