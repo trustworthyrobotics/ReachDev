@@ -1,5 +1,4 @@
 from __future__ import annotations
-from typing import Callable, Iterable, List, Optional, Tuple, Union, Sequence
 
 import jax
 import jax.numpy as jnp

@@ -87,6 +87,48 @@ train_ct_dyn:
   noise: 0.005 # std of the Gaussian noise to training data
   lr_scheduler:
     type: "cos" # cos, linear, const
+    lr_init: 0.002
+    lr_final: 0.0001
+  n_epoch: 15
+  reach:
+    mode: "none" # {"none","mid","after"}
+    every: 1 # only for "mid" and "after" mode, every N batches
+    after: 0.6 # only for "after" mode, after N*n_epoch epochs
+    eps_init: 0.08
+    eps_final: 0.05
+    # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
+    weight: 0.002
+    # batch_size: 8
+  batch_size: 128
+  lam_jac_reg: 0.0e-3 # 2.0e-4 # jacobian regularization weight
+  wandb:
+    enabled: true
+    project: "${settings.task_name}_ct_test"
+    run_name: "${train_ct_dyn.horizon_scheduler.type}_${train_ct_dyn.horizon_scheduler.T_final}_lr${train_ct_dyn.lr_scheduler.lr_init}"
+    mode: "online"               # {"online","offline","disabled"}
+    log_every: 1                # log every N training iterations
+    save_checkpoints: true       # save model checkpoints to wandb  
+
+train_ct_ctl:
+  out_dir: "output/runs/${settings.task_name}_ct_ctl"
+  data_dir: "output/data/${settings.task_name}_freq${train_ct_ctl.frequency}_ctl"
+  data_augment: False
+  pred_mode: "pose" # {"state","pose"}
+  train_valid_ratio: 0.9
+  architecture: [64, 64]
+  frequency: 10
+  ref_action: True
+  n_history: 1
+  n_rollout_valid: 6
+  horizon_scheduler:
+    type: "log" # log, linear, const
+    T_init: 1
+    T_final: 6
+    log_alpha: 1.0
+  step_weight_ub: 2
+  noise: 0.005 # std of the Gaussian noise to training data
+  lr_scheduler:
+    type: "cos" # cos, linear, const
     lr_init: 0.001
     lr_final: 0.0001
   n_epoch: 25
@@ -102,16 +144,12 @@ train_ct_dyn:
   batch_size: 128
   lam_jac_reg: 0.0e-3 # 2.0e-4 # jacobian regularization weight
   wandb:
-    enabled: true
-    project: "${settings.task_name}_ct_test"
-    run_name: "${train_ct_dyn.horizon_scheduler.type}_${train_ct_dyn.horizon_scheduler.T_final}_pid1e-2"
+    enabled: false
+    project: "${settings.task_name}_reach_ct_ctl_test"
+    run_name: "${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}"
     mode: "online"               # {"online","offline","disabled"}
-    log_every: 1                # log every N training iterations
+    log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  
-
-train_ct_ctl:
-  none
-  # to be implemented
 
 planning:
   out_path: "output/planning/${settings.task_name}"

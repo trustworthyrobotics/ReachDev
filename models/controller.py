@@ -31,7 +31,13 @@ class T_controller(eqx.Module):
         assert len(arch_list) >= 1, "Architecture must have at least one hidden layer."
         self.arch = tuple(int(x) for x in arch_list)
 
-        self.Dx = int(data_cfg["state_dim"])
+        self.ref_act = train_cfg.get("ref_action", True)
+
+        pred_mode = str(train_cfg.get("pred_mode", "state"))
+        if pred_mode == "state":
+            self.Dx = int(data_cfg["state_dim"])
+        elif pred_mode == "pose":
+            self.Dx = int(data_cfg["pose_dim"])
         self.Du = int(data_cfg["action_dim"])
 
         in_dim = self.Dx * 2  # current state + target state
@@ -44,7 +50,11 @@ class T_controller(eqx.Module):
             key=key,
         )
 
-    def forward(self, x, x_target):
-        # x: (B,Dx), x_target: (B,Dx)
-        inp = jnp.concatenate([x, x_target], axis=-1)
-        return self.mlp(inp)  # (B,Du) predicted action
+    def forward(self, x, x_target, ref_action=None):
+        # x: (B,Dx), x_target: (B,Dx), ref_action: (B,Du)
+        if self.ref_act:
+            inp = jnp.concatenate([x, x_target, ref_action], axis=-1)
+            return ref_action + self.mlp(inp)  # (B,Du) predicted action
+        else:
+            inp = jnp.concatenate([x, x_target], axis=-1)
+            return self.mlp(inp)  # (B,Du) predicted action
