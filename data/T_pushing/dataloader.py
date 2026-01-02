@@ -112,12 +112,12 @@ def load_dynamics_dataset(data_cfg: dict, train_cfg: dict,
     n_roll = int(train_cfg["horizon_scheduler"]["T_final"] if phase == "train" else train_cfg["n_rollout_valid"])
     train_ratio = float(train_cfg["train_valid_ratio"])
     noise_std   = float(train_cfg["noise"]) if phase == "train" else 0.0
-    augment_en  = bool(data_cfg["augment"])
+    augment_en  = bool(train_cfg["data_augment"])
     pred_mode   = str(train_cfg["pred_mode"])
     assert pred_mode in ["state", "pose"], f"Unknown pred_mode {pred_mode}"
 
     # ---- Load and normalize ----
-    data_file_name = os.path.join(data_cfg["out_path"], "data.p")
+    data_file_name = os.path.join(train_cfg["data_dir"], "data.p")
     with open(data_file_name, "rb") as fp:
         episodes = pickle.load(fp)  # list of [T, 2K+4]
 

@@ -78,7 +78,7 @@ class Trainer:
         elif self.cfg["horizon_scheduler"]["type"] == "const":
             self.T_schedule = lambda epoch: self.T_final
         self.step_weights = make_linear_step_weights(self.T_final, float(self.cfg["step_weight_ub"]))
-        self.step_weights_eval = jnp.ones_like(self.step_weights)
+        self.step_weights_eval = jnp.ones((self.T_valid,))
 
         self.batch_size = self.cfg["batch_size"]
         reach_cfg = self.cfg.get("reach", {})

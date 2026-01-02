@@ -98,8 +98,8 @@ class T_Dynamics(eqx.Module):
 
     def __init__(
         self,
-        data_cfg, 
-        train_cfg,
+        data_cfg: dict, 
+        train_cfg: dict,
         key: PRNGKey = jax.random.PRNGKey(0),
     ):
         arch_list: Sequence[int] = train_cfg["architecture"]

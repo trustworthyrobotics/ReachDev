@@ -33,6 +33,9 @@ def gen_data(config, process_id, seed, num_episode):
         data_config["state_dim"],
         data_config["action_dim"],
     )
+    enlarge_factor_for_gen = data_config.get("enlarge_factor_for_gen", 1)
+    window_size = window_size * enlarge_factor_for_gen
+
     episode_shift = data_config.get("episode_shift", 0)
     episode_length += episode_shift
     training, visualizing, saving, gif = (
@@ -182,7 +185,7 @@ def parallel_gen_data(args):
 @hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml", version_base=None)
 def main(config: DictConfig) -> None:
     data_config = config["data"]
-    frequency = data_config["frequency"]
+    frequency = min(data_config["frequency"], 60)
     if frequency != 60:
         data_config["episode_length"] = data_config["episode_length"] * frequency
         data_config["num_episodes"] = data_config["num_episodes"] // frequency

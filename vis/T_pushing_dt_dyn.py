@@ -89,13 +89,14 @@ def rel_to_abs_kp_plus_pusher(eps_denorm: np.ndarray) -> np.ndarray:
 
 def main():
     model_dir = "output/runs/T_pushing/"
-    model_dir = model_dir + "log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_20260101_152547"
+    model_dir = model_dir + "log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_20260101_231652"
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
-    data_dir = "output/data/T_pushing_freq1"
     data_cfg = config["data"]
     train_cfg = config["train_dt_dyn"] if "train_dt_dyn" in config else config["train"]
+    data_dir = train_cfg.get("data_dir", "output/data/T_pushing_freq1")
+    # data_dir = "output/data/T_pushing_freq1_1_1"
     model_dir = train_cfg["out_dir"]
     scale = float(data_cfg.get("scale", 1.0))  # data was normalized by /scale
     pred_mode = train_cfg.get("pred_mode", "state")
@@ -119,8 +120,10 @@ def main():
     eps_arr = np.array(eval_data)  # [B, T, 15]
 
     B, T, _ = eps_arr.shape
+    horizon = min(30, T-1)
+    T = horizon + 1
     # Everything inside file is normalized by /scale → denormalize for visualization
-    eps_denorm = eps_arr.astype(np.float32)               # [B,T,15], unnormalized
+    eps_denorm = eps_arr.astype(np.float32)[:, :T, :]               # [B,T,15], unnormalized
     eps_norm = eps_denorm / scale                    # [B,T,15], normalized
 
     # ----------------- actions (U) and initial states -----------------
@@ -158,7 +161,7 @@ def main():
 
     # ----------------- write one GIF per episode -----------------
     out_dir = model_dir
-    window_size = data_cfg["window_size"]
+    window_size = data_cfg["window_size"] * data_cfg.get("enlarge_factor_for_gen", 1)
     os.makedirs(out_dir, exist_ok=True)
     B = min(B, 10)
     for b in range(B):

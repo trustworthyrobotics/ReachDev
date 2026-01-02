@@ -11,7 +11,6 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 from jax2onnx import to_onnx
 from datetime import datetime
-from models.dynamics import T_Dynamics
 from training.trainer import Trainer
 
 from utils.logging import PrintLogger, WandbLogger
@@ -48,7 +47,14 @@ def main(config: DictConfig) -> None:
     # model
     key = jax.random.PRNGKey(config["settings"]["seed"])
     if "T_pushing" in task_name:
-        model = T_Dynamics(data_cfg, tr_cfg, key=key)
+        if train_mode == "dt_dyn":
+            from models.dynamics import T_Dynamics
+            model = T_Dynamics(data_cfg, tr_cfg, key=key)
+        elif train_mode == "ct_dyn":
+            from models.dynamics_c import Continuous_T_Dynamics
+            model = Continuous_T_Dynamics(data_cfg, tr_cfg, key=key)
+        else:
+            raise NotImplementedError(f"train_mode {train_mode} not implemented yet for T_pushing.")
 
     if bool(tr_cfg["wandb"]["enabled"]):
         logger = WandbLogger(

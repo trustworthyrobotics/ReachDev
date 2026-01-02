@@ -10,68 +10,61 @@ Array = jnp.ndarray
 PRNGKey = jax.Array
 
 
-from models.dynamics import MLP
+from models.dynamics import T_Dynamics
 
-class Continuous_T_Dynamics(eqx.Module):
-    # ---- static / hyper params ----
-    Dx: int = eqx.field(static=True)
-    Du: int = eqx.field(static=True)
-    arch: Tuple[int, ...] = eqx.field(static=True)
-
-    # ---- learnable parts ----
-    mlp: MLP
+class Continuous_T_Dynamics(T_Dynamics):
+    dt: Array = eqx.field(static=True)
+    dt0: Array = eqx.field(static=True)
+    stepsize_controller: diffrax.Controller = eqx.field(static=True)
 
     def __init__(
         self,
-        *,
-        config: dict,
+        data_cfg: dict, 
+        train_cfg: dict,
         key: PRNGKey = jax.random.PRNGKey(0),
     ):
-        data_cfg = config["data"]
-        train_cfg = config["train_cont"]
-        arch_list: Sequence[int] = train_cfg["architecture"]
-        assert len(arch_list) >= 1, "Architecture must have at least one hidden layer."
-        self.arch = tuple(int(x) for x in arch_list)
-
-        self.Dx = int(data_cfg["state_dim"])
-        self.Du = int(data_cfg["action_dim"])
-
-        in_dim = sum(self._input_dims())
-        out_dim = self.Dx  # predict Δx or x_next
-
-        self.mlp = MLP(
-            in_size=in_dim,
-            out_size=out_dim,
-            hidden_size_list=self.arch,
-            key=key,
-        )
+        super().__init__(data_cfg, train_cfg, key)
+        frequency = train_cfg.get("frequency", 10)
+        self.dt = jnp.array(1.0 / frequency, dtype=jnp.float32)
+        self.dt0 = jnp.array(self.dt / 5, dtype=jnp.float32)
+        if train_cfg.get("ode_step_size_controller", "pid") == "const":
+            self.stepsize_controller = diffrax.ConstantStepSize()
+        else:
+            self.stepsize_controller = diffrax.PIDController(rtol=1e-2, atol=1e-6)
 
     def dx(self, t, x, args):
             u = args  # pusher velocity
             # Predict the derivative of keypoints
             return self.mlp(jnp.concatenate([x, u], axis=-1))
 
-    def forward(self, x, u, dt):
-        # x: (B,Dx), u: (B,Du), dt: scalar
+    def forward(self, x, u):
+        # x: (B,Dx), u: (B,Du)
         # One step forward prediction
         term = diffrax.ODETerm(self.dx)
         solver = diffrax.Tsit5()
-        sol = jax.vmap(diffrax.diffeqsolve)(term, solver, t0=0, t1=dt, dt0=dt/5, y0=x, args=u)
+        sol = jax.vmap(diffrax.diffeqsolve)(term, solver, t0=0, t1=self.dt, dt0=self.dt0, y0=x, args=u, stepsize_controller=self.stepsize_controller)
         return sol.ys[-1]
 
-    def rollout(self, x0, U, dt):
-        # x0: (B,Dx), U: (B,T,Du), dt: scalar
+    def rollout(self, x0, U):
+        # x0: (B,Dx), U: (B,T,Du)
         # Use diffrax to integrate over the control frequency
         def step(state, u):
             term = diffrax.ODETerm(self.dx)
             solver = diffrax.Tsit5()
-            sol = diffrax.diffeqsolve(term, solver, t0=0, t1=dt, dt0=dt/5, y0=state, args=u)
+            sol = diffrax.diffeqsolve(term, solver, t0=0, t1=self.dt, dt0=self.dt0, y0=state, args=u, stepsize_controller=self.stepsize_controller)
             return sol.ys[-1], sol.ys[-1]
             
-        _, x_seq = jax.lax.scan(jax.vmap(step), x0, U)
-        return x_seq
+        _, x_seq = jax.lax.scan(jax.vmap(step), x0, U.transpose(1,0,2))
+        return x_seq.transpose(1,0,2)
 
-    def forward_batchless_onnx(self, inp):
+    def forward_batchless_single_input(self, inp):
         return self.mlp(inp)
     
-    __call__ = forward_batchless_onnx
+    __call__ = forward_batchless_single_input
+
+
+def load_t_dynamics_model(data_config: dict, train_config: dict, model_path: str) -> Continuous_T_Dynamics:
+    model_def = Continuous_T_Dynamics(data_config, train_config)
+    with open(model_path, "rb") as f:
+        model: Continuous_T_Dynamics = eqx.tree_deserialise_leaves(f, model_def)
+    return model

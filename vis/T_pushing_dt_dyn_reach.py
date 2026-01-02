@@ -227,19 +227,20 @@ def plot_v2(trajs, pxy, scale, window_size, file_name):
 # def main(config: DictConfig):
 def main():
     model_dir = "output/runs/T_pushing/"
-    model_dir = model_dir + "log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_20260101_152547"
+    model_dir = model_dir + "log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_20260101_231652"
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     data_config = config["data"]
     train_config = config["train_dt_dyn"] if "train_dt_dyn" in config else config["train"]
-    data_dir = data_config["out_path"]
+    data_dir = train_config.get("data_dirr", "output/data/T_pushing_freq1")
+    # data_dir = "output/data/T_pushing_freq1_1_1"
     
     scale = float(data_config["scale"])  # data was normalized by /scale
     pred_mode = train_config.get("pred_mode", "state")
     stem_size = jnp.array(data_config["stem_size"])
     bar_size = jnp.array(data_config["bar_size"])
-    window_size = data_config["window_size"]
+    window_size = data_config["window_size"] * data_config.get("enlarge_factor_for_gen", 1)
     state_dim = data_config["state_dim"]
     pose_dim = data_config.get("pose_dim", 3)
     action_dim = data_config["action_dim"]
@@ -277,7 +278,7 @@ def main():
     eps_denorm = eps_arr.astype(np.float32)               # [B,T,15], unnormalized
     eps_norm = eps_denorm / scale                    # [B,T,15], normalized
 
-    selected_eps_idx = 430
+    selected_eps_idx = 43
     if pred_mode == "state":
         state_init = jnp.array(eps_norm[selected_eps_idx, 0, :state_dim])[None]      # [1, Dx]
         act_state_dim = state_dim
@@ -306,7 +307,7 @@ def main():
 
     print(f"action seq: {action_seq.tolist()}")
     # print(f"pusher pos seq: {pusher_pos_seq.tolist()}")
-    enable_action_opt = True
+    enable_action_opt = False
     n_opt_steps = 100
     if enable_action_opt:
         # optimize the action sequence for tighter reachability
