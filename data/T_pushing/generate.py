@@ -27,7 +27,7 @@ def gen_data(config, process_id, seed, num_episode):
     random.seed(seed)
     np.random.seed(seed)
     data_config = config["data"]
-    data_mode = config.get("data_mode", "dt_dyn")
+    data_mode = config["settings"].get("data_mode", "dt_dyn")
     scale, window_size, episode_length, state_dim, action_dim = (
         data_config["scale"],
         data_config["window_size"],
@@ -55,7 +55,7 @@ def gen_data(config, process_id, seed, num_episode):
                   "window_size": window_size,}
 
     frequency = data_config[data_mode]["frequency"]
-    n_sim_time = round(1 / frequency)
+    n_sim_time = 1 / frequency
 
     num_transitions = random.randint(0, 6)
     transit_preiod = episode_length // (num_transitions + 1)
@@ -200,7 +200,7 @@ def parallel_gen_data(args):
 @hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml", version_base=None)
 def main(config: DictConfig) -> None:
     data_config = config["data"]
-    data_mode = config.get("data_mode", "dt_dyn")
+    data_mode = config["settings"].get("data_mode", "dt_dyn")
     frequency = min(data_config[data_mode]["frequency"], 60)
     if frequency != 60:
         data_config[data_mode]["episode_length"] = data_config[data_mode]["episode_length"] * frequency

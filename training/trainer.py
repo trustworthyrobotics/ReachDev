@@ -32,7 +32,7 @@ class Trainer:
         self.model = model
         self.train_loader = train_loader
         self.val_loader = val_loader
-        train_mode = cfg_full.get("train_mode", "dt_dyn")
+        train_mode = cfg_full["settings"].get("train_mode", "dt_dyn")
         assert train_mode in {"dt_dyn", "ct_dyn", "ct_ctl"}, f"Unknown train_mode: {train_mode}"
         self.cfg = cfg_full[f"train_{train_mode}"]
         self.out_dir = self.cfg["out_dir"]

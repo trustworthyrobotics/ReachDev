@@ -1,8 +1,8 @@
 settings:
   seed: 0
   task_name: "T_pushing"
-
-data_mode: "ct_ctl" # {"dt_dyn","ct_dyn", "ct_ctl"}
+  data_mode: "ct_ctl" # {"dt_dyn","ct_dyn", "ct_ctl"}
+  train_mode: "ct_ctl" # {"dt_dyn","ct_dyn", "ct_ctl"}
 
 data:
   state_dim: 8
@@ -17,20 +17,20 @@ data:
     num_episodes: 16000
     episode_length: 50
     num_workers: 48
-    frequency: 1 # DT
+    frequency: 1 # DT dynamics frequency
   ct_dyn:
     out_path: "output/data/${settings.task_name}_freq${data.ct_dyn.frequency}"
     num_episodes: 16000
     episode_length: 50
     num_workers: 48
-    frequency: 10 # CT
+    frequency: 10 # CT dynamics frequency
   ct_ctl:
     out_path: "output/data/${settings.task_name}_freq${data.ct_ctl.frequency}_ctl"
     model_dir: "output/runs/${settings.task_name}_ct_dyn/log_20_lr0.0025_bs128_20260103_001438"
     num_episodes: 16000
     episode_length: 30
     num_workers: 48
-    frequency: 10 # CT
+    frequency: 10 # CT control frequency
   training: True
   saving: True
   visualizing: False
@@ -38,8 +38,6 @@ data:
   scale: 100 # normalize the data, (x,y)/scale
   window_size: 500
   enlarge_factor_for_gen: 4
-
-train_mode: "ct_dyn" # {"dt_dyn","ct_dyn", "ct_ctl"}
 
 train_dt_dyn:
   out_dir: "output/runs/${settings.task_name}"
@@ -127,12 +125,13 @@ train_ct_dyn:
 
 train_ct_ctl:
   out_dir: "output/runs/${settings.task_name}_ct_ctl"
-  data_dir: "output/data/${settings.task_name}_freq${train_ct_ctl.frequency}_ctl"
+  data_dir: "output/data/${settings.task_name}_freq${train_ct_ctl.ctl_frequency}_ctl"
   data_augment: False
   pred_mode: "pose" # {"state","pose"}
   train_valid_ratio: 0.9
   architecture: [64, 64]
-  frequency: 10
+  ctl_frequency: 10
+  target_frequency: 1
   ref_action: True
   n_history: 1
   n_rollout_valid: 6

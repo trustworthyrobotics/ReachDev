@@ -54,7 +54,27 @@ class T_controller(eqx.Module):
         # x: (B,Dx), x_target: (B,Dx), ref_action: (B,Du)
         if self.ref_act:
             inp = jnp.concatenate([x, x_target, ref_action], axis=-1)
-            return ref_action + self.mlp(inp)  # (B,Du) predicted action
+            return ref_action + jax.vmap(self.mlp)(inp)  # (B,Du) predicted action
         else:
             inp = jnp.concatenate([x, x_target], axis=-1)
-            return self.mlp(inp)  # (B,Du) predicted action
+            return jax.vmap(self.mlp)(inp)  # (B,Du) predicted action
+
+    def forward_batchless(self, x, x_target, ref_action=None):
+        # x: (Dx,), x_target: (Dx,), ref_action: (Du,)
+        if self.ref_act:
+            inp = jnp.concatenate([x, x_target, ref_action], axis=-1)
+            return ref_action + self.mlp(inp)  # (Du,) predicted action
+        else:
+            inp = jnp.concatenate([x, x_target], axis=-1)
+            return self.mlp(inp)  # (Du,) predicted action
+
+    def forward_batchless_single_input(self, inp):
+        x = inp[:self.Dx]
+        x_target = inp[self.Dx:2*self.Dx]
+        if self.ref_act:
+            ref_action = inp[2*self.Dx:2*self.Dx + self.Du]
+            return self.forward_batchless(x, x_target, ref_action)
+        else:
+            return self.forward_batchless(x, x_target)
+        
+    __call__ = forward_batchless_single_input

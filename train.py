@@ -25,7 +25,7 @@ def _save_ckpt(path_base: str, model, opt_state, step: int, cfg: dict):
 
 @hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml", version_base=None)
 def main(config: DictConfig) -> None:
-    train_mode = config.get("train_mode", "dt_dyn")
+    train_mode = config["settings"].get("train_mode", "dt_dyn")
     assert train_mode in {"dt_dyn", "ct_dyn", "ct_ctl"}, f"Unknown train_mode: {train_mode}"
     tr_cfg = config[f"train_{train_mode}"]
     data_cfg = config["data"]
@@ -42,7 +42,7 @@ def main(config: DictConfig) -> None:
         from data.T_pushing.dataloader import build_loaders
     else:
         raise ValueError(f"Unknown task in config path: {task_name}")
-    train_loader, val_loader = build_loaders(data_cfg, tr_cfg, seed=config["settings"]["seed"])
+    train_loader, val_loader = build_loaders(data_cfg, tr_cfg, train_mode, seed=config["settings"]["seed"])
 
     # model
     key = jax.random.PRNGKey(config["settings"]["seed"])

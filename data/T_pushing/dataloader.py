@@ -13,10 +13,6 @@ class DynamicsDataset:
     act: jnp.ndarray         # [M, n_sample, 2]          (pusher velocity vx, vy)
     pusher_pos: jnp.ndarray  # [M, n_sample, 2]          (xp, yp)
     weights: jnp.ndarray     # [M, n_roll]
-    n_his: int
-    n_roll: int
-    n_sample: int
-    episode_length: int
 
     def __len__(self) -> int:
         return int(self.obs.shape[0])
@@ -46,9 +42,26 @@ class DynamicsDataset:
         return DynamicsDataset(
             obs=self.obs, act=self.act, pusher_pos=self.pusher_pos,
             weights=jnp.asarray(W, dtype=self.weights.dtype),
-            n_his=self.n_his, n_roll=self.n_roll, n_sample=self.n_sample,
-            episode_length=self.episode_length
         )
+
+@dataclass
+class ControlDataset:
+    obs: jnp.ndarray         # [M, Dx]         (relative keypoints)
+    act: jnp.ndarray         # [M, Du]          (pusher velocity vx, vy)
+    pusher_pos: jnp.ndarray  # [M, 2]          (xp, yp)
+    weights: jnp.ndarray     # [M, 1]
+    targets: jnp.ndarray      # [M, Dx] Target state at t + K
+    ref_actions: jnp.ndarray  # [M, Du] Mean action over [t, t + K]
+
+    def get(self, idx: Union[int, jnp.ndarray, np.ndarray]) -> Dict[str, jnp.ndarray]:
+        return {
+            "observations": self.obs[idx],
+            "actions":      self.act[idx],
+            "weights":      self.weights[idx],
+            "pusher_pos":   self.pusher_pos[idx],
+            "targets": self.targets[idx],
+            "ref_actions": self.ref_actions[idx],
+        }
 
 # ---------- helpers: 2D rotation for stacked (x,y) pairs ----------
 def _rotate_xy_pairs(arr: np.ndarray, theta: float) -> np.ndarray:
@@ -109,7 +122,7 @@ def load_dynamics_dataset(data_cfg: dict, train_cfg: dict,
 
     # ---- Config & dims ----
     n_his  = int(train_cfg["n_history"])
-    n_roll = int(train_cfg["horizon_scheduler"]["T_final"] if phase == "train" else train_cfg["n_rollout_valid"])
+
     train_ratio = float(train_cfg["train_valid_ratio"])
     noise_std   = float(train_cfg["noise"]) if phase == "train" else 0.0
     augment_en  = bool(train_cfg["data_augment"])
@@ -187,13 +200,88 @@ def load_dynamics_dataset(data_cfg: dict, train_cfg: dict,
         act=jnp.asarray(act),
         pusher_pos=jnp.asarray(pusher_pos),
         weights=jnp.asarray(weights),
-        n_his=n_his,
-        n_roll=n_roll,
-        n_sample=n_sample,
-        episode_length=T_ep,
     )
 
-class DynamicsDataloader:
+def load_controller_dataset(data_cfg: dict, train_cfg: dict,
+                 phase: str,
+                 seed: int = 0) -> Union[DynamicsDataset, ControlDataset]:
+    
+    # 1. Reuse existing loading/normalization logic
+    scale = float(data_cfg["scale"])
+    data_file_name = os.path.join(train_cfg["data_dir"], "data.p")
+    with open(data_file_name, "rb") as fp:
+        episodes = [ep.astype(np.float32) / scale for ep in pickle.load(fp)]
+
+    # 2. Train/Valid split
+    train_ratio = float(train_cfg["train_valid_ratio"])
+    num_train = int(len(episodes) * train_ratio)
+    episodes = episodes[:num_train] if phase == "train" else episodes[num_train:]
+
+    state_dim = int(data_cfg["state_dim"])
+    pose_dim = int(data_cfg["pose_dim"])
+    action_dim = int(data_cfg["action_dim"])
+    pred_mode = str(train_cfg["pred_mode"])
+
+    # 3. Windowing Logic
+    obs_list, pusher_pos_list, act_list = [], [], []
+    target_list, ref_act_list = [], []
+
+    # Calculate target window K (e.g., 10 steps)
+    # ctl_frequency=10, target_frequency=1 => K=10
+    K = int(train_cfg["ctl_frequency"] // train_cfg["target_frequency"])
+
+    for ep in episodes:
+        T_ep = ep.shape[0]
+        
+        for i in range(1, T_ep):
+            if pred_mode == "state":
+                target_obs = ep[i, :state_dim]
+            else:
+                target_obs = ep[i, state_dim : state_dim + pose_dim]
+            
+            min_curr_step = max(0, i - K)
+            for j in range(min_curr_step, i):
+                if pred_mode == "state":
+                    curr_obs = ep[j, :state_dim]
+                else:
+                    curr_obs = ep[j, state_dim : state_dim + pose_dim]
+
+                obs_list.append(curr_obs)
+                pusher_pos_list.append(ep[j, state_dim + pose_dim : -action_dim])
+                act_list.append(ep[j, -action_dim:])
+                target_list.append(target_obs)
+                # select the average action over a window with size up to K.
+                # if i - K >= 0 and j is a intermediate step, we still take the average from i-K to i
+                avg_act = np.mean(ep[min(j, min_curr_step) : i, -action_dim:], axis=0)
+                ref_act_list.append(avg_act)
+
+    # 4. Conversion and Shuffling
+    obs = np.asarray(obs_list)
+    if pred_mode == "pose": 
+        obs[..., -1] *= scale # Scale back theta
+    
+    act = np.asarray(act_list)
+    pusher_pos = np.asarray(pusher_pos_list)
+    M = obs.shape[0]
+    
+    rng = np.random.default_rng(seed)
+    perm = rng.permutation(M)
+
+    targets = np.asarray(target_list)
+    if pred_mode == "pose": targets[..., -1] *= scale
+    ref_actions = np.asarray(ref_act_list)
+    
+    return ControlDataset(
+        obs=jnp.asarray(obs[perm]),
+        act=jnp.asarray(act[perm]),
+        pusher_pos=jnp.asarray(pusher_pos[perm]),
+        weights=jnp.ones((M)), # Controller weights are always 1
+        targets=jnp.asarray(targets[perm]),
+        ref_actions=jnp.asarray(ref_actions[perm])
+    )
+
+
+class Dataloader:
     """
     Minimal JAX-friendly dataloader for single-device training.
 
@@ -205,7 +293,7 @@ class DynamicsDataloader:
 
     Example:
         ds = load_dynamics_dataset(config, phase="train")
-        dl = DynamicsDataloader(ds, batch_size=128, seed=0, shuffle=True, drop_last=True)
+        dl = Dataloader(ds, batch_size=128, seed=0, shuffle=True, drop_last=True)
         for batch in dl:  # one epoch
             train_step(batch)
         # next epoch:
@@ -252,18 +340,23 @@ class DynamicsDataloader:
             yield batch
 
 def build_loaders(
-    data_cfg: dict, train_cfg: dict, seed: int = 0
-) -> tuple[ DynamicsDataloader, DynamicsDataloader]:
+    data_cfg: dict, train_cfg: dict, train_mode: str, seed: int = 0
+) -> tuple[ Dataloader, Dataloader]:
     """
     Builds train and valid dataloaders from config.
     Also returns the full dataset stats (DynamicsDataset) for reference.
     """
-    ds_train = load_dynamics_dataset(data_cfg, train_cfg, seed=seed, phase="train")
-    ds_valid = load_dynamics_dataset(data_cfg, train_cfg, seed=seed, phase="valid")
-
+    if train_mode in {"dt_dyn", "ct_dyn"}:
+        ds_train = load_dynamics_dataset(data_cfg, train_cfg, seed=seed, phase="train")
+        ds_valid = load_dynamics_dataset(data_cfg, train_cfg, seed=seed, phase="valid")
+    elif train_mode == "ct_ctl":
+        ds_train = load_controller_dataset(data_cfg, train_cfg, seed=seed, phase="train")
+        ds_valid = load_controller_dataset(data_cfg, train_cfg, seed=seed, phase="valid")
+    else:
+        raise ValueError(f"Unknown train_mode: {train_mode}")
     batch_size = int(train_cfg["batch_size"])
 
-    dl_train = DynamicsDataloader(
+    dl_train = Dataloader(
         dataset=ds_train,
         batch_size=batch_size,
         seed=seed,
@@ -271,7 +364,7 @@ def build_loaders(
         drop_last=True,
     )
 
-    dl_valid = DynamicsDataloader(
+    dl_valid = Dataloader(
         dataset=ds_valid,
         batch_size=batch_size,
         seed=seed + 1,
@@ -284,15 +377,14 @@ def build_loaders(
 if __name__ == "__main__":
     # simple test
     import yaml
+    from omegaconf import DictConfig, OmegaConf
 
     config_path = "configs/T_pushing.yaml"
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 
-    ds_train = load_dynamics_dataset(config, phase="train")
-    dl_train = DynamicsDataloader(ds_train, batch_size=256, seed=0, shuffle=True, drop_last=True)
-
-    for epoch in range(1):
-        print(f"Epoch {epoch}")
-        for i, batch in enumerate(dl_train):
-            print(f" Batch {i}: obs {batch['observations'].shape}, act {batch['actions'].shape}, weights {batch['weights'].shape}")
+    config = OmegaConf.create(config)
+    data_cfg = config["data"]
+    train_mode = config["settings"]["train_mode"]
+    tr_cfg = config[f"train_{train_mode}"]
+    dl_train, dl_valid = build_loaders(data_cfg, tr_cfg, train_mode, seed=0)
