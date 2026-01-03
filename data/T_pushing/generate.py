@@ -47,12 +47,13 @@ def gen_data(config, process_id, seed, num_episode):
     param_dict = {"stem_size": data_config["stem_size"], 
                   "bar_size": data_config["bar_size"], 
                   "pusher_size": data_config["pusher_size"],
+                  "scale": scale,
                   "save_img": gif,
                   "enable_vis": visualizing,
                   "window_size": window_size,}
 
     frequency = data_config["frequency"]
-    n_sim_step = round(60 / frequency)
+    n_sim_time = round(1 / frequency)
 
     num_transitions = random.randint(0, 6)
     transit_preiod = episode_length // (num_transitions + 1)
@@ -90,7 +91,7 @@ def gen_data(config, process_id, seed, num_episode):
         y_pusher = rand_float(max(y_obj - box_range, lo), min(y_obj + box_range, hi))
         # allow the simulator to a resting position
         for i in range(2):
-            env_dict = sim.update((x_pusher, y_pusher), n_sim_step=n_sim_step)
+            env_dict = sim.update((x_pusher, y_pusher), n_sim_time=n_sim_time)
         # add the initial state to the episode
         env_state = np.concatenate([env_dict["state"], env_dict["com_pos"], env_dict["angle"], env_dict["pusher_pos"], env_dict["action"]], axis=0)
         episode.append(env_state)
@@ -140,7 +141,7 @@ def gen_data(config, process_id, seed, num_episode):
             dy = np.clip(dy, -action_bound, action_bound)
             x_pusher = np.clip(x_pusher + dx, lo, hi)
             y_pusher = np.clip(y_pusher + dy, lo, hi)
-            env_dict = sim.update((x_pusher, y_pusher), n_sim_step=n_sim_step)
+            env_dict = sim.update((x_pusher, y_pusher), n_sim_time=n_sim_time)
             # TODO: unify the API
             env_state = (
                 np.concatenate([env_dict["state"], env_dict["com_pos"], env_dict["angle"], env_dict["pusher_pos"], env_dict["action"]], axis=0)

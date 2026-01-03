@@ -36,7 +36,7 @@ class Continuous_T_Dynamics(T_Dynamics):
             # Predict the derivative of keypoints
             return self.mlp(jnp.concatenate([x, u], axis=-1))
 
-    def forward(self, x, u):
+    def forward(self, x: Array, u: Array) -> Array:
         # x: (B,Dx), u: (B,Du)
         # One step forward prediction
         term = diffrax.ODETerm(self.dx)
@@ -44,7 +44,14 @@ class Continuous_T_Dynamics(T_Dynamics):
         sol = jax.vmap(diffrax.diffeqsolve)(term, solver, t0=0, t1=self.dt, dt0=self.dt0, y0=x, args=u, stepsize_controller=self.stepsize_controller)
         return sol.ys[-1]
 
-    def rollout(self, x0, U):
+    def forward_batchless(self, x: Array, u: Array) -> Array:
+        # x: (Dx,), u: (Du,)
+        term = diffrax.ODETerm(self.dx)
+        solver = diffrax.Tsit5()
+        sol = diffrax.diffeqsolve(term, solver, t0=0, t1=self.dt, dt0=self.dt0, y0=x, args=u, stepsize_controller=self.stepsize_controller)
+        return sol.ys[-1]
+
+    def rollout(self, x0: Array, U: Array) -> Array:
         # x0: (B,Dx), U: (B,T,Du)
         # Use diffrax to integrate over the control frequency
         def step(state, u):

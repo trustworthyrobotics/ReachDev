@@ -57,7 +57,7 @@ train_dt_dyn:
     weight: 0.002
     # batch_size: 8
   batch_size: 128
-  lam_jac_reg: 0.0e-3 # 2.0e-4 # jacobian regularization weight
+  lam_jac_reg: 0.0e-3 # jacobian regularization weight
   wandb:
     enabled: true
     project: "${settings.task_name}_reach_pose2"
@@ -87,9 +87,9 @@ train_ct_dyn:
   noise: 0.005 # std of the Gaussian noise to training data
   lr_scheduler:
     type: "cos" # cos, linear, const
-    lr_init: 0.002
+    lr_init: 0.0025
     lr_final: 0.0001
-  n_epoch: 15
+  n_epoch: 10
   reach:
     mode: "none" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
@@ -100,13 +100,13 @@ train_ct_dyn:
     weight: 0.002
     # batch_size: 8
   batch_size: 128
-  lam_jac_reg: 0.0e-3 # 2.0e-4 # jacobian regularization weight
+  lam_jac_reg: 0.0e-3 # jacobian regularization weight
   wandb:
     enabled: true
     project: "${settings.task_name}_ct_test"
-    run_name: "${train_ct_dyn.horizon_scheduler.type}_${train_ct_dyn.horizon_scheduler.T_final}_lr${train_ct_dyn.lr_scheduler.lr_init}"
+    run_name: "${train_ct_dyn.horizon_scheduler.type}_${train_ct_dyn.horizon_scheduler.T_final}_lr${train_ct_dyn.lr_scheduler.lr_init}_bs${train_ct_dyn.batch_size}"
     mode: "online"               # {"online","offline","disabled"}
-    log_every: 1                # log every N training iterations
+    log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  
 
 train_ct_ctl:
@@ -142,7 +142,7 @@ train_ct_ctl:
     weight: 0.002
     # batch_size: 8
   batch_size: 128
-  lam_jac_reg: 0.0e-3 # 2.0e-4 # jacobian regularization weight
+  lam_jac_reg: 0.0e-3 # jacobian regularization weight
   wandb:
     enabled: false
     project: "${settings.task_name}_reach_ct_ctl_test"

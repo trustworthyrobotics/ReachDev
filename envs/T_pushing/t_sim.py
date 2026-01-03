@@ -13,12 +13,10 @@ from envs.T_pushing.helper import transform_polys_wrt_pose_2d, get_rect_vertices
 main class for the T-shaped pushing task
 """
 
-real_factor = 1
-
 
 class T_Sim(Base_Sim):
-    def __init__(self, param_dict, init_poses=None, target_poses=None, pusher_pos=None):
-        super().__init__(param_dict)
+    def __init__(self, param_dict, init_poses=None, target_poses=None, pusher_pos=None, step_dt=1.0 / 60.0):
+        super().__init__(param_dict, step_dt)
         if target_poses is None:
             self.target_positions = None
             self.target_angles = None
@@ -31,6 +29,7 @@ class T_Sim(Base_Sim):
             self.obj_num = param_dict["obj_num"]
         else:
             self.obj_num = 1
+        assert self.obj_num == 1
         self.param_dict = param_dict
         stem_size = param_dict["stem_size"]
         bar_size = param_dict["bar_size"]
@@ -63,7 +62,7 @@ class T_Sim(Base_Sim):
         body = pymunk.Body(mass, moment)
         if pose is None:
             body.angle = random.random() * math.pi * 2
-            body.position = Vec2d(random.randint(200, 300), random.randint(200, 300))
+            body.position = Vec2d(random.randint(int(0.4 * self.width), int(0.6 * self.width)), random.randint(int(0.4 * self.height), int(0.6 * self.height)))
         else:
             body.angle = pose[2]
             body.position = Vec2d(pose[0], pose[1])
