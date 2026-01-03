@@ -2,8 +2,9 @@ settings:
   seed: 0
   task_name: "T_pushing"
 
+data_mode: "ct_ctl" # {"dt_dyn","ct_dyn", "ct_ctl"}
+
 data:
-  out_path: "output/data/${settings.task_name}_freq${data.frequency}"
   state_dim: 8
   pose_dim: 3
   action_dim: 2
@@ -11,10 +12,25 @@ data:
   stem_size: [30, 90] # [10,60]
   bar_size: [120, 30] # [60,10]
   pusher_size: 5
-  num_episodes: 16000
-  episode_length: 50
-  num_workers: 48 # 48
-  frequency: 10 # simulation frequency, 1 for discrete data
+  dt_dyn:
+    out_path: "output/data/${settings.task_name}_freq${data.dt_dyn.frequency}"
+    num_episodes: 16000
+    episode_length: 50
+    num_workers: 48
+    frequency: 1 # DT
+  ct_dyn:
+    out_path: "output/data/${settings.task_name}_freq${data.ct_dyn.frequency}"
+    num_episodes: 16000
+    episode_length: 50
+    num_workers: 48
+    frequency: 10 # CT
+  ct_ctl:
+    out_path: "output/data/${settings.task_name}_freq${data.ct_ctl.frequency}_ctl"
+    model_dir: "output/runs/${settings.task_name}_ct_dyn/log_20_lr0.0025_bs128_20260103_001438"
+    num_episodes: 16000
+    episode_length: 30
+    num_workers: 48
+    frequency: 10 # CT
   training: True
   saving: True
   visualizing: False

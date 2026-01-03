@@ -4,13 +4,14 @@ import random
 import pickle
 import os
 import math
+import multiprocessing
 from multiprocessing import Pool
 import hydra
 from omegaconf import DictConfig
+from tqdm import tqdm
 
 from envs.T_pushing.helper import rand_float, get_truncated_normal, gen_act
-import envs.T_pushing.t_sim as t_sim
-from tqdm import tqdm
+
 """
 output format: (state, pusher position, pusher velocity)
 state: relative position of keypoints of object to pusher: x1-xp, y1-yp, x2-xp, y2-yp, ...
@@ -26,10 +27,11 @@ def gen_data(config, process_id, seed, num_episode):
     random.seed(seed)
     np.random.seed(seed)
     data_config = config["data"]
+    data_mode = config.get("data_mode", "dt_dyn")
     scale, window_size, episode_length, state_dim, action_dim = (
         data_config["scale"],
         data_config["window_size"],
-        data_config["episode_length"],
+        data_config[data_mode]["episode_length"],
         data_config["state_dim"],
         data_config["action_dim"],
     )
@@ -52,7 +54,7 @@ def gen_data(config, process_id, seed, num_episode):
                   "enable_vis": visualizing,
                   "window_size": window_size,}
 
-    frequency = data_config["frequency"]
+    frequency = data_config[data_mode]["frequency"]
     n_sim_time = round(1 / frequency)
 
     num_transitions = random.randint(0, 6)
@@ -73,9 +75,19 @@ def gen_data(config, process_id, seed, num_episode):
 
     # box_range = action_bound * 4
     box_range = 100
-    save_dir = os.path.join(data_config["out_path"], "vis")
+    save_dir = os.path.join(data_config[data_mode]["out_path"], "vis")
 
-    sim = t_sim.T_Sim(param_dict=param_dict)
+    if data_mode == "dt_dyn" or data_mode == "ct_dyn":
+        from envs.T_pushing.t_sim import T_Sim
+        sim = T_Sim(param_dict=param_dict)
+    elif data_mode == "ct_ctl":
+        import jax
+        jax.config.update('jax_platform_name', 'cpu')
+        from envs.T_pushing.t_sim_nn import NN_T_Sim
+        sim = NN_T_Sim(param_dict=param_dict, model_dir=data_config[data_mode]["model_dir"])
+    else:
+        raise NotImplementedError
+
     dataset = []
     for j in tqdm(range(num_episode)):
         # init
@@ -163,7 +175,7 @@ def gen_data(config, process_id, seed, num_episode):
     print([round(np.percentile(dataset[:, :, -2], 10 * i), 5) for i in range(11)])
     print([round(np.percentile(dataset[:, :, -1], 10 * i), 5) for i in range(11)])
     # Update file naming to include process_id
-    data_dir = data_config["out_path"]
+    data_dir = data_config[data_mode]["out_path"]
     filename = os.path.join(
         data_dir, f"data{'' if training else '_eval'}_tmp_{process_id}.p"
     )
@@ -176,6 +188,8 @@ def gen_data(config, process_id, seed, num_episode):
 
 
 def parallel_gen_data(args):
+    import os
+    os.environ["JAX_PLATFORMS"] = "cpu"
     # Unpack arguments if you passed a tuple or dictionary
     config, process_id, seed, num_episode = args
     # Call the original gen_data function
@@ -186,13 +200,14 @@ def parallel_gen_data(args):
 @hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml", version_base=None)
 def main(config: DictConfig) -> None:
     data_config = config["data"]
-    frequency = min(data_config["frequency"], 60)
+    data_mode = config.get("data_mode", "dt_dyn")
+    frequency = min(data_config[data_mode]["frequency"], 60)
     if frequency != 60:
-        data_config["episode_length"] = data_config["episode_length"] * frequency
-        data_config["num_episodes"] = data_config["num_episodes"] // frequency
+        data_config[data_mode]["episode_length"] = data_config[data_mode]["episode_length"] * frequency
+        data_config[data_mode]["num_episodes"] = data_config[data_mode]["num_episodes"] // frequency
 
     num_episodes, training, visualizing, saving, gif = (
-        data_config["num_episodes"],
+        data_config[data_mode]["num_episodes"],
         data_config["training"],
         data_config["visualizing"],
         data_config["saving"],
@@ -205,8 +220,7 @@ def main(config: DictConfig) -> None:
     base_seed = config["settings"]["seed"]
     if not training:
         base_seed = config["settings"]["seed"] + 100
-    os.makedirs(data_config["out_path"], exist_ok=True)
-    data_dir = data_config["out_path"]
+    data_dir = data_config[data_mode]["out_path"]
     os.makedirs(data_dir, exist_ok=True)
     if gif:
         # import pdb; pdb.set_trace()
@@ -214,9 +228,13 @@ def main(config: DictConfig) -> None:
     final_filename = os.path.join(data_dir, f"data{'' if training else '_eval'}.p")
 
     # Setup multiprocessing pool
-    num_processes = min(data_config["num_workers"], os.cpu_count() - 2)
+    num_processes = min(data_config[data_mode]["num_workers"], os.cpu_count() - 2)
 
     print(f"num_processes: {num_processes}")
+
+    if data_mode == "ct_ctl":
+        # creates a fresh Python interpreter for each worker, make sure JAX is initialized correctly
+        multiprocessing.set_start_method('spawn', force=True)
     if num_processes == 1:
         # If only one process, just call the function directly
         gen_data(config, 0, base_seed, num_episodes)

@@ -2,6 +2,7 @@ import math
 import numpy as np
 import random
 from pymunk import Vec2d
+import yaml
 import jax
 import jax.numpy as jnp
 import equinox as eqx
@@ -25,7 +26,7 @@ class ShadowSpace:
         self.param_dict = param_dict
         self.scale = param_dict.get("scale", 1.0)
         self.bodies = [] # [pusher_body, object_body]
-        self.forward = eqx.filter_jit(self.model.forward_batchless)
+        self.forward = eqx.filter_jit(self.model.forward_batchless, backend='cpu')
         # self.forward = self.model.forward_batchless
 
     def add(self, *items):
@@ -42,12 +43,16 @@ class ShadowSpace:
 
     def step(self, dt):
         # 1. Identify roles
+        exist_pusher = False
         for body in self.bodies:
             body: ShadowBody
             if body.label == "object_0":
                 obj_body = body
             elif body.label == "pusher":
                 pusher_body = body
+                exist_pusher = True
+        if not exist_pusher:
+            return  # No pusher, no dynamics update
 
         # 3. Prepare NN Inputs
         # Get keypoints from current object pose (requires helper from T_Sim context)
@@ -93,12 +98,15 @@ class ShadowSpace:
         obj_body.velocity = [(new_x[0] - obj_x) / dt, (new_x[1] - obj_y) / dt]
 
 class NN_T_Sim(T_Sim):
-    def __init__(self, param_dict, model: Continuous_T_Dynamics, init_poses=None, target_poses=None, pusher_pos=None):
-        # We skip the standard T_Sim create_world and do it manually to use Shadows
-        self.model = model
+    def __init__(self, param_dict, model_dir: str, init_poses=None, target_poses=None, pusher_pos=None):
+        model_path = f"{model_dir}/best_model.eqx"
+        config_path = f"{model_dir}/config.yaml"
+        with open(config_path, "r") as f:
+            config = yaml.safe_load(f)
+        self.model = load_t_dynamics_model(config["data"], config["train_ct_dyn"], model_path=model_path)
 
         # Initialize Base_Sim attributes
-        super().__init__(param_dict, init_poses, target_poses, pusher_pos, step_dt=float(model.dt)) # Force simulation step to match NN training dt
+        super().__init__(param_dict, init_poses, target_poses, pusher_pos, step_dt=float(self.model.dt)) # Force simulation step to match NN training dt
 
     def create_world(self, init_poses, pusher_pos):
         self.space = ShadowSpace(self.model, self.param_dict)
@@ -127,8 +135,6 @@ class NN_T_Sim(T_Sim):
         return pusher_body, shape
 
 if __name__ == "__main__":
-    import os
-    import yaml
     param_dict = {
         "stem_size": (10, 60),
         "bar_size": (60, 10),
@@ -141,20 +147,13 @@ if __name__ == "__main__":
 
     model_dir = "output/runs/T_pushing_ct_dyn/"
     model_dir = model_dir + "log_20_lr0.0025_20260102_230034"
-    config_path = os.path.join(model_dir, "config.yaml")
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
-    data_cfg = config["data"]
-    train_cfg = config["train_ct_dyn"] if "train_ct_dyn" in config else config["train"]
-    model_path = os.path.join(model_dir, "best_model.eqx")
-    model = load_t_dynamics_model(data_config=data_cfg, train_config=train_cfg, model_path=model_path)
     # init_poses = [[[250,250,math.radians(45)], [150,150,math.radians(-45)]]]
     init_poses = [[250, 250, math.radians(0)]]
     target_poses = [[250, 250, math.radians(45)]]
     pusher_pos = [200, 200]
     sim = NN_T_Sim(
         param_dict=param_dict,
-        model=model,
+        model_dir=model_dir,
         init_poses=init_poses,
         target_poses=target_poses,
         pusher_pos=pusher_pos,
@@ -168,4 +167,4 @@ if __name__ == "__main__":
     for i in range(5):
         env_dict = sim.update(action=np.array([200.0 + i * 10, 200.0 + i * 10]), n_sim_time=0.1)
 
-    sim.save_gif("t_sim_nn_test.gif", fps=1)
+    sim.save_gif("output/test/t_sim_nn_test.gif", fps=1)
