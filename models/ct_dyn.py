@@ -32,17 +32,14 @@ class Continuous_T_Dynamics(T_Dynamics):
             self.stepsize_controller = diffrax.PIDController(rtol=1e-2, atol=1e-6)
 
     def dx(self, t, x, args):
-            u = args  # pusher velocity
-            # Predict the derivative of keypoints
-            return self.mlp(jnp.concatenate([x, u], axis=-1))
+        u = args  # pusher velocity
+        # Predict the derivative of keypoints
+        return self.mlp(jnp.concatenate([x, u], axis=-1))
 
     def forward(self, x: Array, u: Array) -> Array:
         # x: (B,Dx), u: (B,Du)
         # One step forward prediction
-        term = diffrax.ODETerm(self.dx)
-        solver = diffrax.Tsit5()
-        sol = jax.vmap(diffrax.diffeqsolve)(term, solver, t0=0, t1=self.dt, dt0=self.dt0, y0=x, args=u, stepsize_controller=self.stepsize_controller)
-        return sol.ys[-1]
+        return jax.vmap(self.forward_batchless)(x, u)
 
     def forward_batchless(self, x: Array, u: Array) -> Array:
         # x: (Dx,), u: (Du,)

@@ -155,23 +155,25 @@ class MSELossCtl(eqx.Module):
 
     """Handles multi-step rollout control error."""
     def __call__(self, model: T_controller, X, U, step_weights):
+        # X: (B,T+1,Dx), U: (B,T,Du)
         X_curr = X[:, 0, :] # [B, Dx]
         X_tgt = X[:, -1, :] # [B, Dx]
         U_ref = U.mean(axis=1)  # [B, Du]
 
         def one_step_ctl_dyn(carry, _):
             X_curr = carry  # [B, Dx]
-            U_pred = model.forward_batchless(X_curr, X_tgt, U_ref)  # [B, Du]
-            X_next = self.ct_dyn.forward_batchless(X_curr, U_pred)  # [B, Dx]
+            U_pred = model.forward(X_curr, X_tgt, U_ref)  # [B, Du]
+            X_next = self.ct_dyn.forward(X_curr, U_pred)  # [B, Dx]
             return X_next, (X_next, U_pred)
 
         T = U.shape[1]
-        X_preds, U_preds = jax.lax.scan(one_step_ctl_dyn, X_curr, None, length=T)
-        X_preds = jnp.concatenate([X_curr[:, None, :], X_preds], axis=1)  # [B, T+1, Dx]
-        U_preds = jnp.stack(U_preds, axis=1)  # [B, T, Du]
+        _, (X_preds, U_preds) = jax.lax.scan(one_step_ctl_dyn, X_curr, None, length=T)
+        X_preds = X_preds.transpose(1,0,2)  # [B, T, Dx]
+        U_preds = U_preds.transpose(1,0,2)  # [B, T, Du]
 
-        err_sq = (U_preds - U)**2
-        mse_t = jnp.mean(err_sq, axis=(0, 2)) # Average over Batch and Dims
+        # Average over Batch and Dims
+        # mse_t = jnp.mean((U_preds - U)**2, axis=(0, 2)) + jnp.mean((X_preds - X[:, 1:, :])**2, axis=(0, 2))
+        mse_t = jnp.mean((X_preds - X[:, 1:, :])**2, axis=(0, 2))
 
         w = step_weights[:T]
         w = w / jnp.sum(w)
@@ -205,10 +207,13 @@ class TotalLossCtl(eqx.Module):
         
         # 1. Always compute MSE and Jacobian (Standard JAX code)
         l_mse, m_mse = self.mse_layer(model, X, U, step_weights=step_weights)
-        l_jac, m_jac = self.jac_layer(model, X, U)
+        # l_jac, m_jac = self.jac_layer(model, X, U)
         
-        total_loss = l_mse + (self.lam_jac * l_jac)
-        metrics = {**m_mse, **m_jac}
+        # total_loss = l_mse + (self.lam_jac * l_jac)
+        # metrics = {**m_mse, **m_jac}
+
+        total_loss = l_mse
+        metrics = {**m_mse}
 
         if enable_reach:
             l_reach, m_reach = self.reach_layer(

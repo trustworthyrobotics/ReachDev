@@ -55,7 +55,7 @@ def main(config: DictConfig) -> None:
             model = Continuous_T_Dynamics(data_cfg, tr_cfg, key=key)
         elif train_mode == "ct_ctl":
             from models.ct_ctl import T_controller
-            model = T_controller(config=tr_cfg, key=key)
+            model = T_controller(data_cfg, tr_cfg, key=key)
             from models.mlp_utils import load_model
             from models.ct_dyn import Continuous_T_Dynamics
             model_dir = data_cfg["ct_ctl"]["model_dir"]

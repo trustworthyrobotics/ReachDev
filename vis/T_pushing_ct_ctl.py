@@ -13,6 +13,7 @@ import yaml
 
 from models.mlp_utils import load_model
 from models.ct_dyn import Continuous_T_Dynamics
+from models.ct_ctl import T_controller
 from utils.T_pushing import pose_to_kp
 
 def plot_Tee(tee_kp, c="orange", label=""):
@@ -49,6 +50,7 @@ def plot_frame(video_path, gt, pred, B, fps=10, xlim=(-1, 1), ylim=(-1, 1)):
 
         # Pusher positions
         plot_agent(gt[B, i, 8:],       c="black",  label="GT Pusher")
+        plot_agent(pred[B, i, 8:],    c="red",    label="Pred Pusher")
 
         plt.legend()
         plt.gca().set_aspect('equal')
@@ -88,16 +90,16 @@ def rel_to_abs_kp_plus_pusher(eps_denorm: np.ndarray) -> np.ndarray:
 
 
 def main():
-    model_dir = "output/runs/T_pushing_ct_dyn/"
-    model_dir = model_dir + "log_20_lr0.0025_bs128_20260103_001438"
-    # log_20_lr0.003_bs128_pid_20260103_194419
+    model_dir = "output/runs/T_pushing_ct_ctl/"
+    model_dir = model_dir + "log_10_lr0.001_x_20260104_051549"
+    # model_dir = model_dir + "log_20_lr0.001_20260104_002216"
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     data_cfg = config["data"]
-    train_cfg = config["train_ct_dyn"] if "train_ct_dyn" in config else config["train"]
-    data_dir = train_cfg.get("data_dir", "output/data/T_pushing_freq10")
-    model_dir = train_cfg["out_dir"]
+    train_cfg = config["train_ct_ctl"] if "train_ct_ctl" in config else config["train"]
+    data_dir = train_cfg.get("data_dir", "output/data/T_pushing_freq10_ctl")
+
     scale = float(data_cfg.get("scale", 1.0))  # data was normalized by /scale
     pred_mode = train_cfg.get("pred_mode", "state")
     stem_size = jnp.array(data_cfg["stem_size"])
@@ -106,8 +108,18 @@ def main():
     pose_dim = data_cfg.get("pose_dim", 3)
     action_dim = data_cfg["action_dim"]
 
-    eval_p_path = os.path.join(data_dir, "data_eval.p")
-    model = load_model(data_config=data_cfg, train_config=train_cfg, model_class=Continuous_T_Dynamics, model_dir=model_dir, mode="best")
+    use_eval = True
+    if use_eval:
+        eval_p_path = os.path.join(data_dir, "data_eval.p")
+    else:
+        eval_p_path = os.path.join(data_dir, "data.p")
+    model = load_model(data_config=data_cfg, train_config=train_cfg, model_class=T_controller, model_dir=model_dir, mode="best")
+
+    ct_dyn_dir = data_cfg["ct_ctl"]["model_dir"]
+    ct_dyn_config_path = os.path.join(ct_dyn_dir, "config.yaml")
+    with open(ct_dyn_config_path, "r") as f:
+        ct_dyn_config = yaml.safe_load(f)
+    ct_dyn = load_model(ct_dyn_config["data"], ct_dyn_config["train_ct_dyn"], model_class=Continuous_T_Dynamics, model_dir=ct_dyn_dir, mode="best")
 
     # -----------------------------
     # 2) Load eval data
@@ -119,20 +131,19 @@ def main():
     eps_arr = np.array(eval_data)  # [B, T, 15]
 
     B, T, _ = eps_arr.shape
-    horizon = min(100, T-1)
-    T = horizon + 1
+    horizon = min(10, T-1)
+    n_track = 10
+    T = horizon * n_track + 1
     # Everything inside file is normalized by /scale → denormalize for visualization
     eps_denorm = eps_arr.astype(np.float32)[:, :T, :]               # [B,T,15], unnormalized
     eps_norm = eps_denorm / scale                    # [B,T,15], normalized
 
-    # ----------------- actions (U) and initial states -----------------
-    # U_t = (v_x, v_y) at time t; use first T actions to predict next T states.
     U_norm = eps_norm[:, :-1, -action_dim:]                    # [B,T,2] normalized velocities
     if pred_mode == "state":
-        x0_norm = eps_norm[:, 0, :state_dim]                   # [B,8]    normalized initial state
+        x_norm = eps_norm[:, :, :state_dim]                   # [B,T+1,8]    normalized initial state
     elif pred_mode == "pose":
-        x0_norm = eps_norm[:, 0, state_dim:state_dim+pose_dim]                         # [B,3]     normalized initial state
-        x0_norm[:, -1] = x0_norm[:, -1] * scale  # denormalize angle
+        x_norm = eps_norm[:, :, state_dim:state_dim+pose_dim]                         # [B,3]     normalized initial state
+        x_norm[:, :, -1] = x_norm[:, :, -1] * scale  # denormalize angle
         def transform_fn(pose):
             B, T, D = pose.shape
             pose = pose.reshape(-1, D)
@@ -141,22 +152,46 @@ def main():
     else:
         raise ValueError(f"Unknown pred_mode: {pred_mode}")
 
-    # ----------------- load model & rollout (batch) -----------------
-    # rollout(x0: [B,Dx], U: [B,T,Du]) -> X_pred: [B,T,Dx]
-    X_pred_norm = model.rollout(jnp.asarray(x0_norm), jnp.asarray(U_norm))
-    # prepend x0 to get [B,T,Dx]
-    X_pred_full_norm = jnp.concatenate([x0_norm[:, None, :], X_pred_norm], axis=1)
-    X_pred_full_denorm = X_pred_full_norm * scale
-    
+    x_norm = jnp.array(x_norm)
+    U_norm = jnp.array(U_norm)
+
+    X_curr = x_norm[:, 0, :] # [B, Dx]
+    def one_step_ctl_dyn(carry, _):
+        X_curr, X_tgt, U_ref = carry  # [B, Dx]
+        U_pred = model.forward(X_curr, X_tgt, U_ref)  # [B, Du]
+        X_next = ct_dyn.forward(X_curr, U_pred)  # [B, Dx]
+        return (X_next, X_tgt, U_ref), (X_next, U_pred)
+
+    def track(carry, xs):
+        X_curr = carry  # [B, Dx]
+        X_tgt, U_ref = xs[:, :X_curr.shape[1]], xs[:, X_curr.shape[1]:]  # [B, Dx], [B, Du]
+        _, (X_preds, U_preds) = jax.lax.scan(one_step_ctl_dyn, (X_curr, X_tgt, U_ref), None, length=horizon)
+        return X_preds[-1], (X_preds, U_preds)
+
+    X_tgts = x_norm[:, 1::horizon, :]  # [B, n_track, Dx]
+    U_refs = U_norm.reshape(B, n_track, horizon, action_dim).mean(axis=2)  # [B, n_track, Du]
+    _, (X_preds, U_preds) = jax.lax.scan(track, X_curr, jnp.concatenate([X_tgts, U_refs], axis=-1).transpose(1,0,2), length=n_track)
+
+    X_preds = X_preds.reshape(-1, B, x_norm.shape[2]).transpose(1,0,2)  # [B, T, Dx]
+    U_preds = U_preds.reshape(-1, B, U_norm.shape[2]).transpose(1,0,2)  # [B, T, Du]
+
+    X_preds = jnp.concatenate([X_curr[:, None, :], X_preds], axis=1) * scale  # [B,T, Dx]
     if pred_mode == "pose":
         # renormalize angle in predicted poses
-        X_pred_full_denorm = X_pred_full_denorm.at[:, :, -1].set(X_pred_full_denorm[:, :, -1] / scale)
-        X_pred_full_denorm = transform_fn(X_pred_full_denorm)
+        X_preds = X_preds.at[:, :, -1].set(X_preds[:, :, -1] / scale)
+        X_preds = transform_fn(X_preds)
+    X_preds = np.array(X_preds)
+    U_preds = np.array(U_preds)
+    U_preds = np.concatenate([U_preds, np.zeros((U_preds.shape[0], 1, action_dim))], axis=1) * scale  # [B,T, Du]
+    pusher_pos_curr = eps_denorm[:, 0, state_dim+pose_dim:-action_dim]  # [B,2]
+    pusher_pos_preds = np.cumsum(np.concatenate([pusher_pos_curr[:, None, :], U_preds[:, :-1, :] * float(ct_dyn.dt)], axis=1), axis=1)  # [B,T,2]
+    
+    X_gts = eps_denorm[..., :state_dim]
+    U_gts = eps_denorm[..., -action_dim:]
+    print(f"kp state error {np.abs(X_preds - X_gts).mean()}, action error {np.abs(U_preds - U_gts).mean()}")
 
-    # ----------------- build GT/PRED arrays for plot_frame -----------------
     gt_vis = rel_to_abs_kp_plus_pusher(np.concatenate([eps_denorm[..., :state_dim], eps_denorm[..., state_dim+pose_dim:]], axis=-1))         # [B,T,10]
-    pred_vis = rel_to_abs_kp_plus_pusher(np.concatenate([X_pred_full_denorm, eps_denorm[:, :, state_dim+pose_dim:]], axis=-1))  # [B,T,10]
-    print(f"vis error: {np.abs(pred_vis - gt_vis).mean()}")
+    pred_vis = rel_to_abs_kp_plus_pusher(np.concatenate([X_preds, pusher_pos_preds, U_preds], axis=-1))  # [B,T,10]
 
     # ----------------- write one GIF per episode -----------------
     out_dir = model_dir
@@ -164,13 +199,13 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     B = min(B, 10)
     for b in range(B):
-        out_path = os.path.join(out_dir, f"ep_{b:04d}.gif")
+        out_path = os.path.join(out_dir, f"ep_{b:04d}{'_eval' if use_eval else ''}.gif")
         plot_frame(
             out_path,
             gt=gt_vis,
             pred=pred_vis,
             B=b,
-            fps=30,
+            fps=20,
             xlim=(0, window_size),
             ylim=(0, window_size),
         )
