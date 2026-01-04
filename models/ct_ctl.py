@@ -8,7 +8,7 @@ import equinox as eqx
 Array = jnp.ndarray
 PRNGKey = jax.Array
 
-from models.dynamics import MLP
+from models.mlp_utils import MLP
 
 class T_controller(eqx.Module):
     # ---- static / hyper params ----
@@ -22,11 +22,10 @@ class T_controller(eqx.Module):
     def __init__(
         self,
         *,
-        config: dict,
+        data_cfg: dict,
+        train_cfg: dict,
         key: PRNGKey = jax.random.PRNGKey(0),
     ):
-        data_cfg = config["data"]
-        train_cfg = config["train"]
         arch_list: Sequence[int] = train_cfg["controller_architecture"]
         assert len(arch_list) >= 1, "Architecture must have at least one hidden layer."
         self.arch = tuple(int(x) for x in arch_list)
@@ -78,3 +77,13 @@ class T_controller(eqx.Module):
             return self.forward_batchless(x, x_target)
         
     __call__ = forward_batchless_single_input
+
+    # it is only used for Jacobian regularization
+    def forward_batchless_mlp_only(self, x: Array, u: Array) -> Array:
+        return self.mlp(jnp.concatenate([x, u], axis=-1))
+
+def load_t_controller_model(data_config: dict, train_config: dict, model_path: str) -> T_controller:
+    model_def = T_controller(data_config, train_config)
+    with open(model_path, "rb") as f:
+        model: T_controller = eqx.tree_deserialise_leaves(f, model_def)
+    return model

@@ -9,7 +9,7 @@ Array = jnp.ndarray
 PRNGKey = jax.Array
 
 
-from models.dynamics import T_Dynamics
+from models.dt_dyn import T_Dynamics
 
 class Continuous_T_Dynamics(T_Dynamics):
     dt: Array = eqx.field(static=True)
@@ -67,10 +67,3 @@ class Continuous_T_Dynamics(T_Dynamics):
         return self.mlp(inp)
     
     __call__ = forward_batchless_single_input
-
-
-def load_t_dynamics_model(data_config: dict, train_config: dict, model_path: str) -> Continuous_T_Dynamics:
-    model_def = Continuous_T_Dynamics(data_config, train_config)
-    with open(model_path, "rb") as f:
-        model: Continuous_T_Dynamics = eqx.tree_deserialise_leaves(f, model_def)
-    return model

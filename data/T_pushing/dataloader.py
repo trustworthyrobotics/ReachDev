@@ -122,7 +122,7 @@ def load_dynamics_dataset(data_cfg: dict, train_cfg: dict,
 
     # ---- Config & dims ----
     n_his  = int(train_cfg["n_history"])
-
+    n_roll = int(train_cfg["horizon_scheduler"]["T_final"] if phase == "train" else train_cfg["n_rollout_valid"])
     train_ratio = float(train_cfg["train_valid_ratio"])
     noise_std   = float(train_cfg["noise"]) if phase == "train" else 0.0
     augment_en  = bool(train_cfg["data_augment"])
@@ -346,14 +346,16 @@ def build_loaders(
     Builds train and valid dataloaders from config.
     Also returns the full dataset stats (DynamicsDataset) for reference.
     """
-    if train_mode in {"dt_dyn", "ct_dyn"}:
-        ds_train = load_dynamics_dataset(data_cfg, train_cfg, seed=seed, phase="train")
-        ds_valid = load_dynamics_dataset(data_cfg, train_cfg, seed=seed, phase="valid")
-    elif train_mode == "ct_ctl":
-        ds_train = load_controller_dataset(data_cfg, train_cfg, seed=seed, phase="train")
-        ds_valid = load_controller_dataset(data_cfg, train_cfg, seed=seed, phase="valid")
-    else:
-        raise ValueError(f"Unknown train_mode: {train_mode}")
+    ds_train = load_dynamics_dataset(data_cfg, train_cfg, seed=seed, phase="train")
+    ds_valid = load_dynamics_dataset(data_cfg, train_cfg, seed=seed, phase="valid")
+    # if train_mode in {"dt_dyn", "ct_dyn"}:
+    #     ds_train = load_dynamics_dataset(data_cfg, train_cfg, seed=seed, phase="train")
+    #     ds_valid = load_dynamics_dataset(data_cfg, train_cfg, seed=seed, phase="valid")
+    # elif train_mode == "ct_ctl":
+    #     ds_train = load_controller_dataset(data_cfg, train_cfg, seed=seed, phase="train")
+    #     ds_valid = load_controller_dataset(data_cfg, train_cfg, seed=seed, phase="valid")
+    # else:
+    #     raise ValueError(f"Unknown train_mode: {train_mode}")
     batch_size = int(train_cfg["batch_size"])
 
     dl_train = Dataloader(

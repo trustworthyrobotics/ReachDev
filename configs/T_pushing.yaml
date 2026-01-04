@@ -2,7 +2,7 @@ settings:
   seed: 0
   task_name: "T_pushing"
   data_mode: "ct_ctl" # {"dt_dyn","ct_dyn", "ct_ctl"}
-  train_mode: "ct_ctl" # {"dt_dyn","ct_dyn", "ct_ctl"}
+  train_mode: "ct_dyn" # {"dt_dyn","ct_dyn", "ct_ctl"}
 
 data:
   state_dim: 8
@@ -81,7 +81,7 @@ train_dt_dyn:
     save_checkpoints: true       # save model checkpoints to wandb  
 
 train_ct_dyn:
-  out_dir: "output/runs/${settings.task_name}_${train_mode}"
+  out_dir: "output/runs/${settings.task_name}_${settings.train_mode}"
   data_dir: "output/data/${settings.task_name}_freq${train_ct_dyn.frequency}"
   data_augment: False
   pred_mode: "pose" # {"state","pose"}
@@ -103,7 +103,7 @@ train_ct_dyn:
     type: "cos" # cos, linear, const
     lr_init: 0.0025
     lr_final: 0.0001
-  n_epoch: 10
+  n_epoch: 8
   reach:
     mode: "none" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
@@ -118,7 +118,7 @@ train_ct_dyn:
   wandb:
     enabled: true
     project: "${settings.task_name}_ct_test"
-    run_name: "${train_ct_dyn.horizon_scheduler.type}_${train_ct_dyn.horizon_scheduler.T_final}_lr${train_ct_dyn.lr_scheduler.lr_init}_bs${train_ct_dyn.batch_size}"
+    run_name: "${train_ct_dyn.horizon_scheduler.type}_${train_ct_dyn.horizon_scheduler.T_final}_lr${train_ct_dyn.lr_scheduler.lr_init}_bs${train_ct_dyn.batch_size}_${train_ct_dyn.ode_step_size_controller}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  

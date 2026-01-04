@@ -8,7 +8,8 @@ import jax.numpy as jnp
 import equinox as eqx
 
 from envs.T_pushing.t_sim import T_Sim, get_keypoints_from_pose, get_pose_from_keypoints
-from models.dynamics_c import Continuous_T_Dynamics, load_t_dynamics_model
+from models.mlp_utils import load_model
+from models.ct_dyn import Continuous_T_Dynamics
 
 class ShadowBody:
     """Minimalist body to mimic pymunk.Body."""
@@ -99,11 +100,10 @@ class ShadowSpace:
 
 class NN_T_Sim(T_Sim):
     def __init__(self, param_dict, model_dir: str, init_poses=None, target_poses=None, pusher_pos=None):
-        model_path = f"{model_dir}/best_model.eqx"
         config_path = f"{model_dir}/config.yaml"
         with open(config_path, "r") as f:
             config = yaml.safe_load(f)
-        self.model = load_t_dynamics_model(config["data"], config["train_ct_dyn"], model_path=model_path)
+        self.model = load_model(config["data"], config["train_ct_dyn"], model_class=Continuous_T_Dynamics, model_dir=model_dir, mode="best")
 
         # Initialize Base_Sim attributes
         super().__init__(param_dict, init_poses, target_poses, pusher_pos, step_dt=float(self.model.dt)) # Force simulation step to match NN training dt

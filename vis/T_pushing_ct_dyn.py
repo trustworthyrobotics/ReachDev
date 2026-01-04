@@ -11,7 +11,8 @@ import hydra
 from omegaconf import DictConfig
 import yaml
 
-from models.dynamics_c import load_t_dynamics_model
+from models.mlp_utils import load_model
+from models.dt_dyn import T_Dynamics
 from utils.T_pushing import pose_to_kp
 
 def plot_Tee(tee_kp, c="orange", label=""):
@@ -89,7 +90,6 @@ def rel_to_abs_kp_plus_pusher(eps_denorm: np.ndarray) -> np.ndarray:
 def main():
     model_dir = "output/runs/T_pushing_ct_dyn/"
     model_dir = model_dir + "log_20_lr0.0025_bs128_20260103_001438"
-    model_path = os.path.join(model_dir, "best_model.eqx")
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
@@ -106,7 +106,7 @@ def main():
     action_dim = data_cfg["action_dim"]
 
     eval_p_path = os.path.join(data_dir, "data_eval.p")
-    model = load_t_dynamics_model(data_config=data_cfg, train_config=train_cfg, model_path=model_path)
+    model = load_model(data_config=data_cfg, train_config=train_cfg, model_class=T_Dynamics, model_dir=model_dir, mode="best")
 
     # -----------------------------
     # 2) Load eval data

@@ -11,7 +11,8 @@ import hydra
 from omegaconf import DictConfig
 import yaml
 
-from models.dynamics import load_t_dynamics_model
+from models.mlp_utils import load_model
+from models.dt_dyn import T_Dynamics
 from utils.T_pushing import pose_to_kp
 
 def plot_Tee(tee_kp, c="orange", label=""):
@@ -107,8 +108,7 @@ def main():
     action_dim = data_cfg["action_dim"]
 
     eval_p_path = os.path.join(data_dir, "data_eval.p")
-    model_path = os.path.join(train_cfg["out_dir"], "best_model.eqx")
-    model = load_t_dynamics_model(data_config=data_cfg, train_config=train_cfg, model_path=model_path)
+    model = load_model(data_config=data_cfg, train_config=train_cfg, model_class=T_Dynamics, model_dir=model_dir, mode="best")
 
     # -----------------------------
     # 2) Load eval data

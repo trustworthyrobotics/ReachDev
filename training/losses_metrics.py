@@ -1,6 +1,6 @@
 # trainers/losses_metrics.py
 from __future__ import annotations
-from typing import Optional, Dict, Tuple, Callable
+from typing import Optional, Dict, Tuple, Callable, Union
 
 import jax
 import jax.numpy as jnp
@@ -13,6 +13,9 @@ from CROWN_Reach.src.utils.box_set import calculate_volume, prepare_initial_set_
 
 Array = jnp.ndarray
 
+from models.dt_dyn import T_Dynamics
+from models.ct_dyn import Continuous_T_Dynamics
+from models.ct_ctl import T_controller
 
 # ----------------------------- utilities -----------------------------
 
@@ -28,106 +31,9 @@ def make_linear_step_weights(T: int, ub: float) -> Array:
 
 
 # ------------------------------ losses -------------------------------
-
-def multistep_free_rollout_loss(
-    model,
-    X: Array,
-    U: Array,
-    *,
-    step_weights: Optional[Array] = None,
-    transform_fn: Optional[Callable[[Array], Array]] = None,
-) -> Tuple[Array, Dict[str, Array]]:
-    """
-    Multi-step free-rollout MSE with optional per-step weights.
-
-    Args:
-      X: (B, T+1, Dx)
-      U: (B, T,   Du)
-      step_weights: (T,) or None. If provided, normalized by sum(weights).
-    Returns:
-      loss: scalar
-      metrics: dict with mse, rmse and per-step versions
-    """
-    X_tgt = X[:, 1:, :]
-    X_pred = model.rollout(X[:, 0, :], U)           # (B,T,Dx)
-    if transform_fn:
-        X_pred = transform_fn(X_pred)
-        X_tgt = transform_fn(X_tgt)
-
-    err = X_pred - X_tgt                                     # (B,T,Dx)
-
-    # Per-step MSE (averaged over batch and state dims): (T,)
-    mse_t = jnp.mean(err**2, axis=(0, 2))
-
-    if step_weights is not None:
-        w = step_weights[:X_pred.shape[1]]  # (T,)
-        w = w / jnp.sum(w)
-        loss = jnp.sum(mse_t * w)
-    else:
-        loss = jnp.mean(err**2)
-
-    metrics = {
-        "mse": jnp.mean(err**2),
-        "rmse": jnp.sqrt(jnp.mean(err**2)),
-        "mse_per_step": mse_t,
-        "rmse_per_step": jnp.sqrt(mse_t + 1e-12),
-    }
-    return loss, metrics
-
-
-def combined_loss(
-    model,
-    X: Array,
-    U: Array,
-    *,
-    step_weights: Optional[Array] = None,
-    lam_jac: float = 0.0,
-    transform_fn: Optional[Callable[[Array], Array]] = None,
-) -> Tuple[Array, Dict[str, Array]]:
-    """
-    Free-rollout loss + λ * 1-step auxiliary (optional).
-    """
-    loss, metrics = multistep_free_rollout_loss(model, X, U, step_weights=step_weights, transform_fn=transform_fn)
-    metrics.update({"loss": loss})
-
-    jac_loss = jacobian_reg_loss(model, X, U)
-    loss = loss + lam_jac * jac_loss
-    metrics['jacobian_reg_loss'] = jac_loss
-    return loss, metrics
-
-def jacobian_reg_loss(model, X: jnp.ndarray, U: jnp.ndarray):
-    """
-    Computes the Frobenius norm of the Jacobian df/dx along a trajectory.
-    
-    Args:
-        model: The Equinox model
-        X: (B, T+1, Dx) states
-        U: (B, T, Du) actions
-    """
-    # 2. Use vmap to compute Jacobians over the batch and time
-    # This gives us (B, T, Dx, Dx) tensor
-    batch_jac_fn = jax.vmap(jax.vmap(jax.jacobian(model.forward_batchless, argnums=0)))
-    
-    # We only need the first T states to predict the next T states
-    jacobians = batch_jac_fn(X[:, :-1, :], U)
-    
-    # 3. Calculate Frobenius Norm: sqrt(sum of squares of all elements)
-    # We often use the squared Frobenius norm for easier optimization
-    jac_loss = jnp.mean(jnp.square(jacobians))
-    
-    return jac_loss
-
-def l1_reg_loss(model):
-    params = eqx.filter(model, eqx.is_inexact_array)
-    def leaf_l1(acc, leaf):
-            return acc + jnp.sum(jnp.abs(leaf))
-    total_l1 = eqx.tree_reduce(leaf_l1, params, 0.0)
-    return total_l1
-
-
 class MSELoss(eqx.Module):
     """Handles multi-step rollout prediction error."""
-    def __call__(self, model, X, U, step_weights):
+    def __call__(self, model: Union[T_Dynamics, Continuous_T_Dynamics], X, U, step_weights):
         # Initial state x0
         x_tgt = X[:, 1:, :]
         # model.rollout handles DT vs CT (ODE) internally
@@ -147,10 +53,10 @@ class MSELoss(eqx.Module):
 
 class JacobianReg(eqx.Module):
     """Penalizes high sensitivity to stabilize reachability sets."""
-    def __call__(self, model, X, U):
+    def __call__(self, model: Union[T_Dynamics, Continuous_T_Dynamics], X, U):
         # vmap over batch and time to compute df/dx
         # Note: argnums=0 assumes model.forward(x, u)
-        batch_jac_fn = jax.vmap(jax.vmap(jax.jacobian(model.forward_batchless, argnums=0)))
+        batch_jac_fn = jax.vmap(jax.vmap(jax.jacobian(model.forward_batchless_mlp_only, argnums=0)))
         jacobians = batch_jac_fn(X[:, :-1, :], U)
         loss = jnp.mean(jnp.square(jacobians))
         return loss, {"jac_reg": loss}
@@ -171,7 +77,7 @@ class ReachabilityPenalty(eqx.Module):
         else:
             raise ValueError(f"Unknown mode for ReachabilityPenalty: {mode}")
 
-    def __call__(self, model, X, U, eps, reach_bs, key, splits_cfg):
+    def __call__(self, model: Union[T_Dynamics, Continuous_T_Dynamics], X, U, eps, reach_bs, key, splits_cfg):
         T_reach = U.shape[1]
         D = model.Dx + model.Du
         # pick a random subset for reachability
@@ -215,8 +121,7 @@ class TotalLoss(eqx.Module):
     lam_reach: float
     reach_splits: Dict
 
-    def __init__(self, mode: str, state_dim: int, action_dim: int, reach_cfg: dict, lam_jac: float = 0.0,):
-        
+    def __init__(self, mode: str, state_dim: int, action_dim: int, reach_cfg: dict, lam_jac: float, *args, **kwargs):
         self.mse_layer = MSELoss()
         self.jac_layer = JacobianReg()
         if reach_cfg.get("mode", "none") != "none":
@@ -227,7 +132,76 @@ class TotalLoss(eqx.Module):
         self.lam_reach = reach_cfg.get("weight", 0.0)
         self.reach_splits = reach_cfg.get("splits", {})
 
-    def __call__(self, model, X, U, enable_reach, key, step_weights, reach_eps=0.0, reach_bs=32):
+    def __call__(self, model: Union[T_Dynamics, Continuous_T_Dynamics], X, U, enable_reach, key, step_weights, reach_eps=0.0, reach_bs=32):
+        
+        # 1. Always compute MSE and Jacobian (Standard JAX code)
+        l_mse, m_mse = self.mse_layer(model, X, U, step_weights=step_weights)
+        l_jac, m_jac = self.jac_layer(model, X, U)
+        
+        total_loss = l_mse + (self.lam_jac * l_jac)
+        metrics = {**m_mse, **m_jac}
+
+        if enable_reach:
+            l_reach, m_reach = self.reach_layer(
+                model, X, U, reach_eps, reach_bs,
+                key, self.reach_splits
+            )
+            total_loss = total_loss + (self.lam_reach * l_reach)
+            metrics.update(m_reach)
+        return total_loss, metrics
+
+class MSELossCtl(eqx.Module):
+    ct_dyn: Continuous_T_Dynamics = eqx.field(static=True)
+
+    """Handles multi-step rollout control error."""
+    def __call__(self, model: T_controller, X, U, step_weights):
+        X_curr = X[:, 0, :] # [B, Dx]
+        X_tgt = X[:, -1, :] # [B, Dx]
+        U_ref = U.mean(axis=1)  # [B, Du]
+
+        def one_step_ctl_dyn(carry, _):
+            X_curr = carry  # [B, Dx]
+            U_pred = model.forward_batchless(X_curr, X_tgt, U_ref)  # [B, Du]
+            X_next = self.ct_dyn.forward_batchless(X_curr, U_pred)  # [B, Dx]
+            return X_next, (X_next, U_pred)
+
+        T = U.shape[1]
+        X_preds, U_preds = jax.lax.scan(one_step_ctl_dyn, X_curr, None, length=T)
+        X_preds = jnp.concatenate([X_curr[:, None, :], X_preds], axis=1)  # [B, T+1, Dx]
+        U_preds = jnp.stack(U_preds, axis=1)  # [B, T, Du]
+
+        err_sq = (U_preds - U)**2
+        mse_t = jnp.mean(err_sq, axis=(0, 2)) # Average over Batch and Dims
+
+        w = step_weights[:T]
+        w = w / jnp.sum(w)
+        loss = jnp.sum(mse_t * w)
+
+        return loss, {"mse": loss, "mse_per_step": mse_t}
+
+
+class TotalLossCtl(eqx.Module):
+    mse_layer: MSELossCtl
+    jac_layer: JacobianReg
+    reach_layer: Optional[ReachabilityPenalty]
+    
+    # Weights and Configs
+    lam_jac: float
+    lam_reach: float
+    reach_splits: Dict
+
+    def __init__(self, mode: str, state_dim: int, action_dim: int, reach_cfg: dict, lam_jac: float, ct_dyn: Continuous_T_Dynamics):
+        self.mse_layer = MSELossCtl(ct_dyn)
+        self.jac_layer = JacobianReg()
+        if reach_cfg.get("mode", "none") != "none":
+            self.reach_layer = ReachabilityPenalty(mode, state_dim, action_dim)
+        else:
+            self.reach_layer = None
+        self.lam_jac = lam_jac
+        self.lam_reach = reach_cfg.get("weight", 0.0)
+        self.reach_splits = reach_cfg.get("splits", {})
+
+    def __call__(self, model: T_controller, X, U, enable_reach, key, step_weights, reach_eps=0.0, reach_bs=32):
         
         # 1. Always compute MSE and Jacobian (Standard JAX code)
         l_mse, m_mse = self.mse_layer(model, X, U, step_weights=step_weights)

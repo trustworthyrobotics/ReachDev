@@ -8,7 +8,7 @@ import equinox as eqx
 import optax
 import numpy as np
 import time
-from training.losses_metrics import TotalLoss, make_linear_step_weights
+from training.losses_metrics import TotalLoss, TotalLossCtl, make_linear_step_weights
 
 from utils.logging import Logger
 
@@ -28,6 +28,7 @@ class Trainer:
         cfg_full: Dict,
         seed: int = 0,
         logger: Optional[Logger] = None,
+        ct_dyn: Optional[eqx.Module] = None,
     ):
         self.model = model
         self.train_loader = train_loader
@@ -93,12 +94,18 @@ class Trainer:
         self.reach_splits = reach_cfg.get("splits", {})
         self.reach_batch_size = int(reach_cfg.get("batch_size", self.batch_size))
 
-        self.loss_fn = TotalLoss(
+        if train_mode == "ct_ctl":
+            loss_class = TotalLossCtl
+            assert ct_dyn is not None, "ct_dyn must be provided for ct_ctl training."
+        else:
+            loss_class = TotalLoss
+        self.loss_fn = loss_class(
             mode=train_mode,
             state_dim=model.Dx,
             action_dim=model.Du,
             reach_cfg=reach_cfg,
             lam_jac=float(self.cfg.get("lam_jac_reg", 0.0)),
+            ct_dyn=ct_dyn if train_mode == "ct_ctl" else None,
         )
 
         self._build_steps()

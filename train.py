@@ -48,13 +48,20 @@ def main(config: DictConfig) -> None:
     key = jax.random.PRNGKey(config["settings"]["seed"])
     if "T_pushing" in task_name:
         if train_mode == "dt_dyn":
-            from models.dynamics import T_Dynamics
+            from models.dt_dyn import T_Dynamics
             model = T_Dynamics(data_cfg, tr_cfg, key=key)
         elif train_mode == "ct_dyn":
-            from models.dynamics_c import Continuous_T_Dynamics
+            from models.ct_dyn import Continuous_T_Dynamics
             model = Continuous_T_Dynamics(data_cfg, tr_cfg, key=key)
+        elif train_mode == "ct_ctl":
+            from models.ct_ctl import T_controller
+            model = T_controller(config=tr_cfg, key=key)
+            from models.mlp_utils import load_model
+            from models.ct_dyn import Continuous_T_Dynamics
+            model_dir = data_cfg["ct_ctl"]["model_dir"]
+            ct_dyn = load_model(data_cfg, config[f"train_ct_dyn"], model_class=Continuous_T_Dynamics, model_dir=model_dir, mode="best")
         else:
-            raise NotImplementedError(f"train_mode {train_mode} not implemented yet for T_pushing.")
+            raise ValueError(f"Unknown train_mode: {train_mode}")
 
     if bool(tr_cfg["wandb"]["enabled"]):
         logger = WandbLogger(
@@ -72,6 +79,7 @@ def main(config: DictConfig) -> None:
         save_fn=_save_ckpt,
         cfg_full=config,
         logger=logger,
+        ct_dyn=ct_dyn if train_mode == "ct_ctl" else None,
     )
 
     # with jax.disable_jit():

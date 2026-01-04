@@ -22,7 +22,8 @@ from CROWN_Reach.src.utils.box_set import calculate_volume, prepare_initial_set_
 sys.path.append('CROWN_Reach')
 from CROWN_Reach.src.reachability import DTPlanReach
 from CROWN_Reach.src.utils.vis import visualize_flowpipe_time
-from models.dynamics import load_t_dynamics_model
+from models.mlp_utils import load_model
+from models.dt_dyn import T_Dynamics
 from utils.T_pushing import pose_to_kp
 from envs.T_pushing.t_sim import T_Sim
 import numpy as np
@@ -253,7 +254,7 @@ def main():
         eval_p_path = os.path.join(data_dir, "data.p")
     # model_path = os.path.join( model_dir, "last_model.eqx")
     model_path = os.path.join( model_dir, "best_model.eqx")
-    model = load_t_dynamics_model(data_config, train_config, model_path=model_path)
+    model = load_model(data_config, train_config, model_class=T_Dynamics, model_dir=model_dir, mode="best")
 
     def f_wrapper(x):
         state_next = model(x)

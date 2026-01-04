@@ -10,7 +10,8 @@ from pyparsing import Dict
 import json
 
 from envs.T_pushing.t_sim import generate_init_target_states, T_Sim
-from models.dynamics import load_t_dynamics_model
+from models.mlp_utils import load_model
+from models.dt_dyn import T_Dynamics
 from planning.planner import MPPIPlanner, CEMPlanner
 
 
@@ -69,8 +70,7 @@ def main(config: DictConfig):
     num_test = planning_config["num_test"]
     init_pusher_pos_list, init_pose_list, target_pusher_pos_list, target_pose_list = generate_test_cases(seed, num_test)
 
-    model_path = os.path.join( train_config["out_dir"], "last_model.eqx")
-    model = load_t_dynamics_model(data_config=data_config, train_config=train_config, model_path=model_path)
+    model = load_model(data_config=data_config, train_config=train_config, model_class=T_Dynamics, model_dir=train_config["out_dir"], mode="best")
     param_dict = {"stem_size": data_config["stem_size"], 
                 "bar_size": data_config["bar_size"], 
                 "pusher_size": data_config["pusher_size"],
