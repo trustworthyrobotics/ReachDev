@@ -18,7 +18,7 @@ from utils.T_pushing import pose_to_kp
 def plot_Tee(tee_kp, c="orange", label=""):
     """tee_kp: np.array([TL.x,TL.y,TC.x,TC.y,TR.x,TR.y,B.x,B.y])"""
     order = np.array([0, 2, 1, 3])  # TL, TR, TC, B to draw top bar then stem
-    plt.plot(tee_kp[::2][order], tee_kp[1::2][order], c=c, alpha=0.5, label=label)
+    plt.plot(tee_kp[::2][order], tee_kp[1::2][order], c=c, alpha=1, label=label, linewidth=4)
 
 def plot_agent(agent_kp, c="blue", label=""):
     """agent_kp: np.array([agent.x,agent.y])"""
@@ -89,7 +89,7 @@ def rel_to_abs_kp_plus_pusher(eps_denorm: np.ndarray) -> np.ndarray:
 
 def main():
     model_dir = "output/runs/T_pushing_ct_dyn/"
-    model_dir = model_dir + "log_20_lr0.0025_bs128_20260103_001438"
+    model_dir = model_dir + "lr0.0025_mid_0.08_0.05_0.002_20260104_210809"
     # log_20_lr0.003_bs128_pid_20260103_194419
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
@@ -106,7 +106,11 @@ def main():
     pose_dim = data_cfg.get("pose_dim", 3)
     action_dim = data_cfg["action_dim"]
 
-    eval_p_path = os.path.join(data_dir, "data_eval.p")
+    use_eval = True
+    if use_eval:
+        eval_p_path = os.path.join(data_dir, "data_eval.p")
+    else:
+        eval_p_path = os.path.join(data_dir, "data.p")
     model = load_model(data_config=data_cfg, train_config=train_cfg, model_class=Continuous_T_Dynamics, model_dir=model_dir, mode="best")
 
     # -----------------------------

@@ -19,11 +19,12 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 from CROWN_Reach.src.utils.box_set import calculate_volume, prepare_initial_set_v2
+
 sys.path.append('CROWN_Reach')
-from CROWN_Reach.src.reachability import DT_Plan_Reach
+from CROWN_Reach.src.reachability import CT_Plan_Reach
 from CROWN_Reach.src.utils.vis import visualize_flowpipe_time
 from models.mlp_utils import load_model
-from models.dt_dyn import T_Dynamics
+from models.ct_dyn import Continuous_T_Dynamics
 from utils.T_pushing import pose_to_kp
 from envs.T_pushing.t_sim import T_Sim
 import numpy as np
@@ -227,14 +228,14 @@ def plot_v2(trajs, pxy, scale, window_size, file_name):
 # @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
 # def main(config: DictConfig):
 def main():
-    model_dir = "output/runs/T_pushing/"
-    model_dir = model_dir + "log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_20260101_231652"
+    model_dir = "output/runs/T_pushing_ct_dyn/"
+    model_dir = model_dir + "lr0.0025_mid_0.08_0.05_0.002_20260104_210809"
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     data_config = config["data"]
-    train_config = config["train_dt_dyn"] if "train_dt_dyn" in config else config["train"]
-    data_dir = train_config.get("data_dirr", "output/data/T_pushing_freq1")
+    train_config = config["train_ct_dyn"] if "train_ct_dyn" in config else config["train"]
+    data_dir = train_config.get("data_dirr", "output/data/T_pushing_freq10")
     # data_dir = "output/data/T_pushing_freq1_1_1"
     
     scale = float(data_config["scale"])  # data was normalized by /scale
@@ -252,16 +253,15 @@ def main():
         eval_p_path = os.path.join(data_dir, "data_eval.p")
     else:
         eval_p_path = os.path.join(data_dir, "data.p")
-    # model_path = os.path.join( model_dir, "last_model.eqx")
-    model_path = os.path.join( model_dir, "best_model.eqx")
-    model = load_model(data_config, train_config, model_class=T_Dynamics, model_dir=model_dir, mode="best")
+    model = load_model(data_config, train_config, model_class=Continuous_T_Dynamics, model_dir=model_dir, mode="best")
 
     def f_wrapper(x):
-        state_next = model(x)
-        action_next = x[model.Dx:]
-        return jnp.concatenate([state_next, action_next], axis=-1)
-
-    reach_analyzer = DT_Plan_Reach(f_wrapper, state_dim=model.Dx, action_dim=model.Du, nn_dyn=True, n_steps_per_plan=1, step_size=1)
+        dx = model(x)
+        du = jnp.zeros_like(x[model.Dx:])
+        return jnp.concatenate([dx, du], axis=-1)
+    frequency = float(data_config["ct_dyn"]["frequency"])
+    reach_cfg = train_config["reach"]
+    reach_analyzer = CT_Plan_Reach(f_wrapper, state_dim=model.Dx, action_dim=model.Du, nn_dyn=True, n_steps_per_plan=1, step_size=1/frequency, init_remainder=reach_cfg.get("init_remainder", 1e-1), frr_rounds=reach_cfg.get("frr_rounds", 5), frr_stop_ratio=reach_cfg.get("frr_stop_ratio", 0.95), sr_window_size=reach_cfg.get("sr_window_size", 100))
 
     # -----------------------------
     # 2) Load eval data
@@ -273,13 +273,13 @@ def main():
     eps_arr = np.array(eval_data)  # [B, T, 15]
 
     T_reach = train_config["n_rollout_valid"]
-    T_reach = 15
+    T_reach = 10
 
     # Everything inside file is normalized by /scale → denormalize for visualization
     eps_denorm = eps_arr.astype(np.float32)               # [B,T,15], unnormalized
     eps_norm = eps_denorm / scale                    # [B,T,15], normalized
 
-    selected_eps_idx = 43
+    selected_eps_idx = 20
     if pred_mode == "state":
         state_init = jnp.array(eps_norm[selected_eps_idx, 0, :state_dim])[None]      # [1, Dx]
         act_state_dim = state_dim
@@ -321,7 +321,7 @@ def main():
         @eqx.filter_jit
         def reach_opt_step(act_seq, opt_state, key):
             def loss_fn(_act_seq):
-                ts, r_lo, r_up, x_nexts_all, _ = reach_analyzer.verify_w_model(f_wrapper, z_init_lo, z_init_up, n_total_steps=T_reach, action_seq=_act_seq.repeat(z_init_up.shape[0]//_act_seq.shape[0], axis=0)[:, None], return_tm=True)
+                ts, r_lo, r_up, x_nexts_all, _ = reach_analyzer.verify_w_model(f_wrapper, z_init_lo, z_init_up, n_total_steps=T_reach, action_seq=_act_seq.repeat(z_init_up.shape[0]//_act_seq.shape[0], axis=0)[:, None])
                 r_lo = r_lo.reshape(-1, T_reach + 1, act_state_dim+action_dim)[..., :act_state_dim]  # [B, T+1, Dx]
                 r_up = r_up.reshape(-1, T_reach + 1, act_state_dim+action_dim)[..., :act_state_dim]  # [B, T+1, Dx]
 
@@ -357,7 +357,7 @@ def main():
         print(f"action seq: {action_seq.tolist()}")
         # print(f"pusher pos seq: {pusher_pos_seq.tolist()}")
     # perform reachability analysis
-    ts, r_lo, r_up, x_nexts_all, _ = reach_analyzer.verify_w_model(f_wrapper, z_init_lo, z_init_up, n_total_steps=T_reach, action_seq=action_seq.repeat(z_init_up.shape[0]//action_seq.shape[0], axis=0)[:, None], return_tm=True)
+    ts, r_lo, r_up, x_nexts_all, _ = reach_analyzer.verify_w_model(f_wrapper, z_init_lo, z_init_up, n_total_steps=T_reach, action_seq=action_seq.repeat(z_init_up.shape[0]//action_seq.shape[0], axis=0)[:, None])
     r_lo = r_lo.reshape(-1, T_reach + 1, act_state_dim+action_dim)[..., :act_state_dim]  # [B, T+1, Dx]
     r_up = r_up.reshape(-1, T_reach + 1, act_state_dim+action_dim)[..., :act_state_dim]  # [B, T+1, Dx]
 
@@ -434,17 +434,17 @@ def main():
         outfile = os.path.join(out_dir, f"env.png")
         plot_v2(np.array(transform_fn(jnp.array(sample_env))), pusher_pos_seq, scale, window_size, outfile)
 
-        norm_samples = (raw_samples * 2 - 1).reshape(-1, act_state_dim)  # [n_partitions * n_per_partition (1), Dx], in [-1, 1]
-        norm_lo = norm_up = jnp.concatenate([jnp.zeros((norm_samples.shape[0], 1)), norm_samples, jnp.zeros((norm_samples.shape[0], action_dim))], axis=-1).repeat(T_reach+1, axis=0)  # [n_samples*(T_reach+1), 1+Dx+Du]
+        # norm_samples = (raw_samples * 2 - 1).reshape(-1, act_state_dim)  # [n_partitions * n_per_partition (1), Dx], in [-1, 1]
+        # norm_lo = norm_up = jnp.concatenate([jnp.zeros((norm_samples.shape[0], 1)), norm_samples, jnp.zeros((norm_samples.shape[0], action_dim))], axis=-1).repeat(T_reach+1, axis=0)  # [n_samples*(T_reach+1), 1+Dx+Du]
 
-        taylor_range = x_nexts_all.eval_interval(norm_lo, norm_up)
-        taylor_lo, taylor_up = taylor_range.lo[:, :act_state_dim], taylor_range.hi[:, :act_state_dim]
-        taylor_lo = taylor_lo.reshape(-1, T_reach+1, act_state_dim)
-        taylor_up = taylor_up.reshape(-1, T_reach+1, act_state_dim)
-        print(f"max diff:{np.max(taylor_up - taylor_lo, axis=(0))}")
+        # taylor_range = x_nexts_all.eval_interval(norm_lo, norm_up)
+        # taylor_lo, taylor_up = taylor_range.lo[:, :act_state_dim], taylor_range.hi[:, :act_state_dim]
+        # taylor_lo = taylor_lo.reshape(-1, T_reach+1, act_state_dim)
+        # taylor_up = taylor_up.reshape(-1, T_reach+1, act_state_dim)
+        # print(f"max diff:{np.max(taylor_up - taylor_lo, axis=(0))}")
 
-        outfile = os.path.join(out_dir, f"reach_sample.png")
-        plot_v2(np.array(transform_fn((taylor_lo+taylor_up)/2)), pusher_pos_seq, scale, window_size, outfile)
+        # outfile = os.path.join(out_dir, f"reach_sample.png")
+        # plot_v2(np.array(transform_fn((taylor_lo+taylor_up)/2)), pusher_pos_seq, scale, window_size, outfile)
 
     for idx in range(act_state_dim):
         outfile = os.path.join(out_dir, f"reach_{idx}.png")
