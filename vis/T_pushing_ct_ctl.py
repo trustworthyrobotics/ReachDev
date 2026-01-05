@@ -19,7 +19,7 @@ from utils.T_pushing import pose_to_kp
 def plot_Tee(tee_kp, c="orange", label=""):
     """tee_kp: np.array([TL.x,TL.y,TC.x,TC.y,TR.x,TR.y,B.x,B.y])"""
     order = np.array([0, 2, 1, 3])  # TL, TR, TC, B to draw top bar then stem
-    plt.plot(tee_kp[::2][order], tee_kp[1::2][order], c=c, alpha=0.5, label=label)
+    plt.plot(tee_kp[::2][order], tee_kp[1::2][order], c=c, alpha=1, label=label, linewidth=4)
 
 def plot_agent(agent_kp, c="blue", label=""):
     """agent_kp: np.array([agent.x,agent.y])"""

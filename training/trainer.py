@@ -104,9 +104,11 @@ class Trainer:
             state_dim=model.Dx,
             action_dim=model.Du,
             reach_cfg=reach_cfg,
-            frequency=float(cfg_full["data"][train_mode]["frequency"]),
+            dyn_frequency=float(cfg_full["data"]["ct_dyn"]["frequency"] if train_mode in {"ct_dyn", "ct_ctl"} else 1.0),
             lam_jac=float(self.cfg.get("lam_jac_reg", 0.0)),
             ct_dyn=ct_dyn if train_mode == "ct_ctl" else None,
+            reference_dim=model.Dr if train_mode == "ct_ctl" else None,
+            ctl_frequency=float(self.cfg["ctl_frequency"]) if train_mode == "ct_ctl" else None,
         )
 
         self._build_steps()

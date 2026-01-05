@@ -14,6 +14,7 @@ class T_controller(eqx.Module):
     # ---- static / hyper params ----
     Dx: int = eqx.field(static=True)
     Du: int = eqx.field(static=True)
+    Dr: int = eqx.field(static=True)
     arch: Tuple[int, ...] = eqx.field(static=True)
     ref_act: bool = eqx.field(static=True)
 
@@ -42,6 +43,7 @@ class T_controller(eqx.Module):
         in_dim = self.Dx * 2  # current state + target state
         if self.ref_act:
             in_dim += self.Du
+        self.Dr = in_dim - self.Dx
         out_dim = self.Du  # predict action
 
         self.mlp = MLP(

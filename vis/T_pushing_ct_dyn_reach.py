@@ -237,7 +237,7 @@ def main():
     train_config = config["train_ct_dyn"] if "train_ct_dyn" in config else config["train"]
     data_dir = train_config.get("data_dirr", "output/data/T_pushing_freq10")
     # data_dir = "output/data/T_pushing_freq1_1_1"
-    
+
     scale = float(data_config["scale"])  # data was normalized by /scale
     pred_mode = train_config.get("pred_mode", "state")
     stem_size = jnp.array(data_config["stem_size"])
@@ -261,7 +261,16 @@ def main():
         return jnp.concatenate([dx, du], axis=-1)
     frequency = float(data_config["ct_dyn"]["frequency"])
     reach_cfg = train_config["reach"]
-    reach_analyzer = CT_Plan_Reach(f_wrapper, state_dim=model.Dx, action_dim=model.Du, nn_dyn=True, n_steps_per_plan=1, step_size=1/frequency, init_remainder=reach_cfg.get("init_remainder", 1e-1), frr_rounds=reach_cfg.get("frr_rounds", 5), frr_stop_ratio=reach_cfg.get("frr_stop_ratio", 0.95), sr_window_size=reach_cfg.get("sr_window_size", 100))
+    # init_remainder = reach_cfg.get("init_remainder", 1e-1)
+    # frr_rounds = reach_cfg.get("frr_rounds", 5)
+    # frr_stop_ratio = reach_cfg.get("frr_stop_ratio", 0.95)
+    # sr_window_size = reach_cfg.get("sr_window_size", 100)
+    init_remainder = 5e-2
+    frr_rounds = 5
+    frr_stop_ratio = 0.95
+    sr_window_size = 100
+    reach_analyzer = CT_Plan_Reach(f_wrapper, state_dim=model.Dx, action_dim=model.Du, nn_dyn=True, n_steps_per_plan=1, step_size=1/frequency, 
+                                  init_remainder=init_remainder, frr_rounds=frr_rounds, frr_stop_ratio=frr_stop_ratio, sr_window_size=sr_window_size)
 
     # -----------------------------
     # 2) Load eval data
@@ -273,7 +282,8 @@ def main():
     eps_arr = np.array(eval_data)  # [B, T, 15]
 
     T_reach = train_config["n_rollout_valid"]
-    T_reach = 10
+    T_reach = 20
+    start_time_step = 50
 
     # Everything inside file is normalized by /scale → denormalize for visualization
     eps_denorm = eps_arr.astype(np.float32)               # [B,T,15], unnormalized
@@ -281,10 +291,10 @@ def main():
 
     selected_eps_idx = 20
     if pred_mode == "state":
-        state_init = jnp.array(eps_norm[selected_eps_idx, 0, :state_dim])[None]      # [1, Dx]
+        state_init = jnp.array(eps_norm[selected_eps_idx, start_time_step, :state_dim])[None]      # [1, Dx]
         act_state_dim = state_dim
     if pred_mode == "pose":
-        state_init = jnp.array(eps_norm[selected_eps_idx, 0, state_dim:state_dim+pose_dim])[None]      # [1, Dx]
+        state_init = jnp.array(eps_norm[selected_eps_idx, start_time_step, state_dim:state_dim+pose_dim])[None]      # [1, Dx]
         state_init = state_init.at[0, -1].set(state_init[0, -1] * scale)  # denormalize angle
         act_state_dim = pose_dim
         def transform_fn(pose):
@@ -292,8 +302,8 @@ def main():
             pose = pose.reshape(-1, D)
             kp = jax.vmap(pose_to_kp, in_axes=(0, None, None))(pose, stem_size/scale, bar_size/scale)
             return kp.reshape(B, T, -1)
-    action_seq = jnp.array(eps_norm[selected_eps_idx, :T_reach, -action_dim:])[None]      # [1, T, Du]
-    pusher_pos_seq = jnp.array(eps_norm[selected_eps_idx, :T_reach+1, state_dim+pose_dim:-action_dim])[None]  # [1, T+1, 2]
+    action_seq = jnp.array(eps_norm[selected_eps_idx, start_time_step:start_time_step+T_reach, -action_dim:])[None]      # [1, T, Du]
+    pusher_pos_seq = jnp.array(eps_norm[selected_eps_idx, start_time_step:start_time_step+T_reach+1, state_dim+pose_dim:-action_dim])[None]  # [1, T+1, 2]
 
     reach_eps = float(train_config["reach"]["eps_final"])
     # reach_eps = 0.02
@@ -306,7 +316,7 @@ def main():
     reach_splits = {i: n_split for i in range(act_state_dim)}
     z_init_lo, z_init_up = prepare_initial_set_v2(z_init_lo, z_init_up, splits_cfg=reach_splits)
 
-    print(f"action seq: {action_seq.tolist()}")
+    # print(f"action seq: {action_seq.tolist()}")
     # print(f"pusher pos seq: {pusher_pos_seq.tolist()}")
     enable_action_opt = False
     n_opt_steps = 100
@@ -357,7 +367,7 @@ def main():
         print(f"action seq: {action_seq.tolist()}")
         # print(f"pusher pos seq: {pusher_pos_seq.tolist()}")
     # perform reachability analysis
-    ts, r_lo, r_up, x_nexts_all, _ = reach_analyzer.verify_w_model(f_wrapper, z_init_lo, z_init_up, n_total_steps=T_reach, action_seq=action_seq.repeat(z_init_up.shape[0]//action_seq.shape[0], axis=0)[:, None])
+    ts, r_lo, r_up, x_nexts_all, init_shrinked = reach_analyzer.verify_w_model(f_wrapper, z_init_lo, z_init_up, n_total_steps=T_reach, action_seq=action_seq.repeat(z_init_up.shape[0]//action_seq.shape[0], axis=0)[:, None])
     r_lo = r_lo.reshape(-1, T_reach + 1, act_state_dim+action_dim)[..., :act_state_dim]  # [B, T+1, Dx]
     r_up = r_up.reshape(-1, T_reach + 1, act_state_dim+action_dim)[..., :act_state_dim]  # [B, T+1, Dx]
 
@@ -366,6 +376,7 @@ def main():
     r_up_agg = jnp.max(r_up, axis=0, keepdims=True)
 
     vol = float(calculate_volume(r_lo, r_up, union_init=False, mode="sum"))
+    print(f"init_shrinked: {init_shrinked.sum(axis=(0,1,2))}")
     print(f"Reachable set volume over {T_reach} steps: {vol}")
 
     n_samples = 64 if z_init_lo.shape[0] == 1 else z_init_lo.shape[0]
@@ -421,7 +432,7 @@ def main():
             init_pose[:2] = init_pose[:2] + pusher_pos[:2]
             env = T_Sim(param_dict=param_dict, init_poses=[init_pose], pusher_pos=pusher_pos)
             env_output = []
-            
+
             for j in range(2):
                 env_dict = env.update((pusher_pos[0], pusher_pos[1]), rel=True)
             env_output.append(np.concatenate([env_dict["com_pos"] / scale, env_dict["angle"]], axis=0))

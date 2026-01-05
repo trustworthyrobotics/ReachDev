@@ -2,7 +2,7 @@ settings:
   seed: 0
   task_name: "T_pushing"
   data_mode: "ct_ctl" # {"dt_dyn","ct_dyn", "ct_ctl"}
-  train_mode: "ct_dyn" # {"dt_dyn","ct_dyn", "ct_ctl"}
+  train_mode: "ct_ctl" # {"dt_dyn","ct_dyn", "ct_ctl"}
 
 data:
   state_dim: 8
@@ -30,7 +30,8 @@ data:
     num_episodes: 16000
     episode_length: 30
     num_workers: 48
-    frequency: 10 # CT control frequency
+    dyn_frequency: 10 # CT dynamics frequency
+    frequency: 10 # CT control frequency, should be equal to dyn_frequency or its divisor
   training: True
   saving: True
   visualizing: False
@@ -95,13 +96,13 @@ train_ct_dyn:
   horizon_scheduler:
     type: "log" # log, linear, const
     T_init: 1
-    T_final: 20
+    T_final: 8
     log_alpha: 1.0
   step_weight_ub: 2
   noise: 0.005 # std of the Gaussian noise to training data
   lr_scheduler:
     type: "cos" # cos, linear, const
-    lr_init: 0.0025
+    lr_init: 0.003
     lr_final: 0.0001
   n_epoch: 8
   reach:
@@ -111,11 +112,11 @@ train_ct_dyn:
     eps_init: 0.08
     eps_final: 0.05
     # splits: {0: 2, 1: 2, 2: 2}
-    weight: 0.001
+    weight: 0.002
     # batch_size: 8
     # below for CT reachability settings
-    init_remainder: 1e-1
-    frr_rounds: 5
+    init_remainder: 5e-2
+    frr_rounds: 10
     frr_stop_ratio: 0.95
     sr_window_size: 100
   batch_size: 128
@@ -137,7 +138,7 @@ train_ct_ctl:
   architecture: [64, 64]
   ctl_frequency: 10
   target_frequency: 1
-  ref_action: False
+  ref_action: True
   n_history: 1
   n_rollout_valid: 10
   horizon_scheduler:
@@ -153,7 +154,7 @@ train_ct_ctl:
     lr_final: 0.0001
   n_epoch: 8
   reach:
-    mode: "none" # {"none","mid","after"}
+    mode: "mid" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
     after: 0.6 # only for "after" mode, after N*n_epoch epochs
     eps_init: 0.08
@@ -172,7 +173,7 @@ train_ct_ctl:
   wandb:
     enabled: true
     project: "${settings.task_name}_reach_ct_ctl_test"
-    run_name: "${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}_x"
+    run_name: "${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}_x_${train_ct_ctl.reach.mode}_${train_ct_ctl.reach.eps_init}_${train_ct_ctl.reach.eps_final}_${train_ct_ctl.reach.weight}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  

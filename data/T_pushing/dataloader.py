@@ -44,24 +44,24 @@ class DynamicsDataset:
             weights=jnp.asarray(W, dtype=self.weights.dtype),
         )
 
-@dataclass
-class ControlDataset:
-    obs: jnp.ndarray         # [M, Dx]         (relative keypoints)
-    act: jnp.ndarray         # [M, Du]          (pusher velocity vx, vy)
-    pusher_pos: jnp.ndarray  # [M, 2]          (xp, yp)
-    weights: jnp.ndarray     # [M, 1]
-    targets: jnp.ndarray      # [M, Dx] Target state at t + K
-    ref_actions: jnp.ndarray  # [M, Du] Mean action over [t, t + K]
+# @dataclass
+# class ControlDataset:
+#     obs: jnp.ndarray         # [M, Dx]         (relative keypoints)
+#     act: jnp.ndarray         # [M, Du]          (pusher velocity vx, vy)
+#     pusher_pos: jnp.ndarray  # [M, 2]          (xp, yp)
+#     weights: jnp.ndarray     # [M, 1]
+#     targets: jnp.ndarray      # [M, Dx] Target state at t + K
+#     ref_actions: jnp.ndarray  # [M, Du] Mean action over [t, t + K]
 
-    def get(self, idx: Union[int, jnp.ndarray, np.ndarray]) -> Dict[str, jnp.ndarray]:
-        return {
-            "observations": self.obs[idx],
-            "actions":      self.act[idx],
-            "weights":      self.weights[idx],
-            "pusher_pos":   self.pusher_pos[idx],
-            "targets": self.targets[idx],
-            "ref_actions": self.ref_actions[idx],
-        }
+#     def get(self, idx: Union[int, jnp.ndarray, np.ndarray]) -> Dict[str, jnp.ndarray]:
+#         return {
+#             "observations": self.obs[idx],
+#             "actions":      self.act[idx],
+#             "weights":      self.weights[idx],
+#             "pusher_pos":   self.pusher_pos[idx],
+#             "targets": self.targets[idx],
+#             "ref_actions": self.ref_actions[idx],
+#         }
 
 # ---------- helpers: 2D rotation for stacked (x,y) pairs ----------
 def _rotate_xy_pairs(arr: np.ndarray, theta: float) -> np.ndarray:
@@ -202,83 +202,83 @@ def load_dynamics_dataset(data_cfg: dict, train_cfg: dict,
         weights=jnp.asarray(weights),
     )
 
-def load_controller_dataset(data_cfg: dict, train_cfg: dict,
-                 phase: str,
-                 seed: int = 0) -> Union[DynamicsDataset, ControlDataset]:
+# def load_controller_dataset(data_cfg: dict, train_cfg: dict,
+#                  phase: str,
+#                  seed: int = 0) -> Union[DynamicsDataset, ControlDataset]:
     
-    # 1. Reuse existing loading/normalization logic
-    scale = float(data_cfg["scale"])
-    data_file_name = os.path.join(train_cfg["data_dir"], "data.p")
-    with open(data_file_name, "rb") as fp:
-        episodes = [ep.astype(np.float32) / scale for ep in pickle.load(fp)]
+#     # 1. Reuse existing loading/normalization logic
+#     scale = float(data_cfg["scale"])
+#     data_file_name = os.path.join(train_cfg["data_dir"], "data.p")
+#     with open(data_file_name, "rb") as fp:
+#         episodes = [ep.astype(np.float32) / scale for ep in pickle.load(fp)]
 
-    # 2. Train/Valid split
-    train_ratio = float(train_cfg["train_valid_ratio"])
-    num_train = int(len(episodes) * train_ratio)
-    episodes = episodes[:num_train] if phase == "train" else episodes[num_train:]
+#     # 2. Train/Valid split
+#     train_ratio = float(train_cfg["train_valid_ratio"])
+#     num_train = int(len(episodes) * train_ratio)
+#     episodes = episodes[:num_train] if phase == "train" else episodes[num_train:]
 
-    state_dim = int(data_cfg["state_dim"])
-    pose_dim = int(data_cfg["pose_dim"])
-    action_dim = int(data_cfg["action_dim"])
-    pred_mode = str(train_cfg["pred_mode"])
+#     state_dim = int(data_cfg["state_dim"])
+#     pose_dim = int(data_cfg["pose_dim"])
+#     action_dim = int(data_cfg["action_dim"])
+#     pred_mode = str(train_cfg["pred_mode"])
 
-    # 3. Windowing Logic
-    obs_list, pusher_pos_list, act_list = [], [], []
-    target_list, ref_act_list = [], []
+#     # 3. Windowing Logic
+#     obs_list, pusher_pos_list, act_list = [], [], []
+#     target_list, ref_act_list = [], []
 
-    # Calculate target window K (e.g., 10 steps)
-    # ctl_frequency=10, target_frequency=1 => K=10
-    K = int(train_cfg["ctl_frequency"] // train_cfg["target_frequency"])
+#     # Calculate target window K (e.g., 10 steps)
+#     # ctl_frequency=10, target_frequency=1 => K=10
+#     K = int(train_cfg["ctl_frequency"] // train_cfg["target_frequency"])
 
-    for ep in episodes:
-        T_ep = ep.shape[0]
+#     for ep in episodes:
+#         T_ep = ep.shape[0]
         
-        for i in range(1, T_ep):
-            if pred_mode == "state":
-                target_obs = ep[i, :state_dim]
-            else:
-                target_obs = ep[i, state_dim : state_dim + pose_dim]
+#         for i in range(1, T_ep):
+#             if pred_mode == "state":
+#                 target_obs = ep[i, :state_dim]
+#             else:
+#                 target_obs = ep[i, state_dim : state_dim + pose_dim]
             
-            min_curr_step = max(0, i - K)
-            for j in range(min_curr_step, i):
-                if pred_mode == "state":
-                    curr_obs = ep[j, :state_dim]
-                else:
-                    curr_obs = ep[j, state_dim : state_dim + pose_dim]
+#             min_curr_step = max(0, i - K)
+#             for j in range(min_curr_step, i):
+#                 if pred_mode == "state":
+#                     curr_obs = ep[j, :state_dim]
+#                 else:
+#                     curr_obs = ep[j, state_dim : state_dim + pose_dim]
 
-                obs_list.append(curr_obs)
-                pusher_pos_list.append(ep[j, state_dim + pose_dim : -action_dim])
-                act_list.append(ep[j, -action_dim:])
-                target_list.append(target_obs)
-                # select the average action over a window with size up to K.
-                # if i - K >= 0 and j is a intermediate step, we still take the average from i-K to i
-                avg_act = np.mean(ep[min(j, min_curr_step) : i, -action_dim:], axis=0)
-                ref_act_list.append(avg_act)
+#                 obs_list.append(curr_obs)
+#                 pusher_pos_list.append(ep[j, state_dim + pose_dim : -action_dim])
+#                 act_list.append(ep[j, -action_dim:])
+#                 target_list.append(target_obs)
+#                 # select the average action over a window with size up to K.
+#                 # if i - K >= 0 and j is a intermediate step, we still take the average from i-K to i
+#                 avg_act = np.mean(ep[min(j, min_curr_step) : i, -action_dim:], axis=0)
+#                 ref_act_list.append(avg_act)
 
-    # 4. Conversion and Shuffling
-    obs = np.asarray(obs_list)
-    if pred_mode == "pose": 
-        obs[..., -1] *= scale # Scale back theta
+#     # 4. Conversion and Shuffling
+#     obs = np.asarray(obs_list)
+#     if pred_mode == "pose": 
+#         obs[..., -1] *= scale # Scale back theta
     
-    act = np.asarray(act_list)
-    pusher_pos = np.asarray(pusher_pos_list)
-    M = obs.shape[0]
+#     act = np.asarray(act_list)
+#     pusher_pos = np.asarray(pusher_pos_list)
+#     M = obs.shape[0]
     
-    rng = np.random.default_rng(seed)
-    perm = rng.permutation(M)
+#     rng = np.random.default_rng(seed)
+#     perm = rng.permutation(M)
 
-    targets = np.asarray(target_list)
-    if pred_mode == "pose": targets[..., -1] *= scale
-    ref_actions = np.asarray(ref_act_list)
+#     targets = np.asarray(target_list)
+#     if pred_mode == "pose": targets[..., -1] *= scale
+#     ref_actions = np.asarray(ref_act_list)
     
-    return ControlDataset(
-        obs=jnp.asarray(obs[perm]),
-        act=jnp.asarray(act[perm]),
-        pusher_pos=jnp.asarray(pusher_pos[perm]),
-        weights=jnp.ones((M)), # Controller weights are always 1
-        targets=jnp.asarray(targets[perm]),
-        ref_actions=jnp.asarray(ref_actions[perm])
-    )
+#     return ControlDataset(
+#         obs=jnp.asarray(obs[perm]),
+#         act=jnp.asarray(act[perm]),
+#         pusher_pos=jnp.asarray(pusher_pos[perm]),
+#         weights=jnp.ones((M)), # Controller weights are always 1
+#         targets=jnp.asarray(targets[perm]),
+#         ref_actions=jnp.asarray(ref_actions[perm])
+#     )
 
 
 class Dataloader:
