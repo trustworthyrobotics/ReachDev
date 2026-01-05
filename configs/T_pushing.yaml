@@ -2,7 +2,7 @@ settings:
   seed: 0
   task_name: "T_pushing"
   data_mode: "ct_ctl" # {"dt_dyn","ct_dyn", "ct_ctl"}
-  train_mode: "ct_ctl" # {"dt_dyn","ct_dyn", "ct_ctl"}
+  train_mode: "ct_dyn" # {"dt_dyn","ct_dyn", "ct_ctl"}
 
 data:
   state_dim: 8
@@ -62,7 +62,7 @@ train_dt_dyn:
     lr_final: 0.0001
   n_epoch: 25
   reach:
-    mode: "none" # {"none","mid","after"}
+    mode: "mid" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
     after: 0.6 # only for "after" mode, after N*n_epoch epochs
     eps_init: 0.08
@@ -105,20 +105,25 @@ train_ct_dyn:
     lr_final: 0.0001
   n_epoch: 8
   reach:
-    mode: "none" # {"none","mid","after"}
+    mode: "mid" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
     after: 0.6 # only for "after" mode, after N*n_epoch epochs
     eps_init: 0.08
     eps_final: 0.05
-    # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
-    weight: 0.002
+    # splits: {0: 2, 1: 2, 2: 2}
+    weight: 0.001
     # batch_size: 8
+    # below for CT reachability settings
+    init_remainder: 1e-1
+    frr_rounds: 5
+    frr_stop_ratio: 0.95
+    sr_window_size: 100
   batch_size: 128
   lam_jac_reg: 0.0e-3 # jacobian regularization weight
   wandb:
     enabled: true
     project: "${settings.task_name}_ct_test"
-    run_name: "${train_ct_dyn.horizon_scheduler.type}_${train_ct_dyn.horizon_scheduler.T_final}_lr${train_ct_dyn.lr_scheduler.lr_init}_bs${train_ct_dyn.batch_size}_${train_ct_dyn.ode_step_size_controller}"
+    run_name: "lr${train_ct_dyn.lr_scheduler.lr_init}_${train_ct_dyn.reach.mode}_${train_ct_dyn.reach.eps_init}_${train_ct_dyn.reach.eps_final}_${train_ct_dyn.reach.weight}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  
@@ -156,6 +161,12 @@ train_ct_ctl:
     # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
     weight: 0.002
     # batch_size: 8
+    # below for CT reachability settings
+    init_remainder: 1e-1
+    frr_rounds: 5
+    frr_stop_ratio: 0.95
+    sr_window_size: 100
+
   batch_size: 128
   lam_jac_reg: 0.0e-3 # jacobian regularization weight
   wandb:

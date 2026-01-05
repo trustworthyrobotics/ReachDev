@@ -8,7 +8,7 @@ import equinox as eqx
 
 import sys
 sys.path.append('CROWN_Reach')
-from CROWN_Reach.src.reachability import DTPlanReach
+from CROWN_Reach.src.reachability import DT_Plan_Reach, CT_Plan_Reach, CT_Track_Ctl_Reach
 from CROWN_Reach.src.utils.box_set import calculate_volume, prepare_initial_set_v2
 
 Array = jnp.ndarray
@@ -64,14 +64,14 @@ class JacobianReg(eqx.Module):
 class ReachabilityPenalty(eqx.Module):
     """Calculates the volume of the reachable set."""
     mode: str = eqx.field(static=True)
-    reach_analyzer: any # Your DTPlanReach or a CT equivalent
+    reach_analyzer: Union[DT_Plan_Reach, CT_Plan_Reach, CT_Track_Ctl_Reach] = eqx.field(static=True)
     
-    def __init__(self, mode, state_dim, action_dim):
+    def __init__(self, mode, state_dim, action_dim, reach_cfg, frequency):
         self.mode = mode
         if mode == 'dt_dyn':
-            self.reach_analyzer = DTPlanReach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, n_steps_per_plan=1, step_size=1)
+            self.reach_analyzer = DT_Plan_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, n_steps_per_plan=1, step_size=int(1/frequency))
         elif mode == 'ct_dyn':
-            raise NotImplementedError("CT dynamics reachability not implemented yet.")
+            self.reach_analyzer = CT_Plan_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, n_steps_per_plan=1, step_size=1/frequency, init_remainder=reach_cfg.get("init_remainder", 1e-1), frr_rounds=reach_cfg.get("frr_rounds", 5), frr_stop_ratio=reach_cfg.get("frr_stop_ratio", 0.95), sr_window_size=reach_cfg.get("sr_window_size", 100))
         elif mode == 'ct_ctl':
             raise NotImplementedError("CT control reachability not implemented yet.")
         else:
@@ -96,7 +96,10 @@ class ReachabilityPenalty(eqx.Module):
                 action_next = x[model.Dx:]
                 return jnp.concatenate([state_next, action_next], axis=-1)
         elif self.mode == 'ct_dyn':
-            raise NotImplementedError("CT dynamics reachability not implemented yet.")
+            def f_wrapper(x):
+                dx = model(x)
+                du = jnp.zeros_like(x[model.Dx:])
+                return jnp.concatenate([dx, du], axis=-1)
         elif self.mode == 'ct_ctl':
             raise NotImplementedError("CT control reachability not implemented yet.")
         else:
@@ -104,7 +107,7 @@ class ReachabilityPenalty(eqx.Module):
         X_lo = jnp.concatenate([state_lo, jnp.zeros_like(U[:, 0, :])], axis=-1)
         X_up = jnp.concatenate([state_up, jnp.zeros_like(U[:, 0, :])], axis=-1)
         X_lo, X_up = prepare_initial_set_v2(X_lo, X_up, splits_cfg=splits_cfg)
-        _, r_lo, r_up, _ = self.reach_analyzer.verify_w_model(f_wrapper, X_lo, X_up, n_total_steps=T_reach, action_seq=U.repeat(X_up.shape[0]//U.shape[0], axis=0)[:, None])
+        _, r_lo, r_up, _, _ = self.reach_analyzer.verify_w_model(f_wrapper, X_lo, X_up, n_total_steps=T_reach, action_seq=U.repeat(X_up.shape[0]//U.shape[0], axis=0)[:, None])
 
         reach_vol = calculate_volume(r_lo.reshape(-1, T_reach + 1, D), r_up.reshape(-1, T_reach + 1, D), union_init=False, mode='sum') / r_lo.shape[0]
         reach_penalty = jnp.log(1 + reach_vol)
@@ -121,11 +124,11 @@ class TotalLoss(eqx.Module):
     lam_reach: float
     reach_splits: Dict
 
-    def __init__(self, mode: str, state_dim: int, action_dim: int, reach_cfg: dict, lam_jac: float, *args, **kwargs):
+    def __init__(self, mode: str, state_dim: int, action_dim: int, reach_cfg: dict, frequency: float, lam_jac: float, *args, **kwargs):
         self.mse_layer = MSELoss()
         self.jac_layer = JacobianReg()
         if reach_cfg.get("mode", "none") != "none":
-            self.reach_layer = ReachabilityPenalty(mode, state_dim, action_dim)
+            self.reach_layer = ReachabilityPenalty(mode, state_dim, action_dim, reach_cfg, frequency)
         else:
             self.reach_layer = None
         self.lam_jac = lam_jac
