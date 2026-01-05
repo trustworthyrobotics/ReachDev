@@ -106,7 +106,7 @@ class ReachabilityPenalty(eqx.Module):
         elif self.mode == 'ct_ctl':
             def f_wrapper(x):
                 dx = self.ct_dyn(x)
-                du = jnp.zeros_like(x[model.Dx:])
+                du = jnp.zeros_like(x[self.ct_dyn.Dx:])
                 return jnp.concatenate([dx, du], axis=-1)
         else:
             raise ValueError(f"Unknown mode for ReachabilityPenalty: {self.mode}")

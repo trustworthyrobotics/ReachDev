@@ -168,7 +168,7 @@ def main():
         _, (X_preds, U_preds) = jax.lax.scan(one_step_ctl_dyn, (X_curr, X_tgt, U_ref), None, length=horizon)
         return X_preds[-1], (X_preds, U_preds)
 
-    X_tgts = x_norm[:, 1::horizon, :]  # [B, n_track, Dx]
+    X_tgts = x_norm[:, horizon::horizon, :]  # [B, n_track, Dx]
     U_refs = U_norm.reshape(B, n_track, horizon, action_dim).mean(axis=2)  # [B, n_track, Du]
     _, (X_preds, U_preds) = jax.lax.scan(track, X_curr, jnp.concatenate([X_tgts, U_refs], axis=-1).transpose(1,0,2), length=n_track)
 
