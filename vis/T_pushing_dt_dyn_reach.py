@@ -173,7 +173,7 @@ def plot(r_lo, r_up, trajs, pxy, scale, window_size, file_name, zonotopes=None):
     print(f"Plot saved to {file_name}")
     plt.close()
 
-def plot_v2(trajs, pxy, scale, window_size, file_name):
+def plot_v2(trajs, pxy, scale, window_size, file_name, abs_pose):
     """
     Method 1: Footprint Sweep Visualization.
     Uses transform_fn([B, T, 3]) -> [B, T, 8] to draw T-shapes.
@@ -183,7 +183,10 @@ def plot_v2(trajs, pxy, scale, window_size, file_name):
     # Repeat pxy [1, T+1, 2] to match [..., 8] for 4 keypoints
     pxy_rep = np.tile(pxy, (1, 1, Dx // pxy.shape[-1])) 
     
-    trajs = (trajs + pxy_rep) * scale
+    if abs_pose:
+        trajs = trajs * scale
+    else:
+        trajs = (trajs + pxy_rep) * scale
     pxy_scaled = pxy[0] * scale # [T+1, 2]
 
     # 1. Setup Plot
@@ -228,13 +231,13 @@ def plot_v2(trajs, pxy, scale, window_size, file_name):
 # def main(config: DictConfig):
 def main():
     model_dir = "output/runs/T_pushing/"
-    model_dir = model_dir + "log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_20260101_231652"
+    model_dir = model_dir + "log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_True_20260107_230400"
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     data_config = config["data"]
     train_config = config["train_dt_dyn"] if "train_dt_dyn" in config else config["train"]
-    data_dir = train_config.get("data_dirr", "output/data/T_pushing_freq1")
+    data_dir = train_config.get("data_dir", "output/data/T_pushing_freq1")
     # data_dir = "output/data/T_pushing_freq1_1_1"
     
     scale = float(data_config["scale"])  # data was normalized by /scale
@@ -246,14 +249,14 @@ def main():
     pose_dim = data_config.get("pose_dim", 3)
     action_dim = data_config["action_dim"]
     key = jrandom.PRNGKey(config["settings"]["seed"])
+    abs_pose = bool(train_config.get("abs_pose", False))
 
     use_eval = True
     if use_eval:
         eval_p_path = os.path.join(data_dir, "data_eval.p")
     else:
         eval_p_path = os.path.join(data_dir, "data.p")
-    # model_path = os.path.join( model_dir, "last_model.eqx")
-    model_path = os.path.join( model_dir, "best_model.eqx")
+
     model = load_model(data_config, train_config, model_class=T_Dynamics, model_dir=model_dir, mode="best")
 
     def f_wrapper(x):
@@ -292,18 +295,23 @@ def main():
             pose = pose.reshape(-1, D)
             kp = jax.vmap(pose_to_kp, in_axes=(0, None, None))(pose, stem_size/scale, bar_size/scale)
             return kp.reshape(B, T, -1)
-    action_seq = jnp.array(eps_norm[selected_eps_idx, :T_reach, -action_dim:])[None]      # [1, T, Du]
-    pusher_pos_seq = jnp.array(eps_norm[selected_eps_idx, :T_reach+1, state_dim+pose_dim:-action_dim])[None]  # [1, T+1, 2]
 
     reach_eps = float(train_config["reach"]["eps_final"])
     # reach_eps = 0.02
     state_init_lo = state_init - reach_eps
     state_init_up = state_init + reach_eps
+    if abs_pose:
+        act_state_dim = act_state_dim + action_dim
+        state_init_lo = jnp.concatenate([state_init_lo, jnp.array(eps_norm[selected_eps_idx, 0, state_dim+pose_dim:-action_dim])[None]], axis=-1)  # [1, Dx+Du]
+        state_init_up = jnp.concatenate([state_init_up, jnp.array(eps_norm[selected_eps_idx, 0, state_dim+pose_dim:-action_dim])[None]], axis=-1)  # [1, Dx+Du]
+    action_seq = jnp.array(eps_norm[selected_eps_idx, :T_reach, -action_dim:])[None]      # [1, T, Du]
+    pusher_pos_seq = jnp.array(eps_norm[selected_eps_idx, :T_reach+1, state_dim+pose_dim:-action_dim])[None]  # [1, T+1, 2]
+
     z_init_lo = jnp.concatenate([state_init_lo, jnp.zeros((1, action_dim))], axis=-1) # [1, Dx+Du]
     z_init_up = jnp.concatenate([state_init_up, jnp.zeros((1, action_dim))], axis=-1) # [1, Dx+Du]
     reach_splits = train_config["reach"].get("splits", None)
     n_split = 2 if pred_mode == "state" else 4
-    reach_splits = {i: n_split for i in range(act_state_dim)}
+    reach_splits = {i: n_split for i in range(state_dim if pred_mode == "state" else pose_dim)}
     z_init_lo, z_init_up = prepare_initial_set_v2(z_init_lo, z_init_up, splits_cfg=reach_splits)
 
     print(f"action seq: {action_seq.tolist()}")
@@ -381,11 +389,11 @@ def main():
     out_dir = os.path.join(model_dir, f"{selected_eps_idx}_reach_eps{reach_eps}_steps{T_reach}_{n_split}_{pred_mode}_{enable_action_opt}_{n_opt_steps}")
     os.makedirs(out_dir, exist_ok=True)
 
-    # save r_lo, r_up, sample_rollout, pusher_pos_seq, scale, window_size
-    arch_file_name = os.path.join(out_dir, "reach_data.npz")
-    np.savez(arch_file_name, r_lo=np.array(r_lo_agg), r_up=np.array(r_up_agg), sample_rollout=np.array(sample_rollout), pusher_pos_seq=np.array(pusher_pos_seq), scale=scale, window_size=window_size)
-    # exit()
-    r_lo_agg, r_up_agg, sample_rollout, pusher_pos_seq, scale, window_size = np.load(arch_file_name).values()
+    # # save r_lo, r_up, sample_rollout, pusher_pos_seq, scale, window_size
+    # arch_file_name = os.path.join(out_dir, "reach_data.npz")
+    # np.savez(arch_file_name, r_lo=np.array(r_lo_agg), r_up=np.array(r_up_agg), sample_rollout=np.array(sample_rollout), pusher_pos_seq=np.array(pusher_pos_seq), scale=scale, window_size=window_size)
+    # # exit()
+    # r_lo_agg, r_up_agg, sample_rollout, pusher_pos_seq, scale, window_size = np.load(arch_file_name).values()
 
     if pred_mode == "state":
         outfile = os.path.join(out_dir, f"reach_pushing.png")
@@ -400,9 +408,9 @@ def main():
     elif pred_mode == "pose":
         sample_r = r_lo_agg + (r_up_agg - r_lo_agg) * np.random.uniform(size=(n_samples, *r_lo_agg.shape[1:]))
         outfile = os.path.join(out_dir, f"reach.png")
-        plot_v2(np.array(transform_fn(jnp.array(sample_r))), pusher_pos_seq, scale, window_size, outfile)
+        plot_v2(np.array(transform_fn(jnp.array(sample_r))), pusher_pos_seq, scale, window_size, outfile, abs_pose)
         outfile = os.path.join(out_dir, f"sample.png")
-        plot_v2(np.array(transform_fn(jnp.array(sample_rollout))), pusher_pos_seq, scale, window_size, outfile)
+        plot_v2(np.array(transform_fn(jnp.array(sample_rollout))), pusher_pos_seq, scale, window_size, outfile, abs_pose)
 
         param_dict = {"stem_size": data_config["stem_size"], 
                     "bar_size": data_config["bar_size"], 
@@ -413,26 +421,27 @@ def main():
 
         sample_env = []
         sample_state_init = np.array(sample_state_init) * scale
-        sample_state_init[:, -1] = sample_state_init[:, -1] / scale  # angle back to normalized
+        sample_state_init[:, pose_dim-1] = sample_state_init[:, pose_dim-1] / scale  # angle back to normalized
         pusher_pos_seq_denorm = np.array(pusher_pos_seq) * scale
         for i in range(n_samples):
             init_pose = sample_state_init[i, :pose_dim]
             pusher_pos = pusher_pos_seq_denorm[0, 0, :]
-            init_pose[:2] = init_pose[:2] + pusher_pos[:2]
+            if not abs_pose:
+                init_pose[:2] = init_pose[:2] + pusher_pos[:2]
             env = T_Sim(param_dict=param_dict, init_poses=[init_pose], pusher_pos=pusher_pos)
             env_output = []
             
             for j in range(2):
-                env_dict = env.update((pusher_pos[0], pusher_pos[1]), rel=True)
+                env_dict = env.update((pusher_pos[0], pusher_pos[1]), rel=not abs_pose)
             env_output.append(np.concatenate([env_dict["com_pos"] / scale, env_dict["angle"]], axis=0))
             for j in range(T_reach):
                 pusher_pos = pusher_pos_seq_denorm[0, j+1, :]
-                env_dict = env.update((pusher_pos[0], pusher_pos[1]), rel=True)
+                env_dict = env.update((pusher_pos[0], pusher_pos[1]), rel=not abs_pose)
                 env_output.append(np.concatenate([env_dict["com_pos"] / scale, env_dict["angle"]], axis=0))
             sample_env.append(np.array(env_output))
 
         outfile = os.path.join(out_dir, f"env.png")
-        plot_v2(np.array(transform_fn(jnp.array(sample_env))), pusher_pos_seq, scale, window_size, outfile)
+        plot_v2(np.array(transform_fn(jnp.array(sample_env))), pusher_pos_seq, scale, window_size, outfile, abs_pose)
 
         norm_samples = (raw_samples * 2 - 1).reshape(-1, act_state_dim)  # [n_partitions * n_per_partition (1), Dx], in [-1, 1]
         norm_lo = norm_up = jnp.concatenate([jnp.zeros((norm_samples.shape[0], 1)), norm_samples, jnp.zeros((norm_samples.shape[0], action_dim))], axis=-1).repeat(T_reach+1, axis=0)  # [n_samples*(T_reach+1), 1+Dx+Du]
@@ -444,7 +453,7 @@ def main():
         print(f"max diff:{np.max(taylor_up - taylor_lo, axis=(0))}")
 
         outfile = os.path.join(out_dir, f"reach_sample.png")
-        plot_v2(np.array(transform_fn((taylor_lo+taylor_up)/2)), pusher_pos_seq, scale, window_size, outfile)
+        plot_v2(np.array(transform_fn((taylor_lo+taylor_up)/2)), pusher_pos_seq, scale, window_size, outfile, abs_pose)
 
     for idx in range(act_state_dim):
         outfile = os.path.join(out_dir, f"reach_{idx}.png")

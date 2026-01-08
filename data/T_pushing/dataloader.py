@@ -9,6 +9,7 @@ import jax.numpy as jnp
 
 @dataclass
 class DynamicsDataset:
+    abs_pose: bool
     obs: jnp.ndarray         # [M, n_sample, 2K]         (relative keypoints)
     act: jnp.ndarray         # [M, n_sample, 2]          (pusher velocity vx, vy)
     pusher_pos: jnp.ndarray  # [M, n_sample, 2]          (xp, yp)
@@ -194,8 +195,13 @@ def load_dynamics_dataset(data_cfg: dict, train_cfg: dict,
     perm = rng.permutation(M)
     obs, act, pusher_pos, weights = obs[perm], act[perm], pusher_pos[perm], weights[perm]
 
+    abs_pose = data_cfg.get("abs_pose", False)
+    if abs_pose:
+        obs = np.concatenate([obs, pusher_pos], axis=-1)  # include pusher pos in obs when abs_pose=True
+
     # ---- Cast to JAX ----
     return DynamicsDataset(
+        abs_pose=abs_pose,
         obs=jnp.asarray(obs),
         act=jnp.asarray(act),
         pusher_pos=jnp.asarray(pusher_pos),

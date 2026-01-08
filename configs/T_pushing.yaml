@@ -1,8 +1,8 @@
 settings:
   seed: 0
   task_name: "T_pushing"
-  data_mode: "ct_ctl" # {"dt_dyn","ct_dyn", "ct_ctl"}
-  train_mode: "ct_ctl" # {"dt_dyn","ct_dyn", "ct_ctl"}
+  data_mode: "ct_dyn" # {"dt_dyn","ct_dyn", "ct_ctl"}
+  train_mode: "dt_dyn" # {"dt_dyn","ct_dyn", "ct_ctl"}
 
 data:
   state_dim: 8
@@ -12,20 +12,21 @@ data:
   stem_size: [30, 90] # [10,60]
   bar_size: [120, 30] # [60,10]
   pusher_size: 5
+  abs_pose: True
   dt_dyn:
-    out_path: "output/data/${settings.task_name}_freq${data.dt_dyn.frequency}"
+    out_path: "output/data/${settings.task_name}_freq${data.dt_dyn.frequency}_${data.abs_pose}"
     num_episodes: 16000
     episode_length: 50
     num_workers: 48
     frequency: 1 # DT dynamics frequency
   ct_dyn:
-    out_path: "output/data/${settings.task_name}_freq${data.ct_dyn.frequency}"
+    out_path: "output/data/${settings.task_name}_freq${data.ct_dyn.frequency}_${data.abs_pose}"
     num_episodes: 16000
     episode_length: 50
     num_workers: 48
     frequency: 10 # CT dynamics frequency
   ct_ctl:
-    out_path: "output/data/${settings.task_name}_freq${data.ct_ctl.frequency}_ctl"
+    out_path: "output/data/${settings.task_name}_freq${data.ct_ctl.frequency}_ctl_${data.abs_pose}"
     model_dir: "output/runs/${settings.task_name}_ct_dyn/lr0.0025_mid_0.08_0.05_0.002_20260104_210809"
     num_episodes: 16000
     episode_length: 30
@@ -42,18 +43,19 @@ data:
 
 train_dt_dyn:
   out_dir: "output/runs/${settings.task_name}"
-  data_dir: "output/data/${settings.task_name}_freq1"
+  data_dir: "output/data/${settings.task_name}_freq1_${train_dt_dyn.abs_pose}"
   data_augment: False
   pred_mode: "pose" # {"state","pose"}
   train_valid_ratio: 0.9
   architecture: [96, 96, 96]
+  abs_pose: ${data.abs_pose}
   delta_u: True
   n_history: 1
-  n_rollout_valid: 6
+  n_rollout_valid: 8
   horizon_scheduler:
     type: "log" # log, linear, const
     T_init: 1
-    T_final: 6
+    T_final: 8
     log_alpha: 1.0
   step_weight_ub: 2
   noise: 0.005 # std of the Gaussian noise to training data
@@ -61,7 +63,7 @@ train_dt_dyn:
     type: "cos" # cos, linear, const
     lr_init: 0.001
     lr_final: 0.0001
-  n_epoch: 25
+  n_epoch: 20
   reach:
     mode: "mid" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
@@ -75,28 +77,29 @@ train_dt_dyn:
   lam_jac_reg: 0.0e-3 # jacobian regularization weight
   wandb:
     enabled: true
-    project: "${settings.task_name}_reach_pose2"
-    run_name: "${train_dt_dyn.horizon_scheduler.type}_${train_dt_dyn.lr_scheduler.type}_${train_dt_dyn.batch_size}_${train_dt_dyn.reach.mode}_${train_dt_dyn.reach.every}_${train_dt_dyn.reach.after}_eps${train_dt_dyn.reach.eps_init}_${train_dt_dyn.reach.eps_final}_w${train_dt_dyn.reach.weight}_j${train_dt_dyn.lam_jac_reg}_${train_dt_dyn.delta_u}"
+    project: "${settings.task_name}_reach_pose_abs"
+    run_name: "nt_${train_dt_dyn.horizon_scheduler.type}_${train_dt_dyn.lr_scheduler.type}_${train_dt_dyn.batch_size}_${train_dt_dyn.reach.mode}_${train_dt_dyn.reach.every}_${train_dt_dyn.reach.after}_eps${train_dt_dyn.reach.eps_init}_${train_dt_dyn.reach.eps_final}_w${train_dt_dyn.reach.weight}_j${train_dt_dyn.lam_jac_reg}_${train_dt_dyn.delta_u}_${train_dt_dyn.abs_pose}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  
 
 train_ct_dyn:
   out_dir: "output/runs/${settings.task_name}_${settings.train_mode}"
-  data_dir: "output/data/${settings.task_name}_freq${train_ct_dyn.frequency}"
+  data_dir: "output/data/${settings.task_name}_freq${train_ct_dyn.frequency}_${train_ct_dyn.abs_pose}"
   data_augment: False
   pred_mode: "pose" # {"state","pose"}
   train_valid_ratio: 0.9
   architecture: [64, 64]
   frequency: 10
   ode_step_size_controller: "pid" # {"const","pid"}
+  abs_pose: ${data.abs_pose}
   delta_u: True
   n_history: 1
   n_rollout_valid: 20
   horizon_scheduler:
     type: "log" # log, linear, const
     T_init: 1
-    T_final: 8
+    T_final: 10
     log_alpha: 1.0
   step_weight_ub: 2
   noise: 0.005 # std of the Gaussian noise to training data
@@ -104,7 +107,7 @@ train_ct_dyn:
     type: "cos" # cos, linear, const
     lr_init: 0.003
     lr_final: 0.0001
-  n_epoch: 8
+  n_epoch: 10
   reach:
     mode: "mid" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
@@ -123,21 +126,22 @@ train_ct_dyn:
   lam_jac_reg: 0.0e-3 # jacobian regularization weight
   wandb:
     enabled: true
-    project: "${settings.task_name}_ct_test"
-    run_name: "lr${train_ct_dyn.lr_scheduler.lr_init}_${train_ct_dyn.reach.mode}_${train_ct_dyn.reach.eps_init}_${train_ct_dyn.reach.eps_final}_${train_ct_dyn.reach.weight}"
+    project: "${settings.task_name}_ct_dyn_abs"
+    run_name: "lr${train_ct_dyn.lr_scheduler.lr_init}_${train_ct_dyn.reach.mode}_${train_ct_dyn.reach.eps_init}_${train_ct_dyn.reach.eps_final}_${train_ct_dyn.reach.weight}_${train_ct_dyn.abs_pose}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  
 
 train_ct_ctl:
   out_dir: "output/runs/${settings.task_name}_ct_ctl"
-  data_dir: "output/data/${settings.task_name}_freq${train_ct_ctl.ctl_frequency}_ctl"
+  data_dir: "output/data/${settings.task_name}_freq${train_ct_ctl.ctl_frequency}_ctl_${train_ct_ctl.abs_pose}"
   data_augment: False
   pred_mode: "pose" # {"state","pose"}
   train_valid_ratio: 0.9
   architecture: [64, 64]
   ctl_frequency: 10
   target_frequency: 1
+  abs_pose: ${data.abs_pose}
   ref_action: True
   use_delta: True
   loss_mode: "s"
@@ -174,8 +178,8 @@ train_ct_ctl:
   lam_jac_reg: 0.0e-3 # jacobian regularization weight
   wandb:
     enabled: true
-    project: "${settings.task_name}_reach_ct_ctl_test"
-    run_name: "${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}_${train_ct_ctl.loss_mode}_${train_ct_ctl.ref_action}_${train_ct_ctl.use_delta}_${train_ct_ctl.reach.mode}_${train_ct_ctl.reach.eps_init}_${train_ct_ctl.reach.eps_final}_${train_ct_ctl.reach.weight}"
+    project: "${settings.task_name}_reach_ct_ctl_abs"
+    run_name: "${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}_${train_ct_ctl.loss_mode}_${train_ct_ctl.ref_action}_${train_ct_ctl.use_delta}_${train_ct_ctl.reach.mode}_${train_ct_ctl.reach.eps_init}_${train_ct_ctl.reach.eps_final}_${train_ct_ctl.reach.weight}_${train_ct_ctl.abs_pose}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  

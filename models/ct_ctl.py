@@ -32,7 +32,7 @@ class T_controller(eqx.Module):
         assert len(arch_list) >= 1, "Architecture must have at least one hidden layer."
         self.arch = tuple(int(x) for x in arch_list)
 
-        self.ref_act = train_cfg.get("ref_action", True)
+        self.ref_act = train_cfg.get("ref_action", False)
         self.use_delta = train_cfg.get("use_delta", False)
 
         pred_mode = str(train_cfg.get("pred_mode", "state"))
@@ -95,7 +95,7 @@ class T_controller(eqx.Module):
     __call__ = forward_batchless_single_input
 
     # it is only used for Jacobian regularization
-    def forward_batchless_mlp_only(self, x, x_target, ref_action=None) -> Array:
+    def forward_batchless_for_jac(self, x, x_target, ref_action=None) -> Array:
         return self.mlp(jnp.concatenate([x, x_target, ref_action] if self.ref_act else [x, x_target], axis=-1))
 
 def load_t_controller_model(data_config: dict, train_config: dict, model_path: str) -> T_controller:

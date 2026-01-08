@@ -168,7 +168,7 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     B = min(B, 10)
     for b in range(B):
-        out_path = os.path.join(out_dir, f"ep_{b:04d}.gif")
+        out_path = os.path.join(out_dir, f"ep{'_eval' if use_eval else ''}_{b:04d}.gif")
         plot_frame(
             out_path,
             gt=gt_vis,

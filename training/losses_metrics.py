@@ -57,7 +57,7 @@ class JacobianReg(eqx.Module):
     def __call__(self, model: Union[T_Dynamics, Continuous_T_Dynamics], X, U):
         # vmap over batch and time to compute df/dx
         # Note: argnums=0 assumes model.forward(x, u)
-        batch_jac_fn = jax.vmap(jax.vmap(jax.jacobian(model.forward_batchless_mlp_only, argnums=0)))
+        batch_jac_fn = jax.vmap(jax.vmap(jax.jacobian(model.forward_batchless_for_jac, argnums=0)))
         jacobians = batch_jac_fn(X[:, :-1, :], U)
         loss = jnp.mean(jnp.square(jacobians))
         return loss, {"jac_reg": loss}

@@ -216,7 +216,7 @@ def main():
     for b in sample_indices:
         # if b != 3:
         #     continue
-        out_path = os.path.join(out_dir, f"ep_{b:04d}{'_eval' if use_eval else ''}.gif")
+        out_path = os.path.join(out_dir, f"ep{'_eval' if use_eval else ''}_{b:04d}.gif")
         plot_frame(
             out_path,
             gt=gt_vis,

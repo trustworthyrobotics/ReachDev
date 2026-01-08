@@ -16,6 +16,7 @@ PRNGKey = jax.Array
 class T_Dynamics(eqx.Module):
 
     # ---- static / hyper params ----
+    Ds: int = eqx.field(static=True)
     Dx: int = eqx.field(static=True)
     Du: int = eqx.field(static=True)
     n_history: int = eqx.field(static=True)
@@ -24,6 +25,7 @@ class T_Dynamics(eqx.Module):
     pred_mode: str = eqx.field(static=True)
     stem_size: Array = eqx.field(static=True)
     bar_size: Array = eqx.field(static=True)
+    abs_pose: bool = eqx.field(static=True)
 
     # ---- learnable parts ----
     mlp: MLP
@@ -45,17 +47,24 @@ class T_Dynamics(eqx.Module):
 
         self.pred_mode = str(train_cfg.get("pred_mode", "state"))
         if self.pred_mode == "state":
-            self.Dx = int(data_cfg["state_dim"])
+            self.Ds = int(data_cfg["state_dim"])
         elif self.pred_mode == "pose":
-            self.Dx = int(data_cfg["pose_dim"])
+            self.Ds = int(data_cfg["pose_dim"])
             scale = float(data_cfg["scale"])
             self.stem_size = jnp.array(data_cfg["stem_size"]) / scale
             self.bar_size = jnp.array(data_cfg["bar_size"]) / scale
 
             self.delta_u = False  # override for pose prediction
 
-        in_dim = sum(self._input_dims())
-        out_dim = self.Dx  # predict Δx or x_next
+        self.abs_pose = bool(train_cfg.get("abs_pose", False))
+        if self.abs_pose:
+            self.Dx = self.Ds + self.Du  # include pusher position in state
+        else:
+            self.Dx = self.Ds  # only object state
+
+        in_dim = self.Ds + self.Du  # input: object state + action
+        # even use abs_pose, no need to predict pusher position
+        out_dim = self.Ds
 
         self.mlp = MLP(
             in_size=in_dim,
@@ -66,45 +75,55 @@ class T_Dynamics(eqx.Module):
 
     # --------------------------- helpers ---------------------------
     def _input_dims(self) -> List[int]:
-        # (x,u) per step → Dx+Du; with n_history steps → n_history*(Dx+Du)
-        return self.n_history * self.Dx, self.n_history * self.Du
+        return self.Dx, self.Du
 
     # --------------------------- forward / rollout ---------------------------
     def forward(self, x: Array, u: Array) -> Array:
-        output = x + jax.vmap(self.mlp)(jnp.concatenate([x, u], axis=-1))
-        if self.delta_u:
-            return output - u.repeat(self.Dx // self.Du, axis=-1)
-        return output
+        return jax.vmap(self.forward_batchless)(x, u)
 
     def forward_batchless(self, x: Array, u: Array) -> Array:
-        output = x + self.mlp(jnp.concatenate([x, u], axis=-1))
-        if self.delta_u:
-            return output - u.repeat(self.Dx // self.Du, axis=-1)
-        return output
+        if self.abs_pose:
+            x_obj = x[:self.Ds]
+            x_pusher = x[-self.Du:]
+            if self.pred_mode == "state":
+                x_rel = x_obj - x_pusher.repeat(self.Ds // self.Du, axis=-1)
+            elif self.pred_mode == "pose":
+                x_rel = jnp.concatenate([x_obj[:self.Du] - x_pusher, x_obj[self.Du:]], axis=-1)
+            dx_obj = x_rel + self.mlp(jnp.concatenate([x_rel, u], axis=-1))
+            x_pusher_next = x_pusher + u
+
+            if self.pred_mode == "state":
+                x_obj_next = dx_obj + x_pusher_next.repeat(self.Ds // self.Du, axis=-1)
+            elif self.pred_mode == "pose":
+                x_obj_next = jnp.concatenate([dx_obj[:self.Du] + x_pusher_next, dx_obj[self.Du:]], axis=-1)
+            return jnp.concatenate([x_obj_next, x_pusher_next], axis=-1)
+        else:
+            output = x + self.mlp(jnp.concatenate([x, u], axis=-1))
+            if self.delta_u:
+                if self.pred_mode == "state":
+                    return output - u.repeat(self.Ds // self.Du, axis=-1)
+                elif self.pred_mode == "pose":
+                    return jnp.concatenate([output[:self.Du] - u, output[self.Du:]], axis=-1)
+            else:
+                return output
 
     # --------------------------- batchless onnx for JAX ---------------------------
     def forward_batchless_single_input(self, inp):
         x = inp[:self.Dx]
         u = inp[-self.Du:]
-        output = x + self.mlp(inp)
-        if self.delta_u:
-            return output - u.repeat(self.Dx // self.Du, axis=-1)
-        return output
+        return self.forward_batchless(x, u)
 
     # --------------------------- batch onnx for torch ---------------------------
     def forward_batch_single_input(self, inp):
         x = inp[:, :self.Dx]
         u = inp[:, -self.Du:]
-        output = x + jax.vmap(self.mlp)(inp)
-        if self.delta_u:
-            return output - u.repeat(self.Dx // self.Du, axis=-1)
-        return output
+        return self.forward(x, u)
 
     __call__ = forward_batchless_single_input
 
     # it is only used for Jacobian regularization
-    def forward_batchless_mlp_only(self, x: Array, u: Array) -> Array:
-        return self.mlp(jnp.concatenate([x, u], axis=-1))
+    def forward_batchless_for_jac(self, x: Array, u: Array) -> Array:
+        return self.forward_batchless(x, u)
 
     def rollout(self, x0: Array, U: Array) -> Array:
         """
@@ -119,8 +138,7 @@ class T_Dynamics(eqx.Module):
         """
         T = U.shape[1]
 
-        # History buffer: last n_history states & actions.
-        # For n_history=1, this is just (x_t, u_t).
+        # History buffer: last 1 states & actions.
         def step_fn(x_t, u_t):
             x_tp1 = self.forward(x_t, u_t)
             return x_tp1, x_tp1
@@ -132,6 +150,7 @@ class T_Dynamics(eqx.Module):
 
     # transform pose to keypoints
     def transform_fn(self, x):
+        return x  # default no transform
         if self.pred_mode != "pose":
             return x
         B, T, D = x.shape

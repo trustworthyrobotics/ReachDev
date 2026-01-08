@@ -46,6 +46,8 @@ def gen_data(config, process_id, seed, num_episode):
         data_config["saving"],
         data_config["gif"],
     )
+    abs_pose = data_config.get("abs_pose", False)
+    rel_pose = not abs_pose
     param_dict = {"stem_size": data_config["stem_size"], 
                   "bar_size": data_config["bar_size"], 
                   "pusher_size": data_config["pusher_size"],
@@ -71,7 +73,7 @@ def gen_data(config, process_id, seed, num_episode):
     # print(f"scale1: {scale1}, scale2: {scale2}")
     noise1 = get_truncated_normal(mean=0, sd=10, low=-20, upp=20)
     noise2 = get_truncated_normal(mean=0, sd=4, low=-10, upp=10)
-    action_bound = data_config["action_bound"] * 1.05
+    action_bound = data_config["action_bound"] * 1.0
 
     # box_range = action_bound * 4
     box_range = 100
@@ -103,7 +105,7 @@ def gen_data(config, process_id, seed, num_episode):
         y_pusher = rand_float(max(y_obj - box_range, lo), min(y_obj + box_range, hi))
         # allow the simulator to a resting position
         for i in range(2):
-            env_dict = sim.update((x_pusher, y_pusher), n_sim_time=n_sim_time)
+            env_dict = sim.update((x_pusher, y_pusher), rel=rel_pose, n_sim_time=n_sim_time)
         # add the initial state to the episode
         env_state = np.concatenate([env_dict["state"], env_dict["com_pos"], env_dict["angle"], env_dict["pusher_pos"], env_dict["action"]], axis=0)
         episode.append(env_state)
@@ -153,7 +155,7 @@ def gen_data(config, process_id, seed, num_episode):
             dy = np.clip(dy, -action_bound, action_bound)
             x_pusher = np.clip(x_pusher + dx, lo, hi)
             y_pusher = np.clip(y_pusher + dy, lo, hi)
-            env_dict = sim.update((x_pusher, y_pusher), n_sim_time=n_sim_time)
+            env_dict = sim.update((x_pusher, y_pusher), rel=rel_pose, n_sim_time=n_sim_time)
             # TODO: unify the API
             env_state = (
                 np.concatenate([env_dict["state"], env_dict["com_pos"], env_dict["angle"], env_dict["pusher_pos"], env_dict["action"]], axis=0)
