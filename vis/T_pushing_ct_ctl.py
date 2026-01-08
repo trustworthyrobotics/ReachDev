@@ -5,6 +5,8 @@ from io import BytesIO
 import os
 import pickle
 import jax
+# jax.config.update('jax_platforms', 'cpu')
+jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 import equinox as eqx
 import hydra
@@ -91,7 +93,7 @@ def rel_to_abs_kp_plus_pusher(eps_denorm: np.ndarray) -> np.ndarray:
 
 def main():
     model_dir = "output/runs/T_pushing_ct_ctl/"
-    model_dir = model_dir + "log_10_lr0.001_x_20260104_051549"
+    model_dir = model_dir + "log_10_lr0.001_s_True_none_0.08_0.05_0.001_20260107_161257"
     # model_dir = model_dir + "log_20_lr0.001_20260104_002216"
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
@@ -175,6 +177,12 @@ def main():
     X_preds = X_preds.reshape(-1, B, x_norm.shape[2]).transpose(1,0,2)  # [B, T, Dx]
     U_preds = U_preds.reshape(-1, B, U_norm.shape[2]).transpose(1,0,2)  # [B, T, Du]
 
+    # U_gts_j = jnp.array(eps_norm[:, :-1, -action_dim:])
+    # X_gts_j = jnp.array(eps_norm[:, 1:, state_dim:state_dim+pose_dim])
+    # X_preds_gt = ct_dyn.rollout(X_curr, U_gts_j)
+    # U_preds = U_gts_j
+    # X_preds = X_preds_gt
+
     X_preds = jnp.concatenate([X_curr[:, None, :], X_preds], axis=1) * scale  # [B,T, Dx]
     if pred_mode == "pose":
         # renormalize angle in predicted poses
@@ -182,13 +190,17 @@ def main():
         X_preds = transform_fn(X_preds)
     X_preds = np.array(X_preds)
     U_preds = np.array(U_preds)
-    U_preds = np.concatenate([U_preds, np.zeros((U_preds.shape[0], 1, action_dim))], axis=1) * scale  # [B,T, Du]
+    U_preds = np.concatenate([U_preds, eps_norm[:, -1:, -action_dim:]], axis=1) * scale  # [B,T, Du]
     pusher_pos_curr = eps_denorm[:, 0, state_dim+pose_dim:-action_dim]  # [B,2]
     pusher_pos_preds = np.cumsum(np.concatenate([pusher_pos_curr[:, None, :], U_preds[:, :-1, :] * float(ct_dyn.dt)], axis=1), axis=1)  # [B,T,2]
     
     X_gts = eps_denorm[..., :state_dim]
     U_gts = eps_denorm[..., -action_dim:]
-    print(f"kp state error {np.abs(X_preds - X_gts).mean()}, action error {np.abs(U_preds - U_gts).mean()}")
+    X_diff = np.abs(X_preds - X_gts)
+    U_diff = np.abs(U_preds - U_gts)
+    X_tgt_diff = X_diff[:, horizon::horizon]
+    print(f"kp state error mean: {X_diff.mean()}, max: {X_diff.max()}, action error mean: {U_diff.mean()}, max: {U_diff.max()}")
+    print(f"tagret kp state error mean: {X_tgt_diff.mean()}, max: {X_tgt_diff.max()}")
 
     gt_vis = rel_to_abs_kp_plus_pusher(np.concatenate([eps_denorm[..., :state_dim], eps_denorm[..., state_dim+pose_dim:]], axis=-1))         # [B,T,10]
     pred_vis = rel_to_abs_kp_plus_pusher(np.concatenate([X_preds, pusher_pos_preds, U_preds], axis=-1))  # [B,T,10]
@@ -197,8 +209,12 @@ def main():
     out_dir = model_dir
     window_size = data_cfg["window_size"] * data_cfg.get("enlarge_factor_for_gen", 1)
     os.makedirs(out_dir, exist_ok=True)
-    B = min(B, 10)
-    for b in range(B):
+    max_vis = 5
+    # select 10 samples with largest X_tgt_diff
+    sample_indices = np.argsort(-X_tgt_diff.max(axis=(1,2)))[:max_vis]
+    for b in sample_indices:
+        # if b != 3:
+        #     continue
         out_path = os.path.join(out_dir, f"ep_{b:04d}{'_eval' if use_eval else ''}.gif")
         plot_frame(
             out_path,

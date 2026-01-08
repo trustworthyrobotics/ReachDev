@@ -4,6 +4,8 @@ import random
 from pymunk import Vec2d
 import yaml
 import jax
+jax.config.update('jax_platforms', 'cpu')
+jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 import equinox as eqx
 

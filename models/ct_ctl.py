@@ -17,6 +17,7 @@ class T_controller(eqx.Module):
     Dr: int = eqx.field(static=True)
     arch: Tuple[int, ...] = eqx.field(static=True)
     ref_act: bool = eqx.field(static=True)
+    use_delta: bool = eqx.field(static=True)
 
     # ---- learnable parts ----
     mlp: MLP
@@ -32,6 +33,7 @@ class T_controller(eqx.Module):
         self.arch = tuple(int(x) for x in arch_list)
 
         self.ref_act = train_cfg.get("ref_action", True)
+        self.use_delta = train_cfg.get("use_delta", False)
 
         pred_mode = str(train_cfg.get("pred_mode", "state"))
         if pred_mode == "state":
@@ -40,7 +42,10 @@ class T_controller(eqx.Module):
             self.Dx = int(data_cfg["pose_dim"])
         self.Du = int(data_cfg["action_dim"])
 
-        in_dim = self.Dx * 2  # current state + target state
+        if self.use_delta:
+            in_dim = self.Dx  # input: state difference
+        else:
+            in_dim = self.Dx * 2  # current state + target state
         if self.ref_act:
             in_dim += self.Du
         self.Dr = in_dim - self.Dx
@@ -61,20 +66,21 @@ class T_controller(eqx.Module):
 
     def forward(self, x, x_target, ref_action=None):
         # x: (B,Dx), x_target: (B,Dx), ref_action: (B,Du)
-        if self.ref_act:
-            inp = jnp.concatenate([x, x_target, ref_action], axis=-1)
-            return ref_action + jax.vmap(self.mlp)(inp)  # (B,Du) predicted action
-        else:
-            inp = jnp.concatenate([x, x_target], axis=-1)
-            return jax.vmap(self.mlp)(inp)  # (B,Du) predicted action
+        return jax.vmap(self.forward_batchless)(x, x_target, ref_action)
 
     def forward_batchless(self, x, x_target, ref_action=None):
         # x: (Dx,), x_target: (Dx,), ref_action: (Du,)
         if self.ref_act:
-            inp = jnp.concatenate([x, x_target, ref_action], axis=-1)
+            if self.use_delta:
+                inp = jnp.concatenate([x_target - x, ref_action], axis=-1)
+            else:
+                inp = jnp.concatenate([x, x_target, ref_action], axis=-1)
             return ref_action + self.mlp(inp)  # (Du,) predicted action
         else:
-            inp = jnp.concatenate([x, x_target], axis=-1)
+            if self.use_delta:
+                inp = x_target - x
+            else:
+                inp = jnp.concatenate([x, x_target], axis=-1)
             return self.mlp(inp)  # (Du,) predicted action
 
     def forward_batchless_single_input(self, inp):

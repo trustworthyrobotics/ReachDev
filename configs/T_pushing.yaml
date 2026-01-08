@@ -26,7 +26,7 @@ data:
     frequency: 10 # CT dynamics frequency
   ct_ctl:
     out_path: "output/data/${settings.task_name}_freq${data.ct_ctl.frequency}_ctl"
-    model_dir: "output/runs/${settings.task_name}_ct_dyn/log_20_lr0.0025_bs128_20260103_001438"
+    model_dir: "output/runs/${settings.task_name}_ct_dyn/lr0.0025_mid_0.08_0.05_0.002_20260104_210809"
     num_episodes: 16000
     episode_length: 30
     num_workers: 48
@@ -139,6 +139,8 @@ train_ct_ctl:
   ctl_frequency: 10
   target_frequency: 1
   ref_action: True
+  use_delta: True
+  loss_mode: "s"
   n_history: 1
   n_rollout_valid: 10
   horizon_scheduler:
@@ -152,15 +154,15 @@ train_ct_ctl:
     type: "cos" # cos, linear, const
     lr_init: 0.001
     lr_final: 0.0001
-  n_epoch: 8
+  n_epoch: 10
   reach:
-    mode: "mid" # {"none","mid","after"}
+    mode: "none" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
     after: 0.6 # only for "after" mode, after N*n_epoch epochs
     eps_init: 0.08
     eps_final: 0.05
     # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
-    weight: 0.002
+    weight: 0.001
     # batch_size: 8
     # below for CT reachability settings
     init_remainder: 1e-1
@@ -173,7 +175,7 @@ train_ct_ctl:
   wandb:
     enabled: true
     project: "${settings.task_name}_reach_ct_ctl_test"
-    run_name: "${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}_x_${train_ct_ctl.reach.mode}_${train_ct_ctl.reach.eps_init}_${train_ct_ctl.reach.eps_final}_${train_ct_ctl.reach.weight}"
+    run_name: "${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}_${train_ct_ctl.loss_mode}_${train_ct_ctl.ref_action}_${train_ct_ctl.use_delta}_${train_ct_ctl.reach.mode}_${train_ct_ctl.reach.eps_init}_${train_ct_ctl.reach.eps_final}_${train_ct_ctl.reach.weight}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  

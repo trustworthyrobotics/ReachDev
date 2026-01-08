@@ -109,6 +109,7 @@ class Trainer:
             ct_dyn=ct_dyn if train_mode == "ct_ctl" else None,
             reference_dim=model.Dr if train_mode == "ct_ctl" else None,
             ctl_frequency=float(self.cfg["ctl_frequency"]) if train_mode == "ct_ctl" else None,
+            loss_mode=self.cfg.get("loss_mode", "s") if train_mode == "ct_ctl" else None,
         )
 
         self._build_steps()

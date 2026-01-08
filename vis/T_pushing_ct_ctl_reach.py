@@ -7,6 +7,8 @@ import yaml
 import os
 import pickle
 import jax
+jax.config.update('jax_platforms', 'cpu')
+jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 from jax import random as jrandom
 import equinox as eqx
@@ -227,17 +229,32 @@ def plot_v2(trajs, pxy, scale, window_size, file_name):
     print(f"Plot saved to {file_name}")
     plt.close()
 
+class micic_controller:
+    Dx: int = 3
+    Du: int = 2
+    Dr: int = 5
+    ref_act: bool = True
+
+    def forward(self, x, x_target, ref_action=None):
+        return ref_action
+
+    def forward_batchless_single_input(self, inp):
+        return inp[-2:]
+    
+
+    __call__ = forward_batchless_single_input
+
 # @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
 # def main(config: DictConfig):
 def main():
     model_dir = "output/runs/T_pushing_ct_ctl/"
-    model_dir = model_dir + "log_10_lr0.001_x_mid_0.08_0.05_0.001_20260105_053209"
+    model_dir = model_dir + "log_10_lr0.001_s_True_none_0.08_0.05_0.001_20260107_161257"
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     data_config = config["data"]
     train_config = config["train_ct_ctl"] if "train_ct_ctl" in config else config["train"]
-    data_dir = train_config.get("data_dir", "output/data/T_pushing_freq10")
+    data_dir = train_config.get("data_dir", "output/data/T_pushing_freq10_ctl")
     # data_dir = "output/data/T_pushing_freq1_1_1"
 
     scale = float(data_config["scale"])  # data was normalized by /scale
@@ -250,12 +267,14 @@ def main():
     action_dim = data_config["action_dim"]
     key = jrandom.PRNGKey(config["settings"]["seed"])
 
-    use_eval = False
+    use_eval = True
     if use_eval:
         eval_p_path = os.path.join(data_dir, "data_eval.p")
     else:
         eval_p_path = os.path.join(data_dir, "data.p")
     model = load_model(data_config, train_config, model_class=T_controller, model_dir=model_dir, mode="best")
+
+    # model = micic_controller()
 
     ct_dyn_dir = data_config["ct_ctl"]["model_dir"]
     ct_dyn_config_path = os.path.join(ct_dyn_dir, "config.yaml")
@@ -296,7 +315,7 @@ def main():
     n_track = 1
     T_per_tgt = round(train_config["ctl_frequency"] / train_config["target_frequency"])
     T_reach = n_track * T_per_tgt
-    start_time_step = 50
+    start_time_step = 100
 
     # Everything inside file is normalized by /scale → denormalize for visualization
     eps_denorm = eps_arr.astype(np.float32)               # [B,T,15], unnormalized
@@ -323,12 +342,12 @@ def main():
         reference_seq = jnp.concatenate([tgt_seq, ref_act_seq], axis=-1)  # [1, n_track, Dx+Du] 
     else:
         reference_seq = tgt_seq  # [1, n_track, Dx]
-    reference_seq = jnp.ones_like(reference_seq)
-    reference_seq = reference_seq.repeat(T_per_tgt, axis=1)  # [1, T, Dx(+Du)]
+
+    reference_seq_per_ctl = reference_seq.repeat(T_per_tgt, axis=1)  # [1, T, Dx(+Du)]
     pusher_pos_seq = jnp.array(eps_norm[selected_eps_idx, start_time_step:start_time_step+T_reach+1, state_dim+pose_dim:-action_dim])[None]  # [1, T+1, 2]
 
     reach_eps = float(train_config["reach"]["eps_final"])
-    reach_eps = 0.01
+    # reach_eps = 0.01
     state_init_lo = state_init - reach_eps
     state_init_up = state_init + reach_eps
     z_init_lo_agg = jnp.concatenate([state_init_lo, jnp.zeros((1, action_dim))], axis=-1) # [1, Dx+Du]
@@ -388,12 +407,12 @@ def main():
         print(f"action seq: {action_seq.tolist()}")
         # print(f"pusher pos seq: {pusher_pos_seq.tolist()}")
     # perform reachability analysis
-    ts, r_lo, r_up, x_nexts_all, init_shrinked = reach_analyzer.verify_w_model(f_wrapper, model, crown_nn, z_init_lo, z_init_up, n_total_steps=T_reach, reference_seq=reference_seq.repeat(z_init_up.shape[0]//reference_seq.shape[0], axis=0))
-    r_lo = r_lo.reshape(-1, T_reach + 1, act_state_dim+action_dim)[..., :act_state_dim]  # [B, T+1, Dx]
-    r_up = r_up.reshape(-1, T_reach + 1, act_state_dim+action_dim)[..., :act_state_dim]  # [B, T+1, Dx]
+    ts, r_lo, r_up, x_nexts_all, init_shrinked = reach_analyzer.verify_w_model(f_wrapper, model, crown_nn, z_init_lo, z_init_up, n_total_steps=T_reach, reference_seq=reference_seq_per_ctl.repeat(z_init_up.shape[0]//reference_seq_per_ctl.shape[0], axis=0))
+    r_lo = r_lo.reshape(-1, T_reach + 1, act_state_dim+action_dim)  # [B, T+1, Dx+Du]
+    r_up = r_up.reshape(-1, T_reach + 1, act_state_dim+action_dim)  # [B, T+1, Dx+Du]
 
     # aggregate volume over all partitions
-    r_lo_agg = jnp.min(r_lo, axis=0, keepdims=True)  # [1, T+1, Dx]
+    r_lo_agg = jnp.min(r_lo, axis=0, keepdims=True)  # [1, T+1, Dx+Du]
     r_up_agg = jnp.max(r_up, axis=0, keepdims=True)
 
     vol = float(calculate_volume(r_lo, r_up, union_init=False, mode="sum"))
@@ -421,20 +440,24 @@ def main():
         _, (X_preds, U_preds) = jax.lax.scan(one_step_ctl_dyn, (X_curr, X_tgt, U_ref), None, length=T_per_tgt)
         return X_preds[-1], (X_preds, U_preds)
 
-    _, (X_preds, U_preds) = jax.lax.scan(track, X_curr, jnp.concatenate([tgt_seq, ref_act_seq], axis=-1).repeat(n_samples, axis=0).transpose(1,0,2), length=n_track)
+    _, (X_preds, U_preds) = jax.lax.scan(track, X_curr, reference_seq.repeat(n_samples, axis=0).transpose(1,0,2), length=n_track)
 
     X_preds = X_preds.reshape(-1, n_samples, X_preds.shape[-1]).transpose(1,0,2)  # [B, T, Dx]
     U_preds = U_preds.reshape(-1, n_samples, U_preds.shape[-1]).transpose(1,0,2)  # [B, T, Du]
-    
     X_preds = jnp.concatenate([X_curr[:, None, :], X_preds], axis=1)  # [B,T, Dx]
     X_preds_norm = X_preds
-    if pred_mode == "pose":
-        # renormalize angle in predicted poses
-        X_preds = transform_fn(X_preds) * scale
+    # if pred_mode == "pose":
+    #     # renormalize angle in predicted poses
+    #     X_preds = transform_fn(X_preds) * scale
 
+    # U_gts_j = action_seq.repeat(n_samples, axis=0)  # [B,T, Du]
+    # X_preds_gt = jnp.concatenate([X_curr[:, None, :], ct_dyn.rollout(X_curr, U_gts_j)], axis=1)  # [B,T, Dx]
+    # X_preds_tgt = X_preds[:, T_per_tgt:T_reach+1:T_per_tgt, :]  # [B, n_track, Dx]
+    # X_preds_gt_tgt = X_preds_gt[:, T_per_tgt:T_reach+1:T_per_tgt, :]  # [B, n_track, Dx]
+  
     X_preds = np.array(X_preds)
     U_preds = np.array(U_preds)
-    U_preds = np.concatenate([U_preds, np.zeros((U_preds.shape[0], 1, action_dim))], axis=1)  # [B,T, Du]
+    U_preds = np.concatenate([U_preds, U_preds[:, -1:, :]], axis=1)  # [B,T, Du], repeat last action for placeholder
     pusher_pos_curr = eps_norm[selected_eps_idx, 0, state_dim+pose_dim:-action_dim][None].repeat(n_samples, axis=0)  # [B,2]
     pusher_pos_preds = np.cumsum(np.concatenate([pusher_pos_curr[:, None, :], U_preds[:, :-1, :] * float(ct_dyn.dt)], axis=1), axis=1)  # [B,T,2]
 
@@ -507,26 +530,42 @@ def main():
         # outfile = os.path.join(out_dir, f"reach_sample.png")
         # plot_v2(np.array(transform_fn((taylor_lo+taylor_up)/2)), pusher_pos_seq, scale, window_size, outfile)
 
-    _, trajs = reach_analyzer.simulate(
-        z_init_lo_agg, z_init_up_agg, n_total_steps=T_reach,
-        n_samples=n_samples, reference_seq=reference_seq[0])
-
-    for idx in range(act_state_dim):
+    for idx in range(act_state_dim + action_dim):
         outfile = os.path.join(out_dir, f"reach_{idx}.png")
         visualize_flowpipe_time(
             times=ts,
             lowers=r_lo,
             uppers=r_up,
-            trajs=trajs,
+            trajs=np.concatenate([X_preds, U_preds], axis=-1),
             state_idx=idx,
             file_name=outfile,
             print_boxes=False,
-            draw_boxes=True,
+            draw_boxes=False,
             aggregate_partitions=True,
             stride=1,
             draw_traj=True,
         )
 
+    # with jax.disable_jit():
+    #     _, trajs = reach_analyzer.simulate(
+    #         z_init_lo_agg, z_init_up_agg, n_total_steps=T_reach,
+    #         n_samples=n_samples, reference_seq=reference_seq_per_ctl[0])
+
+    # for idx in range(act_state_dim + action_dim):
+    #     outfile = os.path.join(out_dir, f"reach_t_{idx}.png")
+    #     visualize_flowpipe_time(
+    #         times=ts,
+    #         lowers=r_lo,
+    #         uppers=r_up,
+    #         trajs=trajs,
+    #         state_idx=idx,
+    #         file_name=outfile,
+    #         print_boxes=False,
+    #         draw_boxes=True,
+    #         aggregate_partitions=True,
+    #         stride=1,
+    #         draw_traj=True,
+    #     )
 
 if __name__ == "__main__":
     main()

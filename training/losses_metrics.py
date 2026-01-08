@@ -172,6 +172,7 @@ class TotalLoss(eqx.Module):
 
 class MSELossCtl(eqx.Module):
     ct_dyn: Continuous_T_Dynamics = eqx.field(static=True)
+    loss_mode: str = eqx.field(static=True, default="s")
 
     """Handles multi-step rollout control error."""
     def __call__(self, model: T_controller, X, U, step_weights):
@@ -192,14 +193,22 @@ class MSELossCtl(eqx.Module):
         U_preds = U_preds.transpose(1,0,2)  # [B, T, Du]
 
         # Average over Batch and Dims
-        # mse_t = jnp.mean((U_preds - U)**2, axis=(0, 2)) + jnp.mean((X_preds - X[:, 1:, :])**2, axis=(0, 2))
-        mse_t = jnp.mean((X_preds - X[:, 1:, :])**2, axis=(0, 2))
+        mse_s = jnp.mean((X_preds - X[:, 1:, :])**2, axis=(0, 2))
+        mse_u = jnp.mean((U_preds - U)**2, axis=(0, 2))
+        mse_t = jnp.mean((X_preds[:, -1, :] - X[:, -1, :])**2, axis=(0, 1))
+
 
         w = step_weights[:T]
         w = w / jnp.sum(w)
-        loss = jnp.sum(mse_t * w)
+        loss = 0
+        if 's' in self.loss_mode:
+            loss = loss + jnp.sum(mse_s * w)
+        if 'u' in self.loss_mode:
+            loss = loss + jnp.sum(mse_u * w)
+        if 't' in self.loss_mode:
+            loss = loss + mse_t
 
-        return loss, {"mse": loss, "mse_per_step": mse_t}
+        return loss, {"mse": loss, "mse_s": mse_s.mean(), "mse_u": mse_u.mean(), "mse_t": mse_t}
 
 
 class TotalLossCtl(eqx.Module):
@@ -213,7 +222,7 @@ class TotalLossCtl(eqx.Module):
     reach_splits: Dict
 
     def __init__(self, mode: str, state_dim: int, action_dim: int, reach_cfg: dict, dyn_frequency: float, lam_jac: float, ct_dyn: Continuous_T_Dynamics, *args, **kwargs):
-        self.mse_layer = MSELossCtl(ct_dyn)
+        self.mse_layer = MSELossCtl(ct_dyn, loss_mode=kwargs.get("loss_mode", "s"))
         self.jac_layer = JacobianReg()
         if reach_cfg.get("mode", "none") != "none":
             self.reach_layer = ReachabilityPenalty(mode, state_dim, action_dim, reach_cfg, dyn_frequency, ct_dyn=ct_dyn, *args, **kwargs)
