@@ -318,25 +318,25 @@ def main():
     start_time_step = 100
 
     # Everything inside file is normalized by /scale → denormalize for visualization
-    eps_denorm = eps_arr.astype(np.float32)               # [B,T,15], unnormalized
+    eps_denorm = eps_arr.astype(np.float32)[:, start_time_step:start_time_step+T_reach+1, :]               # [B,T,15], unnormalized
     eps_norm = eps_denorm / scale                    # [B,T,15], normalized
 
     selected_eps_idx = 20
     if pred_mode == "state":
-        state_init = jnp.array(eps_norm[selected_eps_idx, start_time_step, :state_dim])[None]      # [1, Dx]
-        tgt_seq = jnp.array(eps_norm[selected_eps_idx, start_time_step+T_per_tgt:start_time_step+T_reach+1:T_per_tgt, :state_dim])  # [T+1, state_dim]
+        state_init = jnp.array(eps_norm[selected_eps_idx, 0, :state_dim])[None]      # [1, Dx]
+        tgt_seq = jnp.array(eps_norm[selected_eps_idx, T_per_tgt:T_reach+1:T_per_tgt, :state_dim])  # [T+1, state_dim]
         act_state_dim = state_dim
     if pred_mode == "pose":
-        state_init = jnp.array(eps_norm[selected_eps_idx, start_time_step, state_dim:state_dim+pose_dim])[None]      # [1, Dx]
+        state_init = jnp.array(eps_norm[selected_eps_idx, 0, state_dim:state_dim+pose_dim])[None]      # [1, Dx]
         state_init = state_init.at[0, -1].set(state_init[0, -1] * scale)  # denormalize angle
         act_state_dim = pose_dim
-        tgt_seq = jnp.array(eps_norm[selected_eps_idx, start_time_step+T_per_tgt:start_time_step+T_reach+1:T_per_tgt, state_dim:state_dim+pose_dim])[None]  # [1, n_track, state_dim]
+        tgt_seq = jnp.array(eps_norm[selected_eps_idx, T_per_tgt:T_reach+1:T_per_tgt, state_dim:state_dim+pose_dim])[None]  # [1, n_track, state_dim]
         def transform_fn(pose):
             B, T, D = pose.shape
             pose = pose.reshape(-1, D)
             kp = jax.vmap(pose_to_kp, in_axes=(0, None, None))(pose, stem_size/scale, bar_size/scale)
             return kp.reshape(B, T, -1)
-    action_seq = jnp.array(eps_norm[selected_eps_idx, start_time_step:start_time_step+T_reach, -action_dim:])[None]      # [1, T, Du]
+    action_seq = jnp.array(eps_norm[selected_eps_idx, :T_reach, -action_dim:])[None]      # [1, T, Du]
     ref_act_seq = action_seq.reshape(1, n_track, -1, action_dim).mean(axis=2)  # [1, n_track, Du]
     if model.ref_act:
         reference_seq = jnp.concatenate([tgt_seq, ref_act_seq], axis=-1)  # [1, n_track, Dx+Du] 
@@ -344,7 +344,7 @@ def main():
         reference_seq = tgt_seq  # [1, n_track, Dx]
 
     reference_seq_per_ctl = reference_seq.repeat(T_per_tgt, axis=1)  # [1, T, Dx(+Du)]
-    pusher_pos_seq = jnp.array(eps_norm[selected_eps_idx, start_time_step:start_time_step+T_reach+1, state_dim+pose_dim:-action_dim])[None]  # [1, T+1, 2]
+    pusher_pos_seq = jnp.array(eps_norm[selected_eps_idx, :T_reach+1, state_dim+pose_dim:-action_dim])[None]  # [1, T+1, 2]
 
     reach_eps = float(train_config["reach"]["eps_final"])
     # reach_eps = 0.01

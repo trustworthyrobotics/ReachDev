@@ -93,7 +93,7 @@ def rel_to_abs_kp_plus_pusher(eps_denorm: np.ndarray) -> np.ndarray:
 
 def main():
     model_dir = "output/runs/T_pushing_ct_ctl/"
-    model_dir = model_dir + "log_10_lr0.001_s_True_none_0.08_0.05_0.001_20260107_161257"
+    model_dir = model_dir + "log_10_lr0.001_s_True_True_none_0.08_0.05_0.001_20260107_191658"
     # model_dir = model_dir + "log_20_lr0.001_20260104_002216"
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
@@ -134,10 +134,11 @@ def main():
 
     B, T, _ = eps_arr.shape
     horizon = min(10, T-1)
-    n_track = 10
+    n_track = 5
     T = horizon * n_track + 1
+    start_time_step = 100
     # Everything inside file is normalized by /scale → denormalize for visualization
-    eps_denorm = eps_arr.astype(np.float32)[:, :T, :]               # [B,T,15], unnormalized
+    eps_denorm = eps_arr.astype(np.float32)[:, start_time_step:start_time_step+T, :]               # [B,T,15], unnormalized
     eps_norm = eps_denorm / scale                    # [B,T,15], normalized
 
     U_norm = eps_norm[:, :-1, -action_dim:]                    # [B,T,2] normalized velocities
