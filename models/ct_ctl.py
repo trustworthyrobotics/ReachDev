@@ -12,12 +12,15 @@ from models.mlp_utils import MLP
 
 class T_controller(eqx.Module):
     # ---- static / hyper params ----
+    Ds: int = eqx.field(static=True)
     Dx: int = eqx.field(static=True)
     Du: int = eqx.field(static=True)
     Dr: int = eqx.field(static=True)
     arch: Tuple[int, ...] = eqx.field(static=True)
     ref_act: bool = eqx.field(static=True)
     use_delta: bool = eqx.field(static=True)
+    abs_pose: bool = eqx.field(static=True)
+    pred_mode: str = eqx.field(static=True)
 
     # ---- learnable parts ----
     mlp: MLP
@@ -34,21 +37,26 @@ class T_controller(eqx.Module):
 
         self.ref_act = train_cfg.get("ref_action", False)
         self.use_delta = train_cfg.get("use_delta", False)
+        self.abs_pose = bool(train_cfg.get("abs_pose", False))
 
-        pred_mode = str(train_cfg.get("pred_mode", "state"))
-        if pred_mode == "state":
-            self.Dx = int(data_cfg["state_dim"])
-        elif pred_mode == "pose":
-            self.Dx = int(data_cfg["pose_dim"])
         self.Du = int(data_cfg["action_dim"])
+        self.pred_mode = str(train_cfg.get("pred_mode", "state"))
+        if self.pred_mode == "state":
+            self.Ds = int(data_cfg["state_dim"])
+        elif self.pred_mode == "pose":
+            self.Ds = int(data_cfg["pose_dim"])
+        if self.abs_pose:
+            self.Dx = self.Ds + self.Du  # state + pusher position
+        else:
+            self.Dx = self.Ds  # state only
 
         if self.use_delta:
-            in_dim = self.Dx  # input: state difference
+            in_dim = self.Ds  # input: state difference
         else:
-            in_dim = self.Dx * 2  # current state + target state
+            in_dim = self.Ds * 2  # current state + target state
         if self.ref_act:
             in_dim += self.Du
-        self.Dr = in_dim - self.Dx
+        self.Dr = self.Ds + self.Du if self.ref_act else self.Ds
         out_dim = self.Du  # predict action
 
         self.mlp = MLP(
@@ -59,7 +67,7 @@ class T_controller(eqx.Module):
         )
 
     def _input_dims(self) -> List[int]:
-        dims = [self.Dx, self.Dx]
+        dims = [self.Dx, self.Ds]
         if self.ref_act:
             dims.append(self.Du)
         return dims
@@ -70,24 +78,46 @@ class T_controller(eqx.Module):
 
     def forward_batchless(self, x, x_target, ref_action=None):
         # x: (Dx,), x_target: (Dx,), ref_action: (Du,)
-        if self.ref_act:
-            if self.use_delta:
-                inp = jnp.concatenate([x_target - x, ref_action], axis=-1)
+        if self.abs_pose:
+            x_obj = x[:self.Ds]  # object state
+            x_pusher = x[self.Ds:]  # pusher position
+            if self.pred_mode == "state":
+                x_rel = x_obj - x_pusher.repeat(self.Ds // self.Du, axis=-1)
+                x_target_rel = x_target[:self.Ds] - x_pusher.repeat(self.Ds // self.Du, axis=-1)
+            elif self.pred_mode == "pose":
+                x_rel = jnp.concatenate([x_obj[:self.Du] - x_pusher, x_obj[self.Du:]], axis=-1)
+                x_target_rel = jnp.concatenate([x_target[:self.Du] - x_pusher, x_target[self.Du:]], axis=-1)
+            if self.ref_act:
+                if self.use_delta:
+                    inp = jnp.concatenate([x_target_rel - x_rel, ref_action], axis=-1)
+                else:
+                    inp = jnp.concatenate([x_rel, x_target_rel, ref_action], axis=-1)
+                return ref_action + self.mlp(inp)  # (Du,) predicted action
             else:
-                inp = jnp.concatenate([x, x_target, ref_action], axis=-1)
-            return ref_action + self.mlp(inp)  # (Du,) predicted action
+                if self.use_delta:
+                    inp = x_target_rel - x_rel
+                else:
+                    inp = jnp.concatenate([x_rel, x_target_rel], axis=-1)
+                return self.mlp(inp)  # (Du,) predicted action
         else:
-            if self.use_delta:
-                inp = x_target - x
+            if self.ref_act:
+                if self.use_delta:
+                    inp = jnp.concatenate([x_target - x, ref_action], axis=-1)
+                else:
+                    inp = jnp.concatenate([x, x_target, ref_action], axis=-1)
+                return ref_action + self.mlp(inp)  # (Du,) predicted action
             else:
-                inp = jnp.concatenate([x, x_target], axis=-1)
-            return self.mlp(inp)  # (Du,) predicted action
+                if self.use_delta:
+                    inp = x_target - x
+                else:
+                    inp = jnp.concatenate([x, x_target], axis=-1)
+                return self.mlp(inp)  # (Du,) predicted action
 
     def forward_batchless_single_input(self, inp):
         x = inp[:self.Dx]
-        x_target = inp[self.Dx:2*self.Dx]
+        x_target = inp[self.Dx:-self.Du]
         if self.ref_act:
-            ref_action = inp[2*self.Dx:2*self.Dx + self.Du]
+            ref_action = inp[-self.Du:]
             return self.forward_batchless(x, x_target, ref_action)
         else:
             return self.forward_batchless(x, x_target)

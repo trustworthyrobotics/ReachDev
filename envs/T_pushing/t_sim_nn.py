@@ -67,9 +67,15 @@ class ShadowSpace:
         pusher_y = pusher_body.position.y
         if self.model.pred_mode == "state":
             x = get_keypoints_from_pose([obj_x, obj_y, obj_theta], self.param_dict).flatten()
-            x = (x - np.array([pusher_x, pusher_y] * 4)) / self.scale  # relative kp
+            if self.model.abs_pose:
+                x = jnp.concatenate([x, jnp.array([pusher_x / self.scale, pusher_y / self.scale])], axis=-1)
+            else:
+                x = (x - np.array([pusher_x, pusher_y] * 4)) / self.scale  # relative kp
         elif self.model.pred_mode == "pose":
-            x = jnp.array([(obj_x - pusher_x) / self.scale, (obj_y - pusher_y) / self.scale, obj_theta])
+            if self.model.abs_pose:
+                x = jnp.array([(obj_x) / self.scale, (obj_y) / self.scale, obj_theta, pusher_x / self.scale, pusher_y / self.scale])
+            else:
+                x = jnp.array([(obj_x - pusher_x) / self.scale, (obj_y - pusher_y) / self.scale, obj_theta])
         else:
             raise ValueError(f"Unknown pred_mode: {self.model.pred_mode}")
         u = jnp.array([pusher_body.velocity[0], pusher_body.velocity[1]]) / self.scale
@@ -86,13 +92,19 @@ class ShadowSpace:
         pusher_x = pusher_body.position.x
         pusher_y = pusher_body.position.y
         if self.model.pred_mode == "state":
-            new_x = new_x * self.scale + np.array([pusher_x, pusher_y] * 4)
+            if self.model.abs_pose:
+                new_x = new_x[:-2] * self.scale  # Remove pusher pos
+            else:
+                new_x = new_x * self.scale + np.array([pusher_x, pusher_y] * 4)
             new_x = get_pose_from_keypoints(
                 new_x.reshape(-1, 2), 
                 self.param_dict
             )
         elif self.model.pred_mode == "pose":
-            new_x[:2] = new_x[:2] * self.scale + np.array([pusher_x, pusher_y])
+            if self.model.abs_pose:
+                new_x[:2] = new_x[:2] * self.scale
+            else:
+                new_x[:2] = new_x[:2] * self.scale + np.array([pusher_x, pusher_y])
         else:
             raise ValueError(f"Unknown pred_mode: {self.model.pred_mode}")
 

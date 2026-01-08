@@ -1,8 +1,8 @@
 settings:
   seed: 0
   task_name: "T_pushing"
-  data_mode: "ct_dyn" # {"dt_dyn","ct_dyn", "ct_ctl"}
-  train_mode: "dt_dyn" # {"dt_dyn","ct_dyn", "ct_ctl"}
+  data_mode: "ct_ctl" # {"dt_dyn","ct_dyn", "ct_ctl"}
+  train_mode: "ct_ctl" # {"dt_dyn","ct_dyn", "ct_ctl"}
 
 data:
   state_dim: 8
@@ -27,7 +27,7 @@ data:
     frequency: 10 # CT dynamics frequency
   ct_ctl:
     out_path: "output/data/${settings.task_name}_freq${data.ct_ctl.frequency}_ctl_${data.abs_pose}"
-    model_dir: "output/runs/${settings.task_name}_ct_dyn/lr0.0025_mid_0.08_0.05_0.002_20260104_210809"
+    model_dir: "output/runs/${settings.task_name}_ct_dyn/lr0.003_none_0.08_0.05_0.002_True_20260108_001504"
     num_episodes: 16000
     episode_length: 30
     num_workers: 48
@@ -160,7 +160,7 @@ train_ct_ctl:
     lr_final: 0.0001
   n_epoch: 10
   reach:
-    mode: "none" # {"none","mid","after"}
+    mode: "mid" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
     after: 0.6 # only for "after" mode, after N*n_epoch epochs
     eps_init: 0.08

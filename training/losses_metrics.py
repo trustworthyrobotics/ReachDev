@@ -96,17 +96,17 @@ class ReachabilityPenalty(eqx.Module):
         if self.mode == 'dt_dyn':
             def f_wrapper(x):
                 state_next = model(x)
-                action_next = x[model.Dx:]
+                action_next = x[-model.Du:]
                 return jnp.concatenate([state_next, action_next], axis=-1)
         elif self.mode == 'ct_dyn':
             def f_wrapper(x):
                 dx = model(x)
-                du = jnp.zeros_like(x[model.Dx:])
+                du = jnp.zeros_like(x[-model.Du:])
                 return jnp.concatenate([dx, du], axis=-1)
         elif self.mode == 'ct_ctl':
             def f_wrapper(x):
                 dx = self.ct_dyn(x)
-                du = jnp.zeros_like(x[self.ct_dyn.Dx:])
+                du = jnp.zeros_like(x[-self.ct_dyn.Du:])
                 return jnp.concatenate([dx, du], axis=-1)
         else:
             raise ValueError(f"Unknown mode for ReachabilityPenalty: {self.mode}")
@@ -114,8 +114,8 @@ class ReachabilityPenalty(eqx.Module):
         X_up = jnp.concatenate([state_up, jnp.zeros_like(U[:, 0, :])], axis=-1)
         X_lo, X_up = prepare_initial_set_v2(X_lo, X_up, splits_cfg=splits_cfg)
         if self.mode == 'ct_ctl':
-            crown_nn = crown(model, in_len=model.Dx + model.Dr, out_len=model.Du)
-            X_tgt = X[:, -1, :] # [B, Dx]
+            crown_nn = crown(model, in_len=sum(model._input_dims()), out_len=model.Du)
+            X_tgt = X[:, -1, :model.Ds] # [B, Ds]
             U_ref = U.mean(axis=1)  # [B, Du]
             if model.ref_act:
                 reference_seq = jnp.concatenate([X_tgt, U_ref], axis=-1)
@@ -178,7 +178,7 @@ class MSELossCtl(eqx.Module):
     def __call__(self, model: T_controller, X, U, step_weights):
         # X: (B,T+1,Dx), U: (B,T,Du)
         X_curr = X[:, 0, :] # [B, Dx]
-        X_tgt = X[:, -1, :] # [B, Dx]
+        X_tgt = X[:, -1, :model.Ds] # [B, Ds]
         U_ref = U.mean(axis=1)  # [B, Du]
 
         def one_step_ctl_dyn(carry, _):
