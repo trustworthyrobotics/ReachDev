@@ -115,11 +115,12 @@ class T_controller(eqx.Module):
 
     def forward_batchless_single_input(self, inp):
         x = inp[:self.Dx]
-        x_target = inp[self.Dx:-self.Du]
         if self.ref_act:
+            x_target = inp[self.Dx:-self.Du]
             ref_action = inp[-self.Du:]
             return self.forward_batchless(x, x_target, ref_action)
         else:
+            x_target = inp[self.Dx:]
             return self.forward_batchless(x, x_target)
         
     __call__ = forward_batchless_single_input

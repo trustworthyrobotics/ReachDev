@@ -250,7 +250,7 @@ class micic_controller:
 # def main(config: DictConfig):
 def main():
     model_dir = "output/runs/T_pushing_ct_ctl/"
-    model_dir = model_dir + "log_10_lr0.001_s_True_True_mid_0.08_0.05_0.001_True_20260108_153038"
+    model_dir = model_dir + "log_10_lr0.001_st_False_True_mid_0.08_0.05_0.003_True_20260109_012133"
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
@@ -314,7 +314,7 @@ def main():
     eps_arr = np.array(eval_data)  # [B, T, 15]
 
     T_reach = train_config["n_rollout_valid"]
-    n_track = 1
+    n_track = 3
     T_per_tgt = round(train_config["ctl_frequency"] / train_config["target_frequency"])
     T_reach = n_track * T_per_tgt
     start_time_step = 100
@@ -323,16 +323,17 @@ def main():
     eps_denorm = eps_arr.astype(np.float32)[:, start_time_step:start_time_step+T_reach+1, :]               # [B,T,15], unnormalized
     eps_norm = eps_denorm / scale                    # [B,T,15], normalized
 
-    selected_eps_idx = 20
+    selected_eps_idx = 40
     if pred_mode == "state":
         state_init = jnp.array(eps_norm[selected_eps_idx, 0, :state_dim])[None]      # [1, Dx]
         tgt_seq = jnp.array(eps_norm[selected_eps_idx, T_per_tgt:T_reach+1:T_per_tgt, :state_dim])  # [T+1, state_dim]
-        act_state_dim = state_dim
+        trg_dim = act_state_dim = state_dim
     if pred_mode == "pose":
         state_init = jnp.array(eps_norm[selected_eps_idx, 0, state_dim:state_dim+pose_dim])[None]      # [1, Dx]
         state_init = state_init.at[0, -1].set(state_init[0, -1] * scale)  # denormalize angle
-        act_state_dim = pose_dim
+        trg_dim = act_state_dim = pose_dim
         tgt_seq = jnp.array(eps_norm[selected_eps_idx, T_per_tgt:T_reach+1:T_per_tgt, state_dim:state_dim+pose_dim])[None]  # [1, n_track, state_dim]
+        tgt_seq = tgt_seq.at[0, :, -1].set(tgt_seq[0, :, -1] * scale)  # denormalize angle
         def transform_fn(pose):
             B, T, D = pose.shape
             pose = pose.reshape(-1, D)
@@ -353,7 +354,7 @@ def main():
         act_state_dim = act_state_dim + action_dim
         state_init_lo = jnp.concatenate([state_init_lo, jnp.array(eps_norm[selected_eps_idx, 0, state_dim+pose_dim:-action_dim])[None]], axis=-1)  # [1, Dx+Du]
         state_init_up = jnp.concatenate([state_init_up, jnp.array(eps_norm[selected_eps_idx, 0, state_dim+pose_dim:-action_dim])[None]], axis=-1)  # [1, Dx+Du]
-
+    print(f"reference: {reference_seq.tolist()}")
     reference_seq_per_ctl = reference_seq.repeat(T_per_tgt, axis=1)  # [1, T, Dx(+Du)]
     pusher_pos_seq = jnp.array(eps_norm[selected_eps_idx, :T_reach+1, state_dim+pose_dim:-action_dim])[None]  # [1, T+1, 2]
 
@@ -444,11 +445,12 @@ def main():
 
     def track(carry, xs):
         X_curr = carry  # [B, Dx]
-        X_tgt, U_ref = xs[:, :-action_dim], xs[:, -action_dim:]  # [B, Dx], [B, Du]
+        X_tgt, U_ref = xs[:, :trg_dim], xs[:, trg_dim:]  # [B, Dx], [B, Du]
         _, (X_preds, U_preds) = jax.lax.scan(one_step_ctl_dyn, (X_curr, X_tgt, U_ref), None, length=T_per_tgt)
         return X_preds[-1], (X_preds, U_preds)
 
-    _, (X_preds, U_preds) = jax.lax.scan(track, X_curr, reference_seq.repeat(n_samples, axis=0).transpose(1,0,2), length=n_track)
+    with jax.disable_jit():
+        _, (X_preds, U_preds) = jax.lax.scan(track, X_curr, reference_seq.repeat(n_samples, axis=0).transpose(1,0,2), length=n_track)
 
     X_preds = X_preds.reshape(-1, n_samples, X_preds.shape[-1]).transpose(1,0,2)  # [B, T, Dx]
     U_preds = U_preds.reshape(-1, n_samples, U_preds.shape[-1]).transpose(1,0,2)  # [B, T, Du]
@@ -465,7 +467,7 @@ def main():
   
     X_preds = np.array(X_preds)
     U_preds = np.array(U_preds)
-    U_preds = np.concatenate([U_preds, U_preds[:, -1:, :]], axis=1)  # [B,T, Du], repeat last action for placeholder
+    U_preds = np.concatenate([jnp.zeros_like(U_preds[:, :1, :]), U_preds], axis=1)  # [B,T, Du], repeat last action for placeholder
     pusher_pos_curr = eps_norm[selected_eps_idx, 0, state_dim+pose_dim:-action_dim][None].repeat(n_samples, axis=0)  # [B,2]
     pusher_pos_preds = np.cumsum(np.concatenate([pusher_pos_curr[:, None, :], U_preds[:, :-1, :] * float(ct_dyn.dt)], axis=1), axis=1)  # [B,T,2]
 

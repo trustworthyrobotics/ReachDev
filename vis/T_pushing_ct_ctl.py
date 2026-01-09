@@ -93,7 +93,7 @@ def rel_to_abs_kp_plus_pusher(eps_denorm: np.ndarray) -> np.ndarray:
 
 def main():
     model_dir = "output/runs/T_pushing_ct_ctl/"
-    model_dir = model_dir + "log_10_lr0.001_s_True_True_mid_0.08_0.05_0.001_True_20260108_153038"
+    model_dir = model_dir + "log_10_lr0.001_st_False_True_mid_0.08_0.05_0.003_True_20260109_012133"
     # model_dir = model_dir + "log_20_lr0.001_20260104_002216"
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
@@ -135,9 +135,9 @@ def main():
 
     B, T, _ = eps_arr.shape
     horizon = min(10, T-1)
-    n_track = 5
+    n_track = 10
     T = horizon * n_track + 1
-    start_time_step = 100
+    start_time_step = 50
     # Everything inside file is normalized by /scale → denormalize for visualization
     eps_denorm = eps_arr.astype(np.float32)[:, start_time_step:start_time_step+T, :]               # [B,T,15], unnormalized
     eps_norm = eps_denorm / scale                    # [B,T,15], normalized
@@ -217,9 +217,13 @@ def main():
     out_dir = model_dir
     window_size = data_cfg["window_size"] * data_cfg.get("enlarge_factor_for_gen", 1)
     os.makedirs(out_dir, exist_ok=True)
-    max_vis = 5
-    # select 10 samples with largest X_tgt_diff
-    sample_indices = np.argsort(-X_tgt_diff.max(axis=(1,2)))[:max_vis]
+    max_vis = 10
+    # # select 5 samples with largest X_tgt_diff and 5 samples with smallest X_tgt_diff
+    # sample_indices = np.concatenate([
+    #     np.argsort(-X_tgt_diff.max(axis=(1,2)))[:max_vis//2],
+    #     np.argsort(X_tgt_diff.max(axis=(1,2)))[:max_vis//2]
+    # ])
+    sample_indices = np.random.choice(B, size=min(B, max_vis), replace=False)
     for b in sample_indices:
         # if b != 3:
         #     continue

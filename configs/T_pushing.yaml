@@ -2,7 +2,7 @@ settings:
   seed: 0
   task_name: "T_pushing"
   data_mode: "ct_ctl" # {"dt_dyn","ct_dyn", "ct_ctl"}
-  train_mode: "ct_ctl" # {"dt_dyn","ct_dyn", "ct_ctl"}
+  train_mode: "ct_dyn" # {"dt_dyn","ct_dyn", "ct_ctl"}
 
 data:
   state_dim: 8
@@ -99,7 +99,7 @@ train_ct_dyn:
   horizon_scheduler:
     type: "log" # log, linear, const
     T_init: 1
-    T_final: 10
+    T_final: 20
     log_alpha: 1.0
   step_weight_ub: 2
   noise: 0.005 # std of the Gaussian noise to training data
@@ -119,7 +119,7 @@ train_ct_dyn:
     # batch_size: 8
     # below for CT reachability settings
     init_remainder: 5e-2
-    frr_rounds: 10
+    frr_rounds: 5
     frr_stop_ratio: 0.95
     sr_window_size: 100
   batch_size: 128
@@ -142,9 +142,9 @@ train_ct_ctl:
   ctl_frequency: 10
   target_frequency: 1
   abs_pose: ${data.abs_pose}
-  ref_action: True
+  ref_action: False
   use_delta: True
-  loss_mode: "s"
+  loss_mode: "st"
   n_history: 1
   n_rollout_valid: 10
   horizon_scheduler:
@@ -166,7 +166,7 @@ train_ct_ctl:
     eps_init: 0.08
     eps_final: 0.05
     # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
-    weight: 0.002
+    weight: 0.003
     # batch_size: 8
     # below for CT reachability settings
     init_remainder: 1e-1
