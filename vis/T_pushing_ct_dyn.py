@@ -89,7 +89,7 @@ def rel_to_abs_kp_plus_pusher(eps_denorm: np.ndarray) -> np.ndarray:
 
 def main():
     model_dir = "output/runs/T_pushing_ct_dyn/"
-    model_dir = model_dir + "lr0.003_mid_0.08_0.05_0.002_True_20260108_205733"
+    model_dir = model_dir + "lr0.003_mid_0.08_0.05_0.002_True_20260109_014023"
     # log_20_lr0.003_bs128_pid_20260103_194419
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:

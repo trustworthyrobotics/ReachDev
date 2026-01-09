@@ -119,7 +119,7 @@ train_ct_dyn:
     # batch_size: 8
     # below for CT reachability settings
     init_remainder: 5e-2
-    frr_rounds: 5
+    frr_rounds: 3
     frr_stop_ratio: 0.95
     sr_window_size: 100
   batch_size: 128
@@ -169,8 +169,8 @@ train_ct_ctl:
     weight: 0.003
     # batch_size: 8
     # below for CT reachability settings
-    init_remainder: 1e-1
-    frr_rounds: 5
+    init_remainder: 5e-2
+    frr_rounds: 3
     frr_stop_ratio: 0.95
     sr_window_size: 100
 

@@ -7,6 +7,8 @@ import yaml
 import os
 import pickle
 import jax
+jax.config.update('jax_platforms', 'cpu')
+jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 from jax import random as jrandom
 import equinox as eqx
@@ -232,7 +234,7 @@ def plot_v2(trajs, pxy, scale, window_size, file_name, abs_pose):
 # def main(config: DictConfig):
 def main():
     model_dir = "output/runs/T_pushing_ct_dyn/"
-    model_dir = model_dir + "lr0.003_mid_0.08_0.05_0.002_True_20260108_045332"
+    model_dir = model_dir + "lr0.003_mid_0.08_0.05_0.002_True_20260109_014023"
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
@@ -293,7 +295,7 @@ def main():
     eps_denorm = eps_arr.astype(np.float32)[:, start_time_step:start_time_step+T_reach+1, :]               # [B,T,15], unnormalized
     eps_norm = eps_denorm / scale                    # [B,T,15], normalized
 
-    selected_eps_idx = 20
+    selected_eps_idx = 200
     if pred_mode == "state":
         state_init = jnp.array(eps_norm[selected_eps_idx, 0, :state_dim])[None]      # [1, Dx]
         act_state_dim = state_dim
@@ -398,7 +400,7 @@ def main():
     sample_rollout = model.rollout(sample_state_init, action_seq.repeat(n_samples, axis=0))
     sample_rollout = jnp.concatenate([sample_state_init[:, None, :], sample_rollout], axis=1)  # [n_samples, T+1, Dx+Du]
 
-    out_dir = os.path.join(model_dir, f"{selected_eps_idx}_reach_eps{reach_eps}_steps{T_reach}_{n_split}_{pred_mode}_{enable_action_opt}_{n_opt_steps}")
+    out_dir = os.path.join(model_dir, f"{selected_eps_idx}_reach_eps{reach_eps}_steps{T_reach}_{n_split}_{pred_mode}_{enable_action_opt}_{n_opt_steps}_t")
     os.makedirs(out_dir, exist_ok=True)
 
     # # save r_lo, r_up, sample_rollout, pusher_pos_seq, scale, window_size

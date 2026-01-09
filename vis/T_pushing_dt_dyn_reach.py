@@ -7,6 +7,8 @@ import yaml
 import os
 import pickle
 import jax
+jax.config.update('jax_platforms', 'cpu')
+jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 from jax import random as jrandom
 import equinox as eqx
