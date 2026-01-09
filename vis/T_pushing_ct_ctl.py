@@ -93,7 +93,7 @@ def rel_to_abs_kp_plus_pusher(eps_denorm: np.ndarray) -> np.ndarray:
 
 def main():
     model_dir = "output/runs/T_pushing_ct_ctl/"
-    model_dir = model_dir + "log_10_lr0.001_s_True_True_none_0.08_0.05_0.001_20260107_191658"
+    model_dir = model_dir + "log_10_lr0.001_s_True_True_mid_0.08_0.05_0.001_True_20260108_153038"
     # model_dir = model_dir + "log_20_lr0.001_20260104_002216"
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
@@ -109,6 +109,7 @@ def main():
     state_dim = data_cfg["state_dim"]
     pose_dim = data_cfg.get("pose_dim", 3)
     action_dim = data_cfg["action_dim"]
+    abs_pose = train_cfg.get("abs_pose", False)
 
     use_eval = True
     if use_eval:
@@ -157,6 +158,8 @@ def main():
 
     x_norm = jnp.array(x_norm)
     U_norm = jnp.array(U_norm)
+    if abs_pose:
+        x_norm = jnp.concatenate([x_norm, eps_norm[:, :, state_dim+pose_dim:-action_dim]], axis=-1)  # [B,10]
 
     X_curr = x_norm[:, 0, :] # [B, Dx]
     def one_step_ctl_dyn(carry, _):
@@ -167,16 +170,16 @@ def main():
 
     def track(carry, xs):
         X_curr = carry  # [B, Dx]
-        X_tgt, U_ref = xs[:, :X_curr.shape[1]], xs[:, X_curr.shape[1]:]  # [B, Dx], [B, Du]
+        X_tgt, U_ref = xs[:, :-action_dim], xs[:, -action_dim:]  # [B, Dx], [B, Du]
         _, (X_preds, U_preds) = jax.lax.scan(one_step_ctl_dyn, (X_curr, X_tgt, U_ref), None, length=horizon)
         return X_preds[-1], (X_preds, U_preds)
 
-    X_tgts = x_norm[:, horizon::horizon, :]  # [B, n_track, Dx]
+    X_tgts = x_norm[:, horizon::horizon, :state_dim if pred_mode == "state" else pose_dim]  # [B, n_track, Dx]
     U_refs = U_norm.reshape(B, n_track, horizon, action_dim).mean(axis=2)  # [B, n_track, Du]
     _, (X_preds, U_preds) = jax.lax.scan(track, X_curr, jnp.concatenate([X_tgts, U_refs], axis=-1).transpose(1,0,2), length=n_track)
 
     X_preds = X_preds.reshape(-1, B, x_norm.shape[2]).transpose(1,0,2)  # [B, T, Dx]
-    U_preds = U_preds.reshape(-1, B, U_norm.shape[2]).transpose(1,0,2)  # [B, T, Du]
+    U_preds = U_preds.reshape(-1, B, action_dim).transpose(1,0,2)  # [B, T, Du]
 
     # U_gts_j = jnp.array(eps_norm[:, :-1, -action_dim:])
     # X_gts_j = jnp.array(eps_norm[:, 1:, state_dim:state_dim+pose_dim])
@@ -187,7 +190,7 @@ def main():
     X_preds = jnp.concatenate([X_curr[:, None, :], X_preds], axis=1) * scale  # [B,T, Dx]
     if pred_mode == "pose":
         # renormalize angle in predicted poses
-        X_preds = X_preds.at[:, :, -1].set(X_preds[:, :, -1] / scale)
+        X_preds = X_preds.at[:, :, pose_dim-1].set(X_preds[:, :, pose_dim-1] / scale)
         X_preds = transform_fn(X_preds)
     X_preds = np.array(X_preds)
     U_preds = np.array(U_preds)
@@ -203,8 +206,12 @@ def main():
     print(f"kp state error mean: {X_diff.mean()}, max: {X_diff.max()}, action error mean: {U_diff.mean()}, max: {U_diff.max()}")
     print(f"tagret kp state error mean: {X_tgt_diff.mean()}, max: {X_tgt_diff.max()}")
 
-    gt_vis = rel_to_abs_kp_plus_pusher(np.concatenate([eps_denorm[..., :state_dim], eps_denorm[..., state_dim+pose_dim:]], axis=-1))         # [B,T,10]
-    pred_vis = rel_to_abs_kp_plus_pusher(np.concatenate([X_preds, pusher_pos_preds, U_preds], axis=-1))  # [B,T,10]
+    if abs_pose:
+        gt_vis = np.concatenate([eps_denorm[..., :state_dim], eps_denorm[..., state_dim+pose_dim:-action_dim]], axis=-1)         # [B,T,10]
+        pred_vis = np.concatenate([X_preds, pusher_pos_preds], axis=-1)  # [B,T,10]
+    else:
+        gt_vis = rel_to_abs_kp_plus_pusher(np.concatenate([eps_denorm[..., :state_dim], eps_denorm[..., state_dim+pose_dim:]], axis=-1))         # [B,T,10]
+        pred_vis = rel_to_abs_kp_plus_pusher(np.concatenate([X_preds, pusher_pos_preds, U_preds], axis=-1))  # [B,T,10]
 
     # ----------------- write one GIF per episode -----------------
     out_dir = model_dir

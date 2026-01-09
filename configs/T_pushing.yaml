@@ -27,7 +27,7 @@ data:
     frequency: 10 # CT dynamics frequency
   ct_ctl:
     out_path: "output/data/${settings.task_name}_freq${data.ct_ctl.frequency}_ctl_${data.abs_pose}"
-    model_dir: "output/runs/${settings.task_name}_ct_dyn/lr0.003_none_0.08_0.05_0.002_True_20260108_001504"
+    model_dir: "output/runs/${settings.task_name}_ct_dyn/lr0.003_mid_0.08_0.05_0.002_True_20260108_045332"
     num_episodes: 16000
     episode_length: 30
     num_workers: 48
@@ -166,7 +166,7 @@ train_ct_ctl:
     eps_init: 0.08
     eps_final: 0.05
     # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
-    weight: 0.001
+    weight: 0.002
     # batch_size: 8
     # below for CT reachability settings
     init_remainder: 1e-1

@@ -178,7 +178,6 @@ class Trainer:
                     latest_reach_penalty = metrics["reach_penalty"]
 
                 train_losses.append(float(loss))
-                self.global_step += 1
                 if (self.global_step % self._log_every == 0):
                     self.logger.log(
                         {"train/iter_loss": float(loss), "train/reach_volume": float(latest_reach_vol), "train/reach_penalty": float(latest_reach_penalty),
@@ -187,6 +186,7 @@ class Trainer:
                          "reach_eps": float(curr_reach_eps)},
                         step=self.global_step
                     )
+                self.global_step += 1
 
             tr_loss = float(np.mean(train_losses)) if train_losses else float("nan")
 

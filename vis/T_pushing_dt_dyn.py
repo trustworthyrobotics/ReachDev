@@ -90,7 +90,7 @@ def rel_to_abs_kp_plus_pusher(eps_denorm: np.ndarray) -> np.ndarray:
 
 def main():
     model_dir = "output/runs/T_pushing/"
-    model_dir = model_dir + "nt_log_cos_128_none_1_0.6_eps0.08_0.05_w0.002_j0.0_True_True_20260108_001604"
+    model_dir = model_dir + "nt_log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_True_20260108_045325"
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)

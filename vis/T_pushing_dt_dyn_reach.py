@@ -231,7 +231,7 @@ def plot_v2(trajs, pxy, scale, window_size, file_name, abs_pose):
 # def main(config: DictConfig):
 def main():
     model_dir = "output/runs/T_pushing/"
-    model_dir = model_dir + "log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_True_20260107_230400"
+    model_dir = model_dir + "nt_log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_True_20260108_045325"
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
@@ -277,9 +277,10 @@ def main():
 
     T_reach = train_config["n_rollout_valid"]
     T_reach = 15
+    start_time_step = 0
 
     # Everything inside file is normalized by /scale → denormalize for visualization
-    eps_denorm = eps_arr.astype(np.float32)               # [B,T,15], unnormalized
+    eps_denorm = eps_arr.astype(np.float32)[:, start_time_step:start_time_step+T_reach+1, :]               # [B,T,15], unnormalized
     eps_norm = eps_denorm / scale                    # [B,T,15], normalized
 
     selected_eps_idx = 43
@@ -329,7 +330,7 @@ def main():
         @eqx.filter_jit
         def reach_opt_step(act_seq, opt_state, key):
             def loss_fn(_act_seq):
-                ts, r_lo, r_up, x_nexts_all, _ = reach_analyzer.verify_w_model(f_wrapper, z_init_lo, z_init_up, n_total_steps=T_reach, action_seq=_act_seq.repeat(z_init_up.shape[0]//_act_seq.shape[0], axis=0)[:, None], return_tm=True)
+                ts, r_lo, r_up, x_nexts_all, _ = reach_analyzer.verify_w_model(f_wrapper, z_init_lo, z_init_up, n_total_steps=T_reach, action_seq=_act_seq.repeat(z_init_up.shape[0]//_act_seq.shape[0], axis=0)[:, None])
                 r_lo = r_lo.reshape(-1, T_reach + 1, act_state_dim+action_dim)[..., :act_state_dim]  # [B, T+1, Dx]
                 r_up = r_up.reshape(-1, T_reach + 1, act_state_dim+action_dim)[..., :act_state_dim]  # [B, T+1, Dx]
 
@@ -365,12 +366,12 @@ def main():
         print(f"action seq: {action_seq.tolist()}")
         # print(f"pusher pos seq: {pusher_pos_seq.tolist()}")
     # perform reachability analysis
-    ts, r_lo, r_up, x_nexts_all, _ = reach_analyzer.verify_w_model(f_wrapper, z_init_lo, z_init_up, n_total_steps=T_reach, action_seq=action_seq.repeat(z_init_up.shape[0]//action_seq.shape[0], axis=0)[:, None], return_tm=True)
-    r_lo = r_lo.reshape(-1, T_reach + 1, act_state_dim+action_dim)[..., :act_state_dim]  # [B, T+1, Dx]
-    r_up = r_up.reshape(-1, T_reach + 1, act_state_dim+action_dim)[..., :act_state_dim]  # [B, T+1, Dx]
+    ts, r_lo, r_up, x_nexts_all, _ = reach_analyzer.verify_w_model(f_wrapper, z_init_lo, z_init_up, n_total_steps=T_reach, action_seq=action_seq.repeat(z_init_up.shape[0]//action_seq.shape[0], axis=0)[:, None])
+    r_lo = r_lo.reshape(-1, T_reach + 1, act_state_dim+action_dim)  # [B, T+1, Dx+Du]
+    r_up = r_up.reshape(-1, T_reach + 1, act_state_dim+action_dim)  # [B, T+1, Dx+Du]
 
     # aggregate volume over all partitions
-    r_lo_agg = jnp.min(r_lo, axis=0, keepdims=True)  # [1, T+1, Dx]
+    r_lo_agg = jnp.min(r_lo, axis=0, keepdims=True)  # [1, T+1, Dx+Du]
     r_up_agg = jnp.max(r_up, axis=0, keepdims=True)
 
     vol = float(calculate_volume(r_lo, r_up, union_init=False, mode="sum"))
@@ -384,7 +385,7 @@ def main():
     sample_state_init = sample_state_init.reshape(-1, act_state_dim)  # [n_samples, Dx]
 
     sample_rollout = model.rollout(sample_state_init, action_seq.repeat(n_samples, axis=0))
-    sample_rollout = jnp.concatenate([sample_state_init[:, None, :], sample_rollout], axis=1)  # [n_samples, T+1, Dx]
+    sample_rollout = jnp.concatenate([sample_state_init[:, None, :], sample_rollout], axis=1)  # [n_samples, T+1, Dx+Du]
 
     out_dir = os.path.join(model_dir, f"{selected_eps_idx}_reach_eps{reach_eps}_steps{T_reach}_{n_split}_{pred_mode}_{enable_action_opt}_{n_opt_steps}")
     os.makedirs(out_dir, exist_ok=True)
@@ -443,25 +444,26 @@ def main():
         outfile = os.path.join(out_dir, f"env.png")
         plot_v2(np.array(transform_fn(jnp.array(sample_env))), pusher_pos_seq, scale, window_size, outfile, abs_pose)
 
-        norm_samples = (raw_samples * 2 - 1).reshape(-1, act_state_dim)  # [n_partitions * n_per_partition (1), Dx], in [-1, 1]
-        norm_lo = norm_up = jnp.concatenate([jnp.zeros((norm_samples.shape[0], 1)), norm_samples, jnp.zeros((norm_samples.shape[0], action_dim))], axis=-1).repeat(T_reach+1, axis=0)  # [n_samples*(T_reach+1), 1+Dx+Du]
+        # norm_samples = (raw_samples * 2 - 1).reshape(-1, act_state_dim)  # [n_partitions * n_per_partition (1), Dx], in [-1, 1]
+        # norm_lo = norm_up = jnp.concatenate([jnp.zeros((norm_samples.shape[0], 1)), norm_samples, jnp.zeros((norm_samples.shape[0], action_dim))], axis=-1).repeat(T_reach+1, axis=0)  # [n_samples*(T_reach+1), 1+Dx+Du]
 
-        taylor_range = x_nexts_all.eval_interval(norm_lo, norm_up)
-        taylor_lo, taylor_up = taylor_range.lo[:, :act_state_dim], taylor_range.hi[:, :act_state_dim]
-        taylor_lo = taylor_lo.reshape(-1, T_reach+1, act_state_dim)
-        taylor_up = taylor_up.reshape(-1, T_reach+1, act_state_dim)
-        print(f"max diff:{np.max(taylor_up - taylor_lo, axis=(0))}")
+        # taylor_range = x_nexts_all.eval_interval(norm_lo, norm_up)
+        # taylor_lo, taylor_up = taylor_range.lo[:, :act_state_dim], taylor_range.hi[:, :act_state_dim]
+        # taylor_lo = taylor_lo.reshape(-1, T_reach+1, act_state_dim)
+        # taylor_up = taylor_up.reshape(-1, T_reach+1, act_state_dim)
+        # print(f"max diff:{np.max(taylor_up - taylor_lo, axis=(0))}")
 
-        outfile = os.path.join(out_dir, f"reach_sample.png")
-        plot_v2(np.array(transform_fn((taylor_lo+taylor_up)/2)), pusher_pos_seq, scale, window_size, outfile, abs_pose)
+        # outfile = os.path.join(out_dir, f"reach_sample.png")
+        # plot_v2(np.array(transform_fn((taylor_lo+taylor_up)/2)), pusher_pos_seq, scale, window_size, outfile, abs_pose)
 
-    for idx in range(act_state_dim):
+    action_seq = np.concatenate([np.zeros((1, 1, action_dim)), np.array(action_seq)], axis=1)  # [1, T+1, Du]
+    for idx in range(act_state_dim + action_dim):
         outfile = os.path.join(out_dir, f"reach_{idx}.png")
         visualize_flowpipe_time(
             times=ts,
             lowers=r_lo,
             uppers=r_up,
-            trajs=sample_rollout,
+            trajs=np.concatenate([sample_rollout, action_seq.repeat(sample_rollout.shape[0], axis=0)], axis=-1),
             state_idx=idx,
             file_name=outfile,
             print_boxes=False,

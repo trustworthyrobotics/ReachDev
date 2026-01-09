@@ -10,7 +10,6 @@ import sys
 sys.path.append('CROWN_Reach')
 from CROWN_Reach.src.reachability import DT_Plan_Reach, CT_Plan_Reach, CT_Ctl_Reach
 from CROWN_Reach.src.utils.box_set import calculate_volume, prepare_initial_set_v2
-from CROWN_Reach.src.crown_wrapper import crown
 
 Array = jnp.ndarray
 
@@ -76,11 +75,11 @@ class ReachabilityPenalty(eqx.Module):
             self.reach_analyzer = CT_Plan_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, n_steps_per_plan=1, step_size=1/dyn_frequency, init_remainder=reach_cfg.get("init_remainder", 1e-1), frr_rounds=reach_cfg.get("frr_rounds", 5), frr_stop_ratio=reach_cfg.get("frr_stop_ratio", 0.95), sr_window_size=reach_cfg.get("sr_window_size", 100))
         elif mode == 'ct_ctl':
             self.ct_dyn = kwargs.get("ct_dyn", None)
-            self.reach_analyzer = CT_Ctl_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, controller=None, n_steps_per_control=round(dyn_frequency/kwargs.get("ctl_frequency", dyn_frequency)), step_size=1/dyn_frequency, crown_nn=None, init_remainder=reach_cfg.get("init_remainder", 1e-1), frr_rounds=reach_cfg.get("frr_rounds", 5), frr_stop_ratio=reach_cfg.get("frr_stop_ratio", 0.95), sr_window_size=reach_cfg.get("sr_window_size", 100), reference_dim=kwargs.get("reference_dim", 0))
+            self.reach_analyzer = CT_Ctl_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, controller=None, n_steps_per_control=round(dyn_frequency/kwargs.get("ctl_frequency", dyn_frequency)), step_size=1/dyn_frequency, init_remainder=reach_cfg.get("init_remainder", 1e-1), frr_rounds=reach_cfg.get("frr_rounds", 5), frr_stop_ratio=reach_cfg.get("frr_stop_ratio", 0.95), sr_window_size=reach_cfg.get("sr_window_size", 100), reference_dim=kwargs.get("reference_dim", 0))
         else:
             raise ValueError(f"Unknown mode for ReachabilityPenalty: {mode}")
 
-    def __call__(self, model: Union[T_Dynamics, Continuous_T_Dynamics], X, U, eps, reach_bs, key, splits_cfg):
+    def __call__(self, model: Union[T_Dynamics, Continuous_T_Dynamics, T_controller], X, U, eps, reach_bs, key, splits_cfg):
         T_reach = U.shape[1]
         D = model.Dx + model.Du
         # pick a random subset for reachability
@@ -89,9 +88,13 @@ class ReachabilityPenalty(eqx.Module):
             idxs = perm[:reach_bs]
             X = X[idxs]
             U = U[idxs]
-        state_init = X[:, 0, :]
+        state_init = X[:, 0, :model.Ds]
         state_lo = state_init - eps
         state_up = state_init + eps
+
+        if model.abs_pose:
+            state_lo = jnp.concatenate([state_lo, X[:, 0, model.Ds:model.Dx]], axis=-1)
+            state_up = jnp.concatenate([state_up, X[:, 0, model.Ds:model.Dx]], axis=-1)
 
         if self.mode == 'dt_dyn':
             def f_wrapper(x):
@@ -114,7 +117,6 @@ class ReachabilityPenalty(eqx.Module):
         X_up = jnp.concatenate([state_up, jnp.zeros_like(U[:, 0, :])], axis=-1)
         X_lo, X_up = prepare_initial_set_v2(X_lo, X_up, splits_cfg=splits_cfg)
         if self.mode == 'ct_ctl':
-            crown_nn = crown(model, in_len=sum(model._input_dims()), out_len=model.Du)
             X_tgt = X[:, -1, :model.Ds] # [B, Ds]
             U_ref = U.mean(axis=1)  # [B, Du]
             if model.ref_act:
@@ -122,7 +124,7 @@ class ReachabilityPenalty(eqx.Module):
             else:
                 reference_seq = X_tgt
             reference_seq = reference_seq[:, None, :].repeat(T_reach, axis=1)  # [B, T, Dx+Du]
-            _, r_lo, r_up, _, _ = self.reach_analyzer.verify_w_model(f_wrapper, model, crown_nn, X_lo, X_up, n_total_steps=T_reach, reference_seq=reference_seq)
+            _, r_lo, r_up, _, _ = self.reach_analyzer.verify_w_model(f_wrapper, model, X_lo, X_up, n_total_steps=T_reach, reference_seq=reference_seq)
         else:
             _, r_lo, r_up, _, _ = self.reach_analyzer.verify_w_model(f_wrapper, X_lo, X_up, n_total_steps=T_reach, action_seq=U.repeat(X_up.shape[0]//U.shape[0], axis=0)[:, None])
 

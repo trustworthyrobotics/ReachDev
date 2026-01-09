@@ -89,7 +89,7 @@ def rel_to_abs_kp_plus_pusher(eps_denorm: np.ndarray) -> np.ndarray:
 
 def main():
     model_dir = "output/runs/T_pushing_ct_dyn/"
-    model_dir = model_dir + "lr0.0025_mid_0.08_0.05_0.002_20260104_210809"
+    model_dir = model_dir + "lr0.003_mid_0.08_0.05_0.002_True_20260108_205733"
     # log_20_lr0.003_bs128_pid_20260103_194419
     config_path = os.path.join(model_dir, "config.yaml")
     with open(config_path, "r") as f:
@@ -105,6 +105,7 @@ def main():
     state_dim = data_cfg["state_dim"]
     pose_dim = data_cfg.get("pose_dim", 3)
     action_dim = data_cfg["action_dim"]
+    abs_pose = train_cfg.get("abs_pose", False)
 
     use_eval = True
     if use_eval:
@@ -145,6 +146,9 @@ def main():
     else:
         raise ValueError(f"Unknown pred_mode: {pred_mode}")
 
+    if abs_pose:
+        x0_norm = jnp.concatenate([x0_norm, eps_norm[:, 0, state_dim+pose_dim:-action_dim]], axis=-1)  # [B,10]
+
     # ----------------- load model & rollout (batch) -----------------
     # rollout(x0: [B,Dx], U: [B,T,Du]) -> X_pred: [B,T,Dx]
     X_pred_norm = model.rollout(jnp.asarray(x0_norm), jnp.asarray(U_norm))
@@ -154,12 +158,16 @@ def main():
     
     if pred_mode == "pose":
         # renormalize angle in predicted poses
-        X_pred_full_denorm = X_pred_full_denorm.at[:, :, -1].set(X_pred_full_denorm[:, :, -1] / scale)
+        X_pred_full_denorm = X_pred_full_denorm.at[:, :, pose_dim-1].set(X_pred_full_denorm[:, :, pose_dim-1] / scale)
         X_pred_full_denorm = transform_fn(X_pred_full_denorm)
 
     # ----------------- build GT/PRED arrays for plot_frame -----------------
-    gt_vis = rel_to_abs_kp_plus_pusher(np.concatenate([eps_denorm[..., :state_dim], eps_denorm[..., state_dim+pose_dim:]], axis=-1))         # [B,T,10]
-    pred_vis = rel_to_abs_kp_plus_pusher(np.concatenate([X_pred_full_denorm, eps_denorm[:, :, state_dim+pose_dim:]], axis=-1))  # [B,T,10]
+    if abs_pose:
+        gt_vis = np.concatenate([eps_denorm[..., :state_dim], eps_denorm[..., state_dim+pose_dim:-action_dim]], axis=-1)         # [B,T,10]
+        pred_vis = np.concatenate([X_pred_full_denorm, eps_denorm[:, :, state_dim+pose_dim:-action_dim]], axis=-1)  # [B,T,10]
+    else:
+        gt_vis = rel_to_abs_kp_plus_pusher(np.concatenate([eps_denorm[..., :state_dim], eps_denorm[..., state_dim+pose_dim:]], axis=-1))         # [B,T,10]
+        pred_vis = rel_to_abs_kp_plus_pusher(np.concatenate([X_pred_full_denorm, eps_denorm[:, :, state_dim+pose_dim:]], axis=-1))  # [B,T,10]
     print(f"vis error: {np.abs(pred_vis - gt_vis).mean()}")
 
     # ----------------- write one GIF per episode -----------------

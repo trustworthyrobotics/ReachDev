@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import yaml
 import jax
-jax.config.update("jax_enable_x64", True)
+# jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_default_matmul_precision", "highest")
 import equinox as eqx
 import numpy as np
