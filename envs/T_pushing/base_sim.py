@@ -271,6 +271,12 @@ class Base_Sim(object):
         # self.wait(1.0)
         self.render()
         
+        return self.get_env_state(rel)
+
+    def get_env_state(self, rel=True):
+        """
+        Return the environment state.
+        """
         env_dict = {
             "state": self.get_kp_state(),
             "pusher_pos": self.get_pusher_position(),
@@ -285,22 +291,6 @@ class Base_Sim(object):
             env_dict["com_pos"][1::2] -= env_dict["pusher_pos"][1]
         
         return env_dict
-
-    def get_env_state(self, rel=True):
-        """
-        Return the environment state.
-        """
-        env_dict = {
-            "state": self.get_kp_state(),
-            "pusher_pos": self.get_pusher_position(),
-            "action": self.velocity,
-        }
-        if rel:
-            env_dict["state"][0::2] -= env_dict["pusher_pos"][0]
-            env_dict["state"][1::2] -= env_dict["pusher_pos"][1]
-
-        env_state = np.concatenate([env_dict["state"], env_dict["pusher_pos"], env_dict["action"]], axis=0)
-        return env_state, env_dict
 
     def wait(self, time):
         """

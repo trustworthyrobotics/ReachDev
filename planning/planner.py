@@ -17,14 +17,14 @@ class SamplingPlannerBase(eqx.Module):
     """
 
     # core dims/limits
-    action_dim:int
-    horizon:int
-    n_sample:int
-    n_update_iter:int
+    action_dim:int = eqx.field(static=True)
+    horizon:int = eqx.field(static=True)
+    n_sample:int = eqx.field(static=True)
+    n_update_iter:int = eqx.field(static=True)
     action_lower_lim:Array
     action_upper_lim:Array
-    use_last:bool
-    reject_bad:bool
+    use_last:bool = eqx.field(static=True)
+    reject_bad:bool = eqx.field(static=True)
 
     # external functions
     rollout_fn:Callable
@@ -90,10 +90,10 @@ class MPPIPlanner(SamplingPlannerBase):
           If True, return the softmax-weighted mean trajectory as the final candidate.
           The best sampled trajectory is always returned in 'act_seq_best'.
     """
-    reward_weight: float
-    noise_level: float
-    noise_decay: float
-    beta_filter: float
+    reward_weight: float = eqx.field(static=True)
+    noise_level: float = eqx.field(static=True)
+    noise_decay: float = eqx.field(static=True)
+    beta_filter: float = eqx.field(static=True)
 
     def __init__(self, config:dict, model_rollout_fn: Callable, evaluate_traj_fn: Callable, action_lower_lim: Array, action_upper_lim: Array):
         super().__init__(config, model_rollout_fn, evaluate_traj_fn, action_lower_lim, action_upper_lim)
@@ -192,12 +192,11 @@ class MPPIPlanner(SamplingPlannerBase):
         )
 
         # choose output action sequence
-        act_seq_choice = jax.lax.cond(
-            self.use_last,
-            lambda _: final_mean,
-            lambda _: best_seq,
-            operand=None,
-        )
+        if self.use_last:
+            act_seq_choice = final_mean
+        else:
+            act_seq_choice = best_seq
+        act_seq_choice = self._clip_actions(act_seq_choice)
         rewards, _aux = self._evaluate(state_cur, act_seq_choice[None,...], *args, **kwargs)  # (B,)
         state_seq = _aux["model_out"][0]  # (H,Ds)
         rewards = rewards[0]
@@ -226,13 +225,13 @@ class CEMPlanner(SamplingPlannerBase):
         - mean_momentum: float in [0,1] (default 0.0)  # EMA on mean updates
         - cov_momentum: float in [0,1] (default 0.0)   # EMA on covariance updates
     """
-    elite_ratio: float
-    min_n_elites: int
-    use_full_cov: bool
-    cov_jitter: float
-    init_cov_scale: float
-    mean_momentum: float
-    cov_momentum: float
+    elite_ratio: float = eqx.field(static=True)
+    min_n_elites: int = eqx.field(static=True)
+    use_full_cov: bool = eqx.field(static=True)
+    cov_jitter: float = eqx.field(static=True)
+    init_cov_scale: float = eqx.field(static=True)
+    mean_momentum: float = eqx.field(static=True)
+    cov_momentum: float = eqx.field(static=True)
 
     def __init__(self, config:dict, model_rollout_fn: Callable, evaluate_traj_fn: Callable, action_lower_lim: Array, action_upper_lim: Array):
         super().__init__(config, model_rollout_fn, evaluate_traj_fn, action_lower_lim, action_upper_lim)
@@ -313,7 +312,7 @@ class CEMPlanner(SamplingPlannerBase):
         H, Du = self.horizon, self.action_dim
         P = H*Du
         B = self.n_sample
-        n_elite = jnp.maximum(int(self.elite_ratio*B), self.min_n_elites)
+        n_elite = int(max(int(self.elite_ratio * self.n_sample), self.min_n_elites))
 
         mean0, cov0 = self._init_mean_cov(init_action_seq)
 
@@ -376,20 +375,18 @@ class CEMPlanner(SamplingPlannerBase):
             one_iter, carry0, jnp.arange(self.n_update_iter)
         )
 
-        # final candidate = mean of the last iteration (standard CEM practice)
-        final_seq = jnp.clip(self._unflatten(meanT), self.action_lower_lim[None, :], self.action_upper_lim[None, :],)
-        # evaluate the final candidate (optional)
-        best_rewards_final, aux_final = self._evaluate(state_cur, final_seq[None, ...], *args, **kwargs)  # (1,)
+        if self.use_last:
+            # final candidate = mean of the last iteration (standard CEM practice)
+            act_seq_choice = jnp.clip(self._unflatten(meanT), self.action_lower_lim[None, :], self.action_upper_lim[None, :],)
+        else:
+            final_seq = jnp.clip(self._unflatten(meanT), self.action_lower_lim[None, :], self.action_upper_lim[None, :],)
+            # evaluate the final candidate (optional)
+            best_rewards_final, aux_final = self._evaluate(state_cur, final_seq[None, ...], *args, **kwargs)  # (1,)
 
-        final_vs_tracked_better = best_rewards_final[0] >= best_rewardT
-        act_seq_best = jax.lax.select(final_vs_tracked_better, final_seq, self._unflatten(best_sampleT))
+            final_vs_tracked_better = best_rewards_final[0] >= best_rewardT
+            act_seq_choice = jax.lax.select(final_vs_tracked_better, final_seq, self._unflatten(best_sampleT))
 
-        act_seq_choice = jax.lax.cond(
-            self.use_last,
-            lambda _: final_seq,
-            lambda _: act_seq_best,
-            operand=None,
-        )
+        act_seq_choice = self._clip_actions(act_seq_choice)
         rewards, _aux = self._evaluate(state_cur, act_seq_choice[None,...], *args, **kwargs)  # (B,)
         state_seq = _aux["model_out"][0]  # (H,Ds)
         rewards = rewards[0]

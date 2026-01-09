@@ -6,6 +6,7 @@ import hydra
 from omegaconf import DictConfig
 import jax
 import jax.numpy as jnp
+import equinox as eqx
 from pyparsing import Dict
 import json
 
@@ -55,10 +56,13 @@ def get_pusher_pos_seq(pusher_start_pos, act_seqs):
     pusher_pos_seqs, _ = jax.lax.scan(body_fn, pusher_pos_seqs, jnp.arange(horizon))
     return pusher_pos_seqs
 
-def get_abs_states(state_seqs, pusher_start_pos, act_seqs):
+def get_abs_states(state_seqs, pusher_start_pos, act_seqs, pred_mode="state"):
     pusher_pos_seqs = get_pusher_pos_seq(pusher_start_pos, act_seqs)
-    abs_state_seqs = state_seqs.at[:, :, ::2].add(pusher_pos_seqs[:, 1:, 0:1])
-    abs_state_seqs = abs_state_seqs.at[:, :, 1::2].add(pusher_pos_seqs[:, 1:, 1:2])
+    if pred_mode == "pose":
+        abs_state_seqs = state_seqs.at[:, :, 0:2].add(pusher_pos_seqs[:, 1:, 0:2])
+    else:
+        abs_state_seqs = state_seqs.at[:, :, ::2].add(pusher_pos_seqs[:, 1:, 0:1])
+        abs_state_seqs = abs_state_seqs.at[:, :, 1::2].add(pusher_pos_seqs[:, 1:, 1:2])
     return abs_state_seqs, pusher_pos_seqs
 
 @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
@@ -70,7 +74,9 @@ def main(config: DictConfig):
     num_test = planning_config["num_test"]
     init_pusher_pos_list, init_pose_list, target_pusher_pos_list, target_pose_list = generate_test_cases(seed, num_test)
 
-    model = load_model(data_config=data_config, train_config=train_config, model_class=T_Dynamics, model_dir=train_config["out_dir"], mode="best")
+    dt_dyn = load_model(data_config=data_config, train_config=train_config, model_class=T_Dynamics, model_dir=planning_config["dt_dyn_dir"], mode="best")
+    abs_pose = dt_dyn.abs_pose
+    pred_mode = dt_dyn.pred_mode
     param_dict = {"stem_size": data_config["stem_size"], 
                 "bar_size": data_config["bar_size"], 
                 "pusher_size": data_config["pusher_size"],
@@ -80,7 +86,7 @@ def main(config: DictConfig):
 
     action_bound = planning_config["action_bound"]
     scale = float(data_config["scale"])
-    state_dim, action_dim = data_config["state_dim"], data_config["action_dim"]
+    state_dim, pose_dim, action_dim = data_config["state_dim"], data_config["pose_dim"], data_config["action_dim"]
     action_lower_lim = -action_bound * jnp.ones((action_dim,)) / scale
     action_upper_lim = action_bound * jnp.ones((action_dim,)) / scale
     
@@ -92,12 +98,15 @@ def main(config: DictConfig):
     # [n_his=1, state_dim], [n_sample, horizon, action_dim] -> [n_sample, horizon, state_dim]
     def rollout_fn(state_cur: jnp.ndarray, act_seqs: jnp.ndarray) -> jnp.ndarray:
         state_cur = state_cur[None].repeat(act_seqs.shape[0], axis=0)
-        state_seqs = model.rollout(state_cur, act_seqs)
+        state_seqs = dt_dyn.rollout(state_cur, act_seqs)
         return state_seqs
 
     # assume all are scaled
     def reward_fn(state_seqs: jnp.ndarray, act_seqs: jnp.ndarray, target_state: jnp.ndarray, pusher_pos: jnp.ndarray) -> Dict:
-        abs_state_seqs, _ = get_abs_states(state_seqs, pusher_pos, act_seqs)
+        if abs_pose:
+            abs_state_seqs = state_seqs[..., :-act_seqs.shape[-1]]
+        else:
+            abs_state_seqs, _ = get_abs_states(state_seqs, pusher_pos, act_seqs, pred_mode=pred_mode)
 
         cost_seqs = jnp.linalg.norm(abs_state_seqs - target_state[None, None, :], axis=-1, ord=cost_norm) ** cost_norm
         if only_final_cost:
@@ -121,37 +130,52 @@ def main(config: DictConfig):
         print(f"  Target pusher pos: {target_pusher_pos}")
         print(f"  Target pose: {target_pose}")
 
-        init_state, target_state = generate_init_target_states(
-            init_pose, target_pose, param_dict={"stem_size": data_config["stem_size"], "bar_size": data_config["bar_size"]}
-        )
-        scaled_target_state = target_state / scale
-
+        if pred_mode == "pose":
+            target_state = target_pose
+            scaled_target_state = target_state / scale
+            scaled_target_state[2] = target_state[2]  # do not scale angle
+        else:
+            init_state, target_state = generate_init_target_states(
+                init_pose, target_pose, param_dict={"stem_size": data_config["stem_size"], "bar_size": data_config["bar_size"]}
+            )
+            scaled_target_state = target_state / scale
+        scaled_target_state = jnp.array(scaled_target_state)
         env = T_Sim(param_dict=param_dict, init_poses=[init_pose], target_poses=[target_pose], pusher_pos=init_pusher_pos)
         for i in range(2):
             env_dict = env.update((init_pusher_pos[0], init_pusher_pos[1]), rel=False)
             env_state = np.concatenate([env_dict["state"][:state_dim], env_dict["pusher_pos"]], axis=0)
-        planner = CEMPlanner(config, rollout_fn, reward_fn, action_lower_lim, action_upper_lim)
+        # planner = CEMPlanner(config, rollout_fn, reward_fn, action_lower_lim, action_upper_lim)
+        planner = MPPIPlanner(config, rollout_fn, reward_fn, action_lower_lim, action_upper_lim)
 
         # executtion loop
         planning_res_list = []
         gt_states = [env_state.tolist()]
         t = 0
         while t < max_steps:
-            env_state, env_dict = env.get_env_state(False)
-            env_state = jnp.array(env_state) / scale
-            pusher_pos = env_state[state_dim : state_dim + 2]
-            state_cur = env_state[:state_dim]
-            # relative to pusher
-            state_cur = state_cur.at[::2].add(-pusher_pos[0])
-            state_cur = state_cur.at[1::2].add(-pusher_pos[1])
+            env_dict = env.get_env_state(not abs_pose)
+            pusher_pos = jnp.array(env_dict["pusher_pos"]) / scale
+            if pred_mode == "pose":
+                state_cur = jnp.array(np.concatenate([env_dict["com_pos"] / scale, env_dict["angle"]], axis=0))
+            else:
+                state_cur = jnp.array(env_dict["state"][:state_dim]) / scale
+            if abs_pose:
+                state_cur = jnp.concatenate([state_cur, pusher_pos], axis=0)
             key = jax.random.PRNGKey(seed + t)
             init_act_seq = jax.random.uniform(key,(horizon, action_dim),minval=action_lower_lim,maxval=action_upper_lim,)
-            planning_res = planner.trajectory_optimization(key, state_cur, init_act_seq, skip=False, target_state=scaled_target_state, pusher_pos=pusher_pos)
+            # with jax.disable_jit():
+            #     planning_res = eqx.filter_jit(planner.trajectory_optimization)(key, state_cur, init_act_seq, skip=False, target_state=scaled_target_state, pusher_pos=pusher_pos)
+            planning_res = eqx.filter_jit(planner.trajectory_optimization)(key, state_cur, init_act_seq, skip=False, target_state=scaled_target_state, pusher_pos=pusher_pos)
             act_seq = planning_res["act_seq"] * scale  # (horizon, action_dim)
             state_seq = planning_res["state_seq"] * scale  # (horizon, state_dim)
-            abs_state_seq, pusher_pos_seq = get_abs_states(state_seq[None, :, :], pusher_pos * scale, act_seq[None, :, :])
-            abs_state_seq = abs_state_seq[0]
-            pusher_pos_seq = pusher_pos_seq[0]
+            if pred_mode == "pose":
+                state_seq = state_seq.at[:, pose_dim - 1].set(state_seq[:, pose_dim - 1]/scale)  # do not scale angle
+            if abs_pose:
+                abs_state_seq = jnp.concatenate([state_cur[None, :], state_seq], axis=0)
+                pusher_pos_seq = abs_state_seq[:, -action_dim:]
+            else:
+                abs_state_seq, pusher_pos_seq = get_abs_states(state_seq[None, :, :], pusher_pos * scale, act_seq[None, :, :], pred_mode=pred_mode)
+                abs_state_seq = abs_state_seq[0]
+                pusher_pos_seq = pusher_pos_seq[0]
             res = {
                 "time_step": t,
                 "act_seq": act_seq.tolist(),
@@ -163,10 +187,13 @@ def main(config: DictConfig):
             for step in range(n_act_step):
                 next_pusher_pos = pusher_pos_seq[step + 1, :]
                 env_dict = env.update((next_pusher_pos[0], next_pusher_pos[1]), rel=False)
-                env_state = np.concatenate([env_dict["state"][:state_dim], env_dict["pusher_pos"]], axis=0)
+                if pred_mode == "pose":
+                    env_state = np.concatenate([np.array(env_dict["com_pos"]), np.array(env_dict["angle"]), env_dict["pusher_pos"]], axis=0)
+                else:
+                    env_state = np.concatenate([env_dict["state"][:state_dim], env_dict["pusher_pos"]], axis=0)
                 t += 1
                 gt_states.append(env_state.tolist())
-                step_cost = step_cost_fn(env_state[:state_dim], target_state)
+                step_cost = step_cost_fn(env_state[:-action_dim], target_state)
                 print(f"   step {t} cost: {step_cost}, action: {env_dict['action']}")
                 if t >= max_steps:
                     break

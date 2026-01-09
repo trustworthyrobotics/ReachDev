@@ -42,7 +42,7 @@ data:
   enlarge_factor_for_gen: 4
 
 train_dt_dyn:
-  out_dir: "output/runs/${settings.task_name}"
+  out_dir: "output/runs/${settings.task_name}_dt_dyn"
   data_dir: "output/data/${settings.task_name}_freq1_${train_dt_dyn.abs_pose}"
   data_augment: False
   pred_mode: "pose" # {"state","pose"}
@@ -186,9 +186,10 @@ train_ct_ctl:
 
 planning:
   out_path: "output/planning/${settings.task_name}"
+  dt_dyn_dir: "output/runs/${settings.task_name}_dt_dyn/nt_log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_True_20260108_045325"
   horizon: 15
   max_steps: 20
-  n_act_step: 6
+  n_act_step: 1
   num_test: 1
   action_bound: 30
   cost_norm: 1
@@ -199,8 +200,8 @@ planning:
   use_last: False
   reject_bad: True
   mppi:
-    reward_weight: 1.0
-    noise_level: 0.05
+    reward_weight: 50
+    noise_level: 0.2
     # noise_decay: 0.95
     # beta_filter: 0.7
   cem:
