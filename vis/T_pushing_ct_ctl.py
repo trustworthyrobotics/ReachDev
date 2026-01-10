@@ -13,7 +13,7 @@ import hydra
 from omegaconf import DictConfig
 import yaml
 
-from models.mlp_utils import load_model
+from models.load import load_model
 from models.ct_dyn import Continuous_T_Dynamics
 from models.ct_ctl import T_controller
 from utils.T_pushing import pose_to_kp
@@ -116,13 +116,10 @@ def main(config: DictConfig):
         eval_p_path = os.path.join(data_dir, "data_eval.p")
     else:
         eval_p_path = os.path.join(data_dir, "data.p")
-    model = load_model(data_config=data_cfg, train_config=train_cfg, model_class=T_controller, model_dir=model_dir, mode="best")
+    model: T_controller = load_model(model_dir=model_dir, model_type="ct_ctl", mode="best")
 
     ct_dyn_dir = data_cfg["ct_ctl"]["model_dir"]
-    ct_dyn_config_path = os.path.join(ct_dyn_dir, "config.yaml")
-    with open(ct_dyn_config_path, "r") as f:
-        ct_dyn_config = yaml.safe_load(f)
-    ct_dyn = load_model(ct_dyn_config["data"], ct_dyn_config["train_ct_dyn"], model_class=Continuous_T_Dynamics, model_dir=ct_dyn_dir, mode="best")
+    ct_dyn: Continuous_T_Dynamics = load_model(model_dir=ct_dyn_dir, model_type="ct_dyn", mode="best")
 
     # -----------------------------
     # 2) Load eval data

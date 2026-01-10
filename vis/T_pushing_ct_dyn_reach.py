@@ -25,7 +25,7 @@ from CROWN_Reach.src.utils.box_set import calculate_volume, prepare_initial_set_
 sys.path.append('CROWN_Reach')
 from CROWN_Reach.src.reachability import CT_Plan_Reach
 from CROWN_Reach.src.utils.vis import visualize_flowpipe_time
-from models.mlp_utils import load_model
+from models.load import load_model
 from models.ct_dyn import Continuous_T_Dynamics
 from utils.T_pushing import pose_to_kp
 from envs.T_pushing.t_sim import T_Sim
@@ -258,7 +258,7 @@ def main(config: DictConfig):
         eval_p_path = os.path.join(data_dir, "data_eval.p")
     else:
         eval_p_path = os.path.join(data_dir, "data.p")
-    model = load_model(data_config, train_config, model_class=Continuous_T_Dynamics, model_dir=model_dir, mode="best")
+    model: Continuous_T_Dynamics = load_model(model_dir=model_dir, model_type="ct_dyn", mode="best")
 
     def f_wrapper(x):
         dx = model(x)

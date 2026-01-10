@@ -44,18 +44,18 @@ data:
 train_dt_dyn:
   out_dir: "output/runs/${settings.task_name}_dt_dyn"
   data_dir: ${data.dt_dyn.out_path}
-  data_augment: False
+  data_augment: True
   pred_mode: "pose" # {"state","pose"}
   train_valid_ratio: 0.9
   architecture: [96, 96, 96]
   abs_pose: ${data.abs_pose}
   delta_u: True
   n_history: 1
-  n_rollout_valid: 8
+  n_rollout_valid: 10
   horizon_scheduler:
     type: "log" # log, linear, const
     T_init: 1
-    T_final: 8
+    T_final: 10
     log_alpha: 1.0
   step_weight_ub: 2
   noise: 0.005 # std of the Gaussian noise to training data
@@ -71,20 +71,20 @@ train_dt_dyn:
     eps_init: 0.08
     eps_final: 0.05
     # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
-    weight: 0.002
+    weight: 0.001
     # batch_size: 8
   batch_size: 128
   lam_jac_reg: 0.0e-3 # jacobian regularization weight
   wandb:
     enabled: true
-    project: "${settings.task_name}_reach_pose_abs"
+    project: "${settings.task_name}_dt_dyn_abs"
     run_name: "nt_${train_dt_dyn.horizon_scheduler.type}_${train_dt_dyn.lr_scheduler.type}_${train_dt_dyn.batch_size}_${train_dt_dyn.reach.mode}_${train_dt_dyn.reach.every}_${train_dt_dyn.reach.after}_eps${train_dt_dyn.reach.eps_init}_${train_dt_dyn.reach.eps_final}_w${train_dt_dyn.reach.weight}_j${train_dt_dyn.lam_jac_reg}_${train_dt_dyn.delta_u}_${train_dt_dyn.abs_pose}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  
 
 train_ct_dyn:
-  out_dir: "output/runs/${settings.task_name}_${settings.train_mode}"
+  out_dir: "output/runs/${settings.task_name}_ct_dyn"
   data_dir: ${data.ct_dyn.out_path}
   data_augment: False
   pred_mode: "pose" # {"state","pose"}
@@ -144,13 +144,13 @@ train_ct_ctl:
   abs_pose: ${data.abs_pose}
   ref_action: False
   use_delta: True
-  loss_mode: "s"
+  loss_mode: "u"
   n_history: 1
   n_rollout_valid: 10
   horizon_scheduler:
     type: "log" # log, linear, const
-    T_init: 1
-    T_final: 15
+    T_init: 10
+    T_final: 10
     log_alpha: 1.0
   step_weight_ub: 2
   noise: 0.005 # std of the Gaussian noise to training data
@@ -158,7 +158,7 @@ train_ct_ctl:
     type: "cos" # cos, linear, const
     lr_init: 0.001
     lr_final: 0.0001
-  n_epoch: 15
+  n_epoch: 10
   reach:
     mode: "mid" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
@@ -185,17 +185,18 @@ train_ct_ctl:
     save_checkpoints: true       # save model checkpoints to wandb  
 
 test_models:
-  dt_dyn_dir: "${train_dt_dyn.out_dir}/nt_log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_True_20260108_045325"
-  # dt_dyn_dir: "${train_dt_dyn.out_dir}/nt_log_cos_128_none_1_0.6_eps0.08_0.05_w0.001_j0.0_True_True_20260108_001619"
+  dt_dyn_dir: "${train_dt_dyn.out_dir}/nt_log_cos_128_mid_1_0.6_eps0.08_0.05_w0.001_j0.0_True_True_20260109_214404"
+  # dt_dyn_dir: "${train_dt_dyn.out_dir}/nt_log_cos_128_none_1_0.6_eps0.08_0.05_w0.001_j0.0_True_True_20260109_214410"
   ct_dyn_dir: "${train_ct_dyn.out_dir}/lr0.003_mid_0.08_0.05_0.003_True_20260109_063851"
   ct_ctl_dir: "${train_ct_ctl.out_dir}/log_15_lr0.001_s_False_True_mid_0.08_0.05_0.002_True_20260109_174522"
+  # ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_u_False_True_mid_0.08_0.05_0.002_True_20260110_034731"
 
 planning:
-  out_path: "output/planning/${settings.task_name}/${planning.test_id}_${planning.disturbance.type}_${planning.disturbance.init}_${planning.disturbance.inter}_${planning.planner}_${planning.n_sample}"
+  out_path: "output/planning/${settings.task_name}/${planning.test_id}_${planning.disturbance.type}_${planning.disturbance.init}_${planning.disturbance.inter}_${planning.planner}_${planning.n_sample}_${planning.enable_ctl}"
   horizon: 15
   max_steps: 25
   n_act_step: 1
-  num_test: 20
+  num_test: 1
   test_id: 0
   action_bound: 30
 
@@ -203,6 +204,8 @@ planning:
     type: "uniform" # {"none","normal","uniform"}
     init: 0.05
     inter: 0.01
+
+  enable_ctl: false
 
   cost_norm: 1
   only_final_cost: False

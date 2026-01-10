@@ -76,10 +76,3 @@ class MLP(eqx.Module):
         return x
     __call__ = forward
 
-def load_model(data_config: dict, train_config: dict, model_class: eqx.Module, model_dir: str, mode: str="best") -> eqx.Module:
-    model_def = model_class(data_config, train_config)
-    assert mode in ["best", "last"], f"Unknown mode {mode} for loading model."
-    model_path = f"{model_dir}/{mode}_model.eqx"
-    with open(model_path, "rb") as f:
-        model = eqx.tree_deserialise_leaves(f, model_def)
-    return model

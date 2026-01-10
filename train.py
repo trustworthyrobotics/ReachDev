@@ -56,10 +56,9 @@ def main(config: DictConfig) -> None:
         elif train_mode == "ct_ctl":
             from models.ct_ctl import T_controller
             model = T_controller(data_cfg, tr_cfg, key=key)
-            from models.mlp_utils import load_model
-            from models.ct_dyn import Continuous_T_Dynamics
+            from models.load import load_model
             model_dir = data_cfg["ct_ctl"]["model_dir"]
-            ct_dyn = load_model(data_cfg, config[f"train_ct_dyn"], model_class=Continuous_T_Dynamics, model_dir=model_dir, mode="best")
+            ct_dyn = load_model(model_dir=model_dir, model_type="ct_dyn", mode="best")
         else:
             raise ValueError(f"Unknown train_mode: {train_mode}")
 

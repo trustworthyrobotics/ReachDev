@@ -21,6 +21,7 @@ class T_controller(eqx.Module):
     use_delta: bool = eqx.field(static=True)
     abs_pose: bool = eqx.field(static=True)
     pred_mode: str = eqx.field(static=True)
+    ctl_frequency: int = eqx.field(static=True)
 
     # ---- learnable parts ----
     mlp: MLP
@@ -58,7 +59,7 @@ class T_controller(eqx.Module):
             in_dim += self.Du
         self.Dr = self.Ds + self.Du if self.ref_act else self.Ds
         out_dim = self.Du  # predict action
-
+        self.ctl_frequency = int(train_cfg.get("ctl_frequency", 1))
         self.mlp = MLP(
             in_size=in_dim,
             out_size=out_dim,

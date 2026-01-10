@@ -182,6 +182,7 @@ class MSELossCtl(eqx.Module):
         X_curr = X[:, 0, :] # [B, Dx]
         X_tgt = X[:, -1, :model.Ds] # [B, Ds]
         U_ref = U.mean(axis=1)  # [B, Du]
+        # U_ref = jnp.zeros((X.shape[0], model.Du))  # [B, Du]
 
         def one_step_ctl_dyn(carry, _):
             X_curr = carry  # [B, Dx]

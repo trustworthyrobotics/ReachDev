@@ -112,6 +112,31 @@ def _maybe_augment_train(obs: np.ndarray,
     act_r = _rotate_2d(act, theta)                # [M, T, 2]
     return obs_r, pos_r, act_r
 
+def normalize_angles(episodes):
+    # episodes shape: [Batch, Time, State]
+    angles = episodes[:, :, -1]
+    
+    # 1. Map the starting angle of each batch to [0, 2*pi)
+    start_angles = angles[:, 0]
+    normalized_starts = start_angles % (2 * np.pi)
+    
+    # Calculate the shift needed for the start
+    shift = normalized_starts - start_angles
+    
+    # Apply initial shift to the entire trajectory to preserve relative motion
+    # We use [:, None] to broadcast the shift across the Time dimension
+    angles_shifted = angles + shift[:, None]
+    
+    # 2. Unwrap along the Time dimension (axis=1) to remove 2*pi jumps
+    # This ensures that if the object spins multiple times, 
+    # the angle becomes 3*pi, 4*pi etc. rather than jumping back to 0.
+    continuous_angles = np.unwrap(angles_shifted, axis=1)
+    
+    # Update the original array
+    episodes[:, :, -1] = continuous_angles
+    
+    return episodes
+
 # ---------- main loader ----------
 def load_dynamics_dataset(data_cfg: dict, train_cfg: dict,
                               phase: str,
@@ -136,7 +161,7 @@ def load_dynamics_dataset(data_cfg: dict, train_cfg: dict,
         episodes = pickle.load(fp)  # list of [T, 2K+4]
 
     scale = float(data_cfg["scale"])
-    episodes = [ep.astype(np.float32) / scale for ep in episodes]
+    episodes = np.array(episodes, dtype=np.float32) / scale
 
     T_ep = int(episodes[0].shape[0])
 
@@ -183,8 +208,29 @@ def load_dynamics_dataset(data_cfg: dict, train_cfg: dict,
         # Use a deterministic seed derived from config['settings']['seed'] but offset so it doesn't
         # collide with the final shuffle’s RNG usage.
         seed_aug = seed * 1664525 + 1013904223  # LCG-style mix
-        obs, pusher_pos, act = _maybe_augment_train(obs, pusher_pos, act,
-                                                    enabled=True, seed=seed_aug)
+        if pred_mode == "pose":
+            theta = np.random.default_rng(seed_aug).uniform(0.0, 2.0 * np.pi, size=(obs.shape[0],))
+            c, s = np.cos(theta), np.sin(theta)
+            def rotate_batch(arr: np.ndarray, c: np.ndarray, s: np.ndarray) -> np.ndarray:
+                x = arr[:, :, 0::2]
+                y = arr[:, :, 1::2]
+                xr = c[:, None, None] * x - s[:, None, None] * y
+                yr = s[:, None, None] * x + c[:, None, None] * y
+                arr[..., 0::2] = xr
+                arr[..., 1::2] = yr
+                return arr
+            obs[:, :, :2] = rotate_batch(obs[:, :, :2], c, s)
+            obs[:, :, -1] = obs[:, :, -1] + theta[:, None]  # rotate theta
+            pusher_pos = rotate_batch(pusher_pos, c, s) # [M, T, 2]
+            act = rotate_batch(act, c, s)                 # [M, T, 2]
+        else:
+            raise NotImplementedError("Data augmentation only implemented for 'pose' pred_mode")
+            obs, pusher_pos, act = _maybe_augment_train(obs, pusher_pos, act,
+                                                        enabled=True, seed=seed_aug)
+
+    if pred_mode == "pose":
+        # Normalize angles to be continuous over time
+        obs = normalize_angles(obs)
 
     # ---- Weights (ones) ----
     M = obs.shape[0]

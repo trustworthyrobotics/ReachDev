@@ -10,18 +10,14 @@ from jax_verify import IntervalBound, backward_crown_bound_propagation
 import equinox as eqx
 import yaml
 
-from models.mlp_utils import load_model
+from models.load import load_model
 from models.dt_dyn import T_Dynamics
 
 state_dim = 8
 action_dim = 2
 horizon = 3
 
-model_path = "output/runs/T_pushing_test/last_model.eqx"
-config_path = "configs/T_pushing_test.yaml"
-with open(config_path, 'r') as f:
-    config = yaml.safe_load(f)
-model=load_model(config["data"], config["train_dt_dyn"] if "train_dt_dyn" in config else config["train"], model_class=T_Dynamics, model_dir="output/runs/T_pushing_test", mode="best")
+model=load_model(model_dir="output/runs/T_pushing_test", model_type="dt_dyn", mode="best")
 
 def f(x):
     return model(x)
