@@ -5,7 +5,7 @@ from io import BytesIO
 import os
 import pickle
 import jax
-# jax.config.update('jax_platforms', 'cpu')
+jax.config.update('jax_platforms', 'cpu')
 jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 import equinox as eqx
@@ -91,11 +91,11 @@ def rel_to_abs_kp_plus_pusher(eps_denorm: np.ndarray) -> np.ndarray:
     return vis
 
 
-def main():
-    model_dir = "output/runs/T_pushing_ct_ctl/"
-    model_dir = model_dir + "log_10_lr0.001_st_False_True_mid_0.08_0.05_0.003_True_20260109_012133"
-    # model_dir = model_dir + "log_20_lr0.001_20260104_002216"
+@hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
+def main(config: DictConfig):
+    model_dir = config["test_models"]["ct_ctl_dir"]
     config_path = os.path.join(model_dir, "config.yaml")
+    # override config
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     data_cfg = config["data"]
@@ -203,9 +203,9 @@ def main():
     X_diff = np.abs(X_preds - X_gts)
     U_diff = np.abs(U_preds - U_gts)
     X_tgt_diff = X_diff[:, horizon::horizon]
-    print(f"kp state error mean: {X_diff.mean()}, max: {X_diff.max()}, action error mean: {U_diff.mean()}, max: {U_diff.max()}")
-    print(f"tagret kp state error mean: {X_tgt_diff.mean()}, max: {X_tgt_diff.max()}")
-
+    # print(f"kp state error mean: {X_diff.mean(axis=(0,2))}, max: {X_diff.max(axis=(0,2))}, action error mean: {U_diff.mean(axis=(0,2))}, max: {U_diff.max(axis=(0,2))}")
+    print(f"tagret kp state error mean: {X_tgt_diff.mean(axis=(0,2))}, max: {X_tgt_diff.max(axis=(0,2))}")
+    exit()
     if abs_pose:
         gt_vis = np.concatenate([eps_denorm[..., :state_dim], eps_denorm[..., state_dim+pose_dim:-action_dim]], axis=-1)         # [B,T,10]
         pred_vis = np.concatenate([X_preds, pusher_pos_preds], axis=-1)  # [B,T,10]

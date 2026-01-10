@@ -230,12 +230,11 @@ def plot_v2(trajs, pxy, scale, window_size, file_name, abs_pose):
     print(f"Plot saved to {file_name}")
     plt.close()
 
-# @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
-# def main(config: DictConfig):
-def main():
-    model_dir = "output/runs/T_pushing_ct_dyn/"
-    model_dir = model_dir + "lr0.003_mid_0.08_0.05_0.002_True_20260109_014023"
+@hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
+def main(config: DictConfig):
+    model_dir = config["test_models"]["ct_dyn_dir"]
     config_path = os.path.join(model_dir, "config.yaml")
+    # override config
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     data_config = config["data"]

@@ -246,12 +246,11 @@ class micic_controller:
 
     __call__ = forward_batchless_single_input
 
-# @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
-# def main(config: DictConfig):
-def main():
-    model_dir = "output/runs/T_pushing_ct_ctl/"
-    model_dir = model_dir + "log_10_lr0.001_st_False_True_mid_0.08_0.05_0.003_True_20260109_012133"
+@hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
+def main(config: DictConfig):
+    model_dir = config["test_models"]["ct_ctl_dir"]
     config_path = os.path.join(model_dir, "config.yaml")
+    # override config
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     data_config = config["data"]

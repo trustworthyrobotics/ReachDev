@@ -5,6 +5,8 @@ from io import BytesIO
 import os
 import pickle
 import jax
+jax.config.update('jax_platforms', 'cpu')
+jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 import equinox as eqx
 import hydra
@@ -88,17 +90,17 @@ def rel_to_abs_kp_plus_pusher(eps_denorm: np.ndarray) -> np.ndarray:
     return vis
 
 
-def main():
-    model_dir = "output/runs/T_pushing/"
-    model_dir = model_dir + "nt_log_cos_128_mid_1_0.6_eps0.08_0.05_w0.002_j0.0_True_True_20260108_045325"
+@hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
+def main(config: DictConfig):
+    model_dir = config["test_models"]["dt_dyn_dir"]
     config_path = os.path.join(model_dir, "config.yaml")
+    # override config
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     data_cfg = config["data"]
     train_cfg = config["train_dt_dyn"] if "train_dt_dyn" in config else config["train"]
     data_dir = train_cfg.get("data_dir", "output/data/T_pushing_freq1")
     # data_dir = "output/data/T_pushing_freq1_1_1"
-    model_dir = train_cfg["out_dir"]
     scale = float(data_cfg.get("scale", 1.0))  # data was normalized by /scale
     pred_mode = train_cfg.get("pred_mode", "state")
     stem_size = jnp.array(data_cfg["stem_size"])
@@ -135,10 +137,12 @@ def main():
     # U_t = (v_x, v_y) at time t; use first T-1 actions to predict next T-1 states.
     U_norm = eps_norm[:, :-1, -action_dim:]                    # [B,T-1,2] normalized velocities
     if pred_mode == "state":
-        x0_norm = eps_norm[:, 0, :state_dim]                   # [B,8]    normalized initial state
+        T_dim = state_dim
+        x_gt_norm = jnp.array(eps_norm[:, :, :state_dim])                   # [B,T,8]    normalized state
     elif pred_mode == "pose":
-        x0_norm = eps_norm[:, 0, state_dim:state_dim+pose_dim]                         # [B,3]     normalized initial state
-        x0_norm[:, -1] = x0_norm[:, -1] * scale  # denormalize angle
+        T_dim = pose_dim
+        x_gt_norm = jnp.array(eps_norm[:, :, state_dim:state_dim+pose_dim])                         # [B,T,3]     normalized state
+        x_gt_norm = x_gt_norm.at[:, :, -1].set(x_gt_norm[:, :, -1] * scale)  # denormalize angle
         def transform_fn(pose):
             B, T, D = pose.shape
             pose = pose.reshape(-1, D)
@@ -148,7 +152,9 @@ def main():
         raise ValueError(f"Unknown pred_mode: {pred_mode}")
 
     if abs_pose:
-        x0_norm = jnp.concatenate([x0_norm, eps_norm[:, 0, state_dim+pose_dim:-action_dim]], axis=-1)  # [B,10]
+        x_gt_norm = jnp.concatenate([x_gt_norm, eps_norm[:, :, state_dim+pose_dim:-action_dim]], axis=-1)  # [B,T_dim+2]
+
+    x0_norm = x_gt_norm[:, 0, :]                         # [B,T_dim/T_dim+2]     normalized initial state
 
     # ----------------- load model & rollout (batch) -----------------
     # rollout(x0: [B,Dx], U: [B,T-1,Du]) -> X_pred: [B,T-1,Dx]
@@ -157,6 +163,10 @@ def main():
     X_pred_full_norm = jnp.concatenate([x0_norm[:, None, :], X_pred_norm], axis=1)
     X_pred_full_denorm = X_pred_full_norm * scale
     
+    pred_diff = jnp.abs(X_pred_full_norm - x_gt_norm)[:, :, :T_dim]
+    mean_diff = jnp.mean(pred_diff, axis=(0)) # mean over B
+    print(f"Mean absolute error per dim over time: {mean_diff}")
+    exit()
     if pred_mode == "pose":
         # renormalize angle in predicted poses
         X_pred_full_denorm = X_pred_full_denorm.at[:, :, pose_dim-1].set(X_pred_full_denorm[:, :, pose_dim-1] / scale)
