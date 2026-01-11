@@ -18,6 +18,38 @@ def transform_polys_wrt_pose_2d(poly_list, pose):
 
     return transformed_poly_list
 
+def transform_polys_wrt_poses_2d(poly_list, poses):
+    """
+    poly_list: list of N arrays, each shape [V, 2] (V = vertices)
+    pose: array of shape (..., 3) where last dim is [x, y, angle]
+    """
+    poses = np.asanyarray(poses)
+    # Extract components: x, y shape (..., 1); angle shape (...)
+    x, y = poses[..., 0:1], poses[..., 1:2]
+    angle = poses[..., 2]
+
+    # Create rotation matrices: shape (..., 2, 2)
+    cos_a = np.cos(angle)
+    sin_a = np.sin(angle)
+    # Stack to create [[cos, -sin], [sin, cos]] for each pose
+    rotation_matrix = np.stack([
+        np.stack([cos_a, -sin_a], axis=-1),
+        np.stack([sin_a, cos_a], axis=-1)
+    ], axis=-2)
+
+    translation = np.stack([x, y], axis=-1) # shape (..., 1, 2)
+
+    transformed_poly_list = []
+    for vertices in poly_list:
+        # vertices: [V, 2]
+        # rotation_matrix: [..., 2, 2]
+        # Result of matmul: [..., V, 2]
+        # We use rotation_matrix.swapaxes(-1, -2) to act as .T on the last two dims
+        rotated = vertices @ rotation_matrix.swapaxes(-1, -2)
+        transformed_vertices = rotated + translation
+        transformed_poly_list.append(transformed_vertices)
+
+    return transformed_poly_list
 
 def get_rect_vertices(w, h):
     w /= 2

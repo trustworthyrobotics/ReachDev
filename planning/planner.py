@@ -110,6 +110,7 @@ class SamplingPlannerBase(eqx.Module):
                 "act_seq": init_action_seq,
                 "state_seq": state_seq,
                 "reward": rewards,
+                "aux": aux,
             }
         key, out = self.plan(key, state_cur, init_action_seq, *args, **kwargs)
         return out
@@ -245,6 +246,7 @@ class MPPIPlanner(SamplingPlannerBase):
             "reward": rewards,
             "iter_reward_max": logs["reward_max"],
             "iter_reward_mean": logs["reward_mean"],
+            "aux": _aux,
         }
         return key, out
 
@@ -439,7 +441,6 @@ class CEMPlanner(SamplingPlannerBase):
             "iter_reward_max": logs["reward_max"],
             "iter_reward_mean": logs["reward_mean"],
             "iter_elite_reward_mean": logs["elite_reward_mean"],
-            # You can also return covT/meanT if you want to inspect the final distribution:
-            # "final_mean_flat": meanT, "final_cov": covT,
+            "aux": _aux,
         }
         return key, out

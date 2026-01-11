@@ -7,7 +7,7 @@ import random
 import time
 
 from envs.T_pushing.base_sim import Base_Sim
-from envs.T_pushing.helper import transform_polys_wrt_pose_2d, get_rect_vertices, calculate_com, keypoints_to_pose_2d_SVD
+from envs.T_pushing.helper import transform_polys_wrt_pose_2d, get_rect_vertices, calculate_com, keypoints_to_pose_2d_SVD, transform_polys_wrt_poses_2d
 
 """ 
 main class for the T-shaped pushing task
@@ -50,7 +50,7 @@ class T_Sim(Base_Sim):
         mass = self.obj_mass  # Total mass of the T shape
 
         # Get vertices for stem and bar
-        stem_vertices, bar_vertices = self.get_t_comp_vertices()
+        stem_vertices, bar_vertices = get_t_comp_vertices(self.stem_size, self.bar_size)
 
         # Calculate moments for each part with equal mass distribution
         stem_square = stem_size[0] * stem_size[1]
@@ -84,10 +84,8 @@ class T_Sim(Base_Sim):
         return get_keypoints_from_pose(self.get_object_pose(index, target), self.param_dict, self.include_com)
 
     def get_object_vertices(self, index, target=False):
-        return transform_polys_wrt_pose_2d(self.get_t_comp_vertices(), self.get_object_pose(index, target))
+        return transform_polys_wrt_pose_2d(get_t_comp_vertices(self.stem_size, self.bar_size), self.get_object_pose(index, target))
 
-    def gen_vertices_from_pose(self, pose):
-        return transform_polys_wrt_pose_2d(self.get_t_comp_vertices(), pose)
 
     def get_current_state(self):
         obj_keypoints = self.get_all_object_keypoints()[0]
@@ -96,28 +94,34 @@ class T_Sim(Base_Sim):
         )
         return state.flatten()
 
-    def get_t_comp_vertices(self, flatten=False):
-        """
-        Get the vertices of the stem and bar of the T shape.
-        """
-        stem_size, bar_size = self.stem_size, self.bar_size
-        center_stem, center_bar, com = get_t_comp_centers(stem_size, bar_size)
-        center_stem = np.array(center_stem) - np.array(com)
-        center_bar = np.array(center_bar) - np.array(com)
-        stem_vertices = get_rect_vertices(*stem_size)
-        stem_vertices = stem_vertices + center_stem
-        if flatten:
-            stem_vertices = stem_vertices.flatten()
-        bar_vertices = get_rect_vertices(*bar_size)
-        bar_vertices = bar_vertices + center_bar
-        if flatten:
-            bar_vertices = bar_vertices.flatten()
-        return [stem_vertices.tolist(), bar_vertices.tolist()]
 
 
 """ 
 some helper functions
 """
+def get_t_comp_vertices(stem_size, bar_size, flatten=False):
+    """
+    Get the vertices of the stem and bar of the T shape.
+    """
+    center_stem, center_bar, com = get_t_comp_centers(stem_size, bar_size)
+    center_stem = np.array(center_stem) - np.array(com)
+    center_bar = np.array(center_bar) - np.array(com)
+    stem_vertices = get_rect_vertices(*stem_size)
+    stem_vertices = stem_vertices + center_stem
+    if flatten:
+        stem_vertices = stem_vertices.flatten()
+    bar_vertices = get_rect_vertices(*bar_size)
+    bar_vertices = bar_vertices + center_bar
+    if flatten:
+        bar_vertices = bar_vertices.flatten()
+    return [stem_vertices.tolist(), bar_vertices.tolist()]
+
+
+def gen_vertices_from_pose(stem_size, bar_size, pose):
+    return transform_polys_wrt_pose_2d(get_t_comp_vertices(stem_size, bar_size), pose)
+
+def gen_vertices_from_poses(stem_size, bar_size, poses):
+    return transform_polys_wrt_poses_2d(get_t_comp_vertices(stem_size, bar_size), poses)
 
 
 def generate_init_target_states(init_pose, target_pose, param_dict, include_com=False):

@@ -6,7 +6,7 @@ import jax
 jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 import equinox as eqx
-import json
+import pickle
 
 from envs.T_pushing.t_sim import generate_init_target_states, T_Sim
 from models.load import load_model
@@ -21,6 +21,7 @@ def main(config: DictConfig):
     data_config = config["data"]
     train_config = config["train_dt_dyn"]
     planning_config = config["planning"]
+    verbose = planning_config.get("verbose", False)
     seed = config["settings"]["seed"]
     num_test = planning_config["num_test"]
     test_id = planning_config.get("test_id", 0)
@@ -115,6 +116,7 @@ def main(config: DictConfig):
         gt_states = [env_state.tolist()]
         t = 0
         succeed = False
+        init_follow = True
         while t < max_steps:
             env_dict = env.get_env_state(not abs_pose)
             pusher_pos = jnp.array(env_dict["pusher_pos"]) / scale
@@ -145,24 +147,25 @@ def main(config: DictConfig):
             scaled_act_seq = planning_res["act_seq"]
             scaled_state_seq = planning_res["state_seq"]
             act_seq = scaled_act_seq * scale  # (horizon, action_dim)
-            state_seq = scaled_state_seq * scale  # (horizon, state_dim)
-            if pred_mode == "pose":
-                state_seq = state_seq.at[:, pose_dim - 1].set(state_seq[:, pose_dim - 1]/scale)  # do not scale angle
             if abs_pose:
                 abs_scaled_state_seq = jnp.concatenate([state_cur[None, :], scaled_state_seq], axis=0)
                 abs_state_seq = abs_scaled_state_seq * scale
+                if pred_mode == "pose":
+                    abs_state_seq = abs_state_seq.at[:, pose_dim - 1].set(abs_state_seq[:, pose_dim - 1]/scale)  # do not scale angle
                 pusher_pos_seq = abs_scaled_state_seq[:, -action_dim:] * scale
             else:
-                abs_state_seq, pusher_pos_seq = get_abs_states(state_seq[None, :, :], pusher_pos * scale, act_seq[None, :, :], pred_mode=pred_mode)
+                abs_state_seq, pusher_pos_seq = get_abs_states(scaled_state_seq * scale[None, :, :], pusher_pos * scale, act_seq[None, :, :], pred_mode=pred_mode)
                 abs_state_seq = abs_state_seq[0]
                 pusher_pos_seq = pusher_pos_seq[0]
             res = {
                 "time_step": t,
-                "act_seq": act_seq.tolist(),
-                "state_seq": abs_state_seq.tolist(),
-                "pusher_pos_seq": pusher_pos_seq.tolist(),
-                "reward": planning_res["reward"].tolist()
+                "act_seq": act_seq,
+                "state_seq": abs_state_seq,
+                "pusher_pos_seq": pusher_pos_seq,
+                "planning_res": planning_res,
             }
+            if verbose:
+                print(f"reach vol: {planning_res['aux']['eval_out']['reach_aux'].get('reach_vol', None)}")
             planning_res_list.append(res)
             for step in range(n_act_step):
                 sub_target = abs_scaled_state_seq[step + 1, :-action_dim]
@@ -170,10 +173,15 @@ def main(config: DictConfig):
                 sub_env_states = []
                 for ctl_step in range(ctl_frequency):
                     if enable_ctl:
-                        if (step_cost_fn(sub_target, state_cur[:-action_dim]) < 2e-1) and (not succeed):
+                        if (step_cost_fn(sub_target, state_cur[:-action_dim]) < 3e-1) and (init_follow):
                             next_action = ref_action
+                            if verbose:
+                                print("   skip controller")
                         else:
                             next_action = eqx.filter_jit(ct_ctl.forward_batchless)(state_cur, sub_target, ref_action)
+                            init_follow = False
+                            if verbose:
+                                print(f"   controller action: {next_action}")
                     else:
                         next_action = ref_action
                     next_pusher_pos = (pusher_pos + next_action) * scale
@@ -213,8 +221,9 @@ def main(config: DictConfig):
                 # step_cost = step_cost_fn_np(env_state[:-action_dim], target_state)
 
                 t += 1
-                gt_states.append(env_state.tolist())
-                print(f"   step {t} cost: {step_cost}, action: {env_dict['action']}")
+                gt_states.append(env_state)
+                if verbose:
+                    print(f"   step {t} cost: {step_cost}, action: {env_dict['action']}")
                 step_cost_list.append(step_cost)
                 if step_cost < 30:
                     succeed = True
@@ -229,12 +238,12 @@ def main(config: DictConfig):
         # np.save(planning_res_path, planning_res_list)
         # gt_states_path = os.path.join(out_dir, "gt_states.npy")
         # np.save(gt_states_path, np.array(gt_states))
-        planning_res_path = os.path.join(out_dir, f"planning_res_{i:04d}.json")
-        with open(planning_res_path, "w") as f:
-            json.dump(planning_res_list, f, indent=4, separators=(",", ": "))
-        gt_states_path = os.path.join(out_dir, f"gt_states_{i:04d}.json")
-        with open(gt_states_path, "w") as f:
-            json.dump(gt_states, f, indent=4, separators=(",", ": "))
+        planning_res_path = os.path.join(out_dir, f"planning_res_{i:04d}.pkl")
+        with open(planning_res_path, "wb") as f:
+            pickle.dump(planning_res_list, f)
+        gt_states_path = os.path.join(out_dir, f"gt_states_{i:04d}.pkl")
+        with open(gt_states_path, "wb") as f:
+            pickle.dump(gt_states, f)
         env.save_gif(os.path.join(out_dir, f"planning_vis_{i:04d}.gif"))
         env.close()
 

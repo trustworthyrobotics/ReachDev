@@ -183,12 +183,6 @@ class Base_Sim(object):
             all_vertices.append(self.get_object_vertices(i, target, **kwargs))
 
         return all_vertices
-
-    def gen_vertices_from_pose(self, pose, **kwargs):
-        """
-        Generate vertices from a pose.
-        """
-        raise NotImplementedError
     
     def get_kp_state(self):
         """

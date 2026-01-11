@@ -118,7 +118,8 @@ def make_rollout_and_reward_fns(
 
         reach_analyzer = DT_Plan_Reach(f_wrapper, state_dim=dt_dyn.Dx, action_dim=dt_dyn.Du, nn_dyn=True, n_steps_per_plan=1, step_size=1)
         eps = reach_config.get("eps", 0.05)
-        splits_cfg = reach_config.get("init_splits", {})
+        splits_cfg = reach_config.get("refine_splits", {})
+        reach_weight = reach_config.get("reach_weight", 0.1)
 
         _calculate_volume = lambda lo, up: calculate_volume(lo, up, union_init=False, mode='sum')
 
@@ -147,15 +148,17 @@ def make_rollout_and_reward_fns(
         X_lo, X_up = prepare_initial_set_v2(X_lo, X_up, splits_cfg=splits_cfg)
         B_reach = X_lo.shape[0]
 
-        _, r_lo, r_up, _, _ = reach_analyzer.verify(X_lo, X_up, n_total_steps=T, action_seq=act_seqs[:, None])
+        _, r_lo, r_up, _, _ = reach_analyzer.verify(X_lo, X_up, n_total_steps=T, action_seq=act_seqs.repeat(B_reach//B, axis=0)[:, None])
         r_lo = r_lo.reshape(B, B_reach//B, T + 1, -1)
         r_up = r_up.reshape(B, B_reach//B, T + 1, -1)
 
         reach_vol = jax.vmap(_calculate_volume)(r_lo, r_up)  # [B]
-        return {"reach_vol": reach_vol, "r_lo": r_lo, "r_up": r_up}
+        r_lo_agg = jnp.min(r_lo, axis=1)  # [B, T+1, Ds]
+        r_up_agg = jnp.max(r_up, axis=1)  # [B, T+1, Ds]
+        return {"reach_vol": reach_vol, "r_lo": r_lo_agg, "r_up": r_up_agg}
 
     # assume all are scaled
-    def reward_fn(state_seqs: jnp.ndarray, act_seqs: jnp.ndarray, use_reach: bool, aux: Dict, target_state: jnp.ndarray, pusher_pos: jnp.ndarray) -> Dict:
+    def reward_fn(state_seqs: jnp.ndarray, act_seqs: jnp.ndarray, use_reach: bool, reach_aux: Dict, target_state: jnp.ndarray, pusher_pos: jnp.ndarray) -> Dict:
         if abs_pose:
             abs_state_seqs = state_seqs[..., :-act_seqs.shape[-1]]
         else:
@@ -167,10 +170,11 @@ def make_rollout_and_reward_fns(
         else:
             step_weight = jnp.linspace(1, horizon + 1, horizon) / horizon
             costs = jnp.sum(cost_seqs * step_weight[None, :], axis=-1)
+        reach_loss = 0.0
         if use_reach:
-            reach_loss = jnp.log1p(aux["reach_vol"])
-            costs = costs + reach_loss  # penalize large reachable set
-        return {"rewards": -costs, "reward_seqs": -cost_seqs}
+            reach_loss = reach_weight * jnp.log1p(reach_aux["reach_vol"])
+            costs = reach_loss  # penalize large reachable set
+        return {"rewards": -costs, "reward_seqs": -cost_seqs, "reach_aux": reach_aux, "reach_loss": reach_loss}
 
     def step_cost_fn_np(state, target_state):
         return (np.linalg.norm(target_state - state, cost_norm)) ** cost_norm
@@ -179,3 +183,116 @@ def make_rollout_and_reward_fns(
         return (jnp.linalg.norm(target_state - state, cost_norm)) ** cost_norm
 
     return rollout_fn, reward_fn, step_cost_fn, step_cost_fn_np
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, PillowWriter
+
+def plot_planning_animation(polys_seqs, window_size=(500, 500), fps=10, save_path="plan.gif"):
+    """
+    polys_seqs: List of arrays, each [steps, horizon, vertices, 2]
+    """
+    fig, ax = plt.subplots()
+    # figsize=(window_size[0]/100, window_size[1]/100)
+    n_samples = polys_seqs.shape[0]
+    n_sim_steps = polys_seqs.shape[1] - 1
+    horizon = polys_seqs.shape[2] - 1
+    
+    # Setup Colormap for the horizon
+    colors = plt.cm.rainbow(np.linspace(0, 1, horizon))
+
+    def update(frame):
+        ax.clear()
+        ax.set_xlim(0, window_size[0])
+        ax.set_ylim(0, window_size[1])
+        ax.set_aspect('equal')
+        ax.grid(True, linestyle='--', alpha=0.5)
+        ax.set_title(f"Sim Step: {frame}")
+
+        # Iterate through different polygon types (stem, bar, etc.)
+        # 1. Plot Planned Horizon (Increasing transparency)
+        for t in range(1, horizon + 1):
+            for j in range(n_samples):
+                vertices = polys_seqs[j, frame, t]
+                alpha = 1.0 - (t / (horizon + 1)) # Fade out into the future
+                
+                poly = plt.Polygon(vertices, facecolor=colors[-t], 
+                                edgecolor='none', alpha=alpha * 0.8, zorder=horizon + 1-t)
+                ax.add_patch(poly)
+        for j in range(n_samples):
+            # 2. Plot Current State (Highlighted)
+            curr_vertices = polys_seqs[j, frame, 0]
+            curr_poly = plt.Polygon(curr_vertices, 
+                                    facecolor='darkred', 
+                                    edgecolor='none', linewidth=2, zorder=horizon + 1)
+            ax.add_patch(curr_poly)
+
+    ani = FuncAnimation(fig, update, frames=n_sim_steps + 1, repeat=False)
+    ani.save(save_path, writer=PillowWriter(fps=fps))
+    print(f"Animation saved to {save_path}")
+    plt.close()
+
+def merge_t_shape(stem_vertices, bar_vertices):
+    """
+    Assumes vertices are ordered [BL, BR, TR, TL] 
+    (Bottom-Left, Bottom-Right, Top-Right, Top-Left)
+    """
+    # Extract specific corners to create a single 8-point boundary
+    # This logic depends on your specific vertex ordering!
+    
+    merged_poly = np.concatenate([
+        stem_vertices[..., 0:1, :], # Stem Bottom Left
+        stem_vertices[..., 1:2, :], # Stem Bottom Right
+        stem_vertices[..., 2:3, :], # Stem Top Right
+        bar_vertices[..., 1:2, :],  # Bar Bottom Right
+        bar_vertices[..., 2:3, :],  # Bar Top Right
+        bar_vertices[..., 3:4, :],  # Bar Top Left
+        bar_vertices[..., 0:1, :],  # Bar Bottom Left
+        stem_vertices[..., 3:4, :], # Stem Top Left
+    ], axis=-2)
+    return merged_poly
+
+if __name__ == "__main__":
+    import pickle
+    pkl_file = "output/planning/T_pushing/0_uniform_0.05_0.01_mppi_1000_True/192930/planning_res_0000.pkl"
+    with open(pkl_file, "rb") as f:
+        data = pickle.load(f)
+
+    # parameters
+    stem_size = [30, 91]
+    bar_size = [120, 30]
+    window_size = [500, 500]
+    scale = 100
+
+    act_seqs = np.array([d["act_seq"] for d in data])
+    state_seqs = np.array([d["state_seq"] for d in data])[..., :3]
+    pusher_pos_seqs = np.array([d["pusher_pos_seq"] for d in data])
+
+    # r_lo_seqs, r_up_seqs: (n_sim_steps+1, horizon+1, 3)
+    r_lo_seqs = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['r_lo'] for d in data]).reshape((*state_seqs.shape[:2], -1))[..., :3]
+    r_up_seqs = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['r_up'] for d in data]).reshape((*state_seqs.shape[:2], -1))[..., :3]
+
+    r_lo_seqs[..., :2] = r_lo_seqs[..., :2] * scale
+    r_up_seqs[..., :2] = r_up_seqs[..., :2] * scale
+
+    # sample from r_lo_seqs and r_up_seqs
+    n_samples = 8
+    sample_states = np.random.uniform(size=(n_samples, *state_seqs.shape))
+    sample_state_seqs = r_lo_seqs[None] + sample_states * (r_up_seqs - r_lo_seqs)[None]
+
+    from envs.T_pushing.t_sim import gen_vertices_from_poses
+
+    # a list of arrays (1, n_sim_steps+1, horizon+1, n_vertices, 2). there are stem and bar polys with 4 vertices each
+    polys_seqs = np.array(gen_vertices_from_poses(stem_size, bar_size, state_seqs[None]))
+    # a list of arrays (n_samples, n_sim_steps+1, horizon+1, n_vertices, 2).
+    sample_polys_seqs = np.array(gen_vertices_from_poses(stem_size, bar_size, sample_state_seqs))
+
+    polys_seqs = merge_t_shape(*polys_seqs)
+    sample_polys_seqs = merge_t_shape(*sample_polys_seqs)
+
+    fps = 2
+    save_path = pkl_file.replace(".pkl", ".gif")
+    plot_planning_animation(polys_seqs, window_size=window_size, fps=fps, save_path=save_path)
+    save_path = pkl_file.replace(".pkl", "_sample.gif")
+    plot_planning_animation(sample_polys_seqs, window_size=window_size, fps=fps, save_path=save_path)
+    pass
