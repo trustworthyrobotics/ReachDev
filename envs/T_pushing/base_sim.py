@@ -273,6 +273,15 @@ class Base_Sim(object):
         
         return self.get_env_state(rel)
 
+    def force_update(self, deltas):
+        for i in range(len(deltas)):
+            obj_body = self.obj_list[i][0]
+            delta = deltas[i]
+            obj_body.position += Vec2d(delta[0], delta[1])
+            obj_body.angle += delta[2]
+        # self.wait(self.step_dt * 10)
+        return
+
     def get_env_state(self, rel=True):
         """
         Return the environment state.

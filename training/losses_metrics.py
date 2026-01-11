@@ -207,7 +207,7 @@ class MSELossCtl(eqx.Module):
         if 's' in self.loss_mode:
             loss = loss + jnp.sum(mse_s * w)
         if 'u' in self.loss_mode:
-            loss = loss + jnp.sum(mse_u * w)
+            loss = loss + jnp.sum(mse_u * w) * 0.1
         if 't' in self.loss_mode:
             loss = loss + mse_t
 

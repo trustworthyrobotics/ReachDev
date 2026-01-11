@@ -4,6 +4,7 @@ from typing import Callable, Dict, Tuple, Optional
 
 import jax
 import jax.numpy as jnp
+import optax
 import equinox as eqx
 from jax import lax
 from jax.nn import softmax
@@ -25,6 +26,13 @@ class SamplingPlannerBase(eqx.Module):
     action_upper_lim:Array
     use_last:bool = eqx.field(static=True)
     reject_bad:bool = eqx.field(static=True)
+    reach_in_obj: bool = eqx.field(static=True)
+
+    # Optional gradient-based refinement
+    enable_refinement: bool = eqx.field(static=True, default=False)
+    lr: float = eqx.field(static=True, default=0.001)
+    n_refine_iter: int = eqx.field(static=True, default=10)
+    reach_in_obj_refine: bool = eqx.field(static=True)
 
     # external functions
     rollout_fn:Callable
@@ -45,20 +53,47 @@ class SamplingPlannerBase(eqx.Module):
 
         self.use_last      = bool(planning_config.get("use_last", True))
         self.reject_bad    = bool(planning_config.get("reject_bad", False))
+        self.reach_in_obj  = bool(planning_config.get("reach_in_obj", False))
+        refinement_config = planning_config.get("refinement", {})
+        self.enable_refinement = bool(refinement_config.get("enable", False))
+        self.lr = float(refinement_config.get("lr", 0.001))
+        self.n_refine_iter = int(refinement_config.get("n_iter", 10))
+        self.reach_in_obj_refine = bool(refinement_config.get("reach_in_obj", False))
 
     # ---- utilities shared by subclasses ----
     def _clip_actions(self, act:Array)->Array:
         """Clip actions into box limits."""
         return jnp.clip(act, self.action_lower_lim, self.action_upper_lim)
 
-    def _evaluate(self, state_cur:Array, act_seqs:Array, *args, **kwargs)->Tuple[Array,Dict]:
+    def _evaluate(self, state_cur:Array, act_seqs:Array, use_reach: bool, *args, **kwargs)->Tuple[Array,Dict]:
         """Rollout + evaluate; returns (rewards[B], aux_dict)."""
-        # rollout_fn expects: state_cur, action_seqs (B,H,Du)                # :contentReference[oaicite:16]{index=16}
-        state_seqs=self.rollout_fn(state_cur, act_seqs)
-        # eval_fn expects: state_seqs, action_seqs                           # :contentReference[oaicite:17]{index=17}
-        eval_out=self.eval_fn(state_seqs, act_seqs, *args, **kwargs)
+        # rollout_fn expects: state_cur, action_seqs (B,H,Du)
+        state_seqs, aux=self.rollout_fn(state_cur, act_seqs, use_reach)
+        # eval_fn expects: state_seqs, action_seqs
+        eval_out=self.eval_fn(state_seqs, act_seqs, use_reach, aux, *args, **kwargs)
         rewards=eval_out["rewards"]
         return rewards, {"model_out":state_seqs, "eval_out":eval_out}
+
+    def _GD_refine(self, state_cur:Array, act_seqs:Array, use_reach: bool, *args, **kwargs)->Tuple[Array,Array,Dict]:
+        """Optional gradient-based refinement."""
+        lr_schedule = optax.constant_schedule(self.lr)
+        optim = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(learning_rate=lr_schedule))
+        opt_state = optim.init(eqx.filter(act_seqs, eqx.is_inexact_array))
+        @eqx.filter_jit
+        def opt_step(act_seq, opt_state):
+            def loss_fn(_act_seq):
+                rewards, aux = self._evaluate(state_cur, _act_seq[None,...], use_reach, *args, **kwargs)
+                return -rewards.sum(), aux
+
+            (loss, aux), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(act_seq)
+            updates, opt_state = optim.update(grads, opt_state, params=eqx.filter(act_seq, eqx.is_inexact_array))
+            act_seq = eqx.apply_updates(act_seq, updates)
+            return act_seq, opt_state, loss, aux
+
+        for _ in range(self.n_refine_iter):
+            act_seqs, opt_state, loss, aux = opt_step(act_seqs, opt_state)
+        rewards, aux = self._evaluate(state_cur, act_seqs[None,...], use_reach, *args, **kwargs)
+        return act_seqs, rewards, aux
 
     # entry point for planners; subclasses must implement the algorithmic loop
     def plan(self, key:PRNGKey, state_cur:Array, init_action_seq:Array, *args, **kwargs)->Tuple[PRNGKey,Dict]:
@@ -68,7 +103,7 @@ class SamplingPlannerBase(eqx.Module):
     def trajectory_optimization(self, key:PRNGKey, state_cur:Array, init_action_seq:Array, skip:bool=False, *args, **kwargs)->Dict:
         if skip:
             # evaluate the given init_action_seq (1,H,Du)
-            rewards, aux = self._evaluate(state_cur, init_action_seq[None,...], *args, **kwargs)
+            rewards, aux = self._evaluate(state_cur, init_action_seq[None,...], self.reach_in_obj, *args, **kwargs)
             state_seq = aux["model_out"][0]  # (H,Ds)
             rewards = rewards[0]
             return {
@@ -158,7 +193,7 @@ class MPPIPlanner(SamplingPlannerBase):
             key, act_seqs = self._sample_action_sequences_default(key, mean_seq, nlvl)  # (B,H,Du)
 
             # rollout + evaluate
-            rewards, _aux = self._evaluate(state_cur, act_seqs, *args, **kwargs)  # (B,)
+            rewards, _aux = self._evaluate(state_cur, act_seqs, self.reach_in_obj, *args, **kwargs)  # (B,)
 
             # optional: reject_bad — keep previous better samples elementwise
             if self.reject_bad:
@@ -197,7 +232,10 @@ class MPPIPlanner(SamplingPlannerBase):
         else:
             act_seq_choice = best_seq
         act_seq_choice = self._clip_actions(act_seq_choice)
-        rewards, _aux = self._evaluate(state_cur, act_seq_choice[None,...], *args, **kwargs)  # (B,)
+        if self.enable_refinement:
+            act_seq_choice, rewards, _aux = self._GD_refine(state_cur, act_seq_choice, self.reach_in_obj_refine, *args, **kwargs)
+        else:
+            rewards, _aux = self._evaluate(state_cur, act_seq_choice[None,...], self.reach_in_obj, *args, **kwargs)  # (B,)
         state_seq = _aux["model_out"][0]  # (H,Ds)
         rewards = rewards[0]
 
@@ -334,7 +372,7 @@ class CEMPlanner(SamplingPlannerBase):
             )
 
             # evaluate
-            rewards, _ = self._evaluate(state_cur, A, *args, **kwargs)           # (B,)
+            rewards, _ = self._evaluate(state_cur, A, self.reach_in_obj, *args, **kwargs)           # (B,)
 
             # update best sample
             argmax = jnp.argmax(rewards)
@@ -381,13 +419,16 @@ class CEMPlanner(SamplingPlannerBase):
         else:
             final_seq = jnp.clip(self._unflatten(meanT), self.action_lower_lim[None, :], self.action_upper_lim[None, :],)
             # evaluate the final candidate (optional)
-            best_rewards_final, aux_final = self._evaluate(state_cur, final_seq[None, ...], *args, **kwargs)  # (1,)
+            best_rewards_final, aux_final = self._evaluate(state_cur, final_seq[None, ...], self.reach_in_obj, *args, **kwargs)  # (1,)
 
             final_vs_tracked_better = best_rewards_final[0] >= best_rewardT
             act_seq_choice = jax.lax.select(final_vs_tracked_better, final_seq, self._unflatten(best_sampleT))
 
         act_seq_choice = self._clip_actions(act_seq_choice)
-        rewards, _aux = self._evaluate(state_cur, act_seq_choice[None,...], *args, **kwargs)  # (B,)
+        if self.enable_refinement:
+            act_seq_choice, rewards, _aux = self._GD_refine(state_cur, act_seq_choice, self.reach_in_obj_refine, *args, **kwargs)
+        else:
+            rewards, _aux = self._evaluate(state_cur, act_seq_choice[None,...], self.reach_in_obj, *args, **kwargs)  # (B,)
         state_seq = _aux["model_out"][0]  # (H,Ds)
         rewards = rewards[0]
 
