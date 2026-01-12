@@ -1,0 +1,52 @@
+settings:
+  seed: 0
+  task_name: "quadrotor"
+  data_mode: "dt_dyn" # {"dt_dyn", "ct_ctl"}
+  train_mode: "dt_dyn" # {"dt_dyn", "ct_ctl"}
+
+data:
+  ct_state_dim: 12 # position + orientation + roll, pitch, yaw + roll, pitch, yaw rates
+  ct_action_dim: 3 # 3 or 4 (thrust + torques w/ or w/o yaw control)
+  ct_frequency: 200  # CT simulation frequency
+
+  dt_state_dim: 6 # position + velocity
+  dt_action_dim: 3 # velocity commands
+  dt_frequency: 5  # DT simulation frequency
+
+  action_bounds: [[-15.0, -1.0, -1.0], [15.0, 1.0, 1.0]] # min and max action limits
+  # action_bounds: [[-15.0, -1.0, -1.0, -0.5], [15.0, 1.0, 1.0, 0.5]] # min and max action limits for 4D action
+
+  ctl_frequency: 20  # CT controller frequency
+  pid_gains:
+    kp_vel: [0.1, 0.1, 0.1]
+    kp_att: [0.1, 0.1, 0.1]
+    kp_rate: [0.1, 0.1, 0.1]
+
+  g: 9.81
+  m: 1.4
+  J_x: 0.054
+  J_y: 0.054
+  J_z: 0.104
+  tau_phi: 0.0
+
+  ode_step_size_controller: 'pid'
+  dt_dyn:
+    out_path: "output/data/${settings.task_name}_freq${data.dt_dyn.frequency}"
+    num_episodes: 16000
+    episode_length: 5
+    num_workers: 48
+    frequency: ${data.dt_frequency} # DT dynamics frequency
+  # ct_ctl:
+  #   out_path: "output/data/${settings.task_name}_freq${data.ct_ctl.frequency}_ctl"
+  #   num_episodes: 16000
+  #   episode_length: 30
+  #   num_workers: 48
+  #   dyn_frequency: 10 # CT dynamics frequency
+  #   frequency: 10 # CT control frequency, should be equal to dyn_frequency or its divisor
+  training: True
+  saving: True
+  visualizing: False
+  gif: True
+  scale: 100 # normalize the data, (x,y)/scale
+  window_size: 500
+  enlarge_factor_for_gen: 4

@@ -20,6 +20,7 @@ class MLP(eqx.Module):
         in_size: Union[int, str],
         out_size: Union[int, str],
         hidden_size_list: Iterable[int],
+        activation: str = "relu",
         *,
         key: PRNGKey,
     ):
@@ -68,10 +69,18 @@ class MLP(eqx.Module):
         self.out_size = out_size
         self.hidden_size_list = hidden_size_list
         self.depth = depth
+        if activation == "relu":
+            self.activation = jax.nn.relu
+        elif activation == "tanh":
+            self.activation = jax.nn.tanh
+        elif activation == "sigmoid":
+            self.activation = jax.nn.sigmoid
+        else:
+            raise ValueError(f"Unsupported activation: {activation}")
 
     def forward(self, x: Array) -> Array:
         for layer in self.layers[:-1]:
-            x = jax.nn.relu(layer(x))
+            x = self.activation(layer(x))
         x = self.layers[-1](x)
         return x
     __call__ = forward

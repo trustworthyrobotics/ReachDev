@@ -254,7 +254,7 @@ def merge_t_shape(stem_vertices, bar_vertices):
 
 if __name__ == "__main__":
     import pickle
-    pkl_file = "output/planning/T_pushing/0_uniform_0.05_0.01_mppi_1000_True/192930/planning_res_0000.pkl"
+    pkl_file = "output/planning/T_pushing/0_uniform_0.05_0.01_mppi_1000_True/001407/planning_res_0000.pkl"
     with open(pkl_file, "rb") as f:
         data = pickle.load(f)
 

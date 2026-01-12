@@ -204,9 +204,9 @@ def main(config: DictConfig) -> None:
     data_config = config["data"]
     data_mode = config["settings"].get("data_mode", "dt_dyn")
     frequency = min(data_config[data_mode]["frequency"], 60)
-    if frequency != 60:
-        data_config[data_mode]["episode_length"] = data_config[data_mode]["episode_length"] * frequency
-        data_config[data_mode]["num_episodes"] = data_config[data_mode]["num_episodes"] // frequency
+
+    data_config[data_mode]["episode_length"] = data_config[data_mode]["episode_length"] * frequency
+    data_config[data_mode]["num_episodes"] = data_config[data_mode]["num_episodes"] // frequency
 
     num_episodes, training, visualizing, saving, gif = (
         data_config[data_mode]["num_episodes"],

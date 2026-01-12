@@ -137,6 +137,7 @@ def main(config: DictConfig):
             else:
                 noise = jnp.zeros((T_dim,))
             # state_cur = state_cur.at[0:T_dim].add(noise)
+            # env.force_update([[noise[0] * scale, noise[1] * scale, noise[2]]])  # apply disturbance
 
             key, subkey = jax.random.split(key)
             init_act_seq = jax.random.uniform(subkey,(horizon, action_dim),minval=action_lower_lim,maxval=action_upper_lim,)
@@ -173,7 +174,7 @@ def main(config: DictConfig):
                 sub_env_states = []
                 for ctl_step in range(ctl_frequency):
                     if enable_ctl:
-                        if (step_cost_fn(sub_target, state_cur[:-action_dim]) < 3e-1) and (init_follow):
+                        if (step_cost_fn(sub_target, state_cur[:-action_dim]) < 4e-1) and (init_follow):
                             next_action = ref_action
                             if verbose:
                                 print("   skip controller")
