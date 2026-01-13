@@ -19,6 +19,7 @@ class T_Dynamics(eqx.Module):
     Ds: int = eqx.field(static=True)
     Dx: int = eqx.field(static=True)
     Du: int = eqx.field(static=True)
+    frequency: float = eqx.field(static=True)
     n_history: int = eqx.field(static=True)
     delta_u: bool = eqx.field(static=True)
     arch: Tuple[int, ...] = eqx.field(static=True)
@@ -44,6 +45,7 @@ class T_Dynamics(eqx.Module):
         self.n_history = int(train_cfg["n_history"])
         assert self.n_history == 1, "n_history must be == 1."
         self.delta_u = bool(train_cfg.get("delta_u", False))
+        self.frequency = float(train_cfg.get("frequency", 10))
 
         self.pred_mode = str(train_cfg.get("pred_mode", "state"))
         if self.pred_mode == "state":

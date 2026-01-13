@@ -16,6 +16,7 @@ class Quad_Dynamics(eqx.Module):
     Dx: int = eqx.field(static=True)
     Dv: int = eqx.field(static=True)
     Du: int = eqx.field(static=True)
+    frequency: float = eqx.field(static=True)
     arch: Tuple[int, ...] = eqx.field(static=True)
     dt: float = eqx.field(static=True)
 
@@ -37,7 +38,8 @@ class Quad_Dynamics(eqx.Module):
         assert self.Du == 3
         assert self.Dx == 6
         self.Dv = 3  # velocity commands
-        self.dt = float(1 / data_cfg.get("dt_frequency", 5))
+        self.frequency = float(data_cfg.get("dt_frequency", 5))
+        self.dt = 1 / self.frequency
 
         in_dim = self.Dv + self.Du  # input: object state + action
         # even use abs_pose, no need to predict pusher position
@@ -107,3 +109,6 @@ class Quad_Dynamics(eqx.Module):
         U_tm = jnp.swapaxes(U[:, :T, :], 0, 1)  # (T,B,Du)
         _, X_seq = jax.lax.scan(step_fn, x0, U_tm)  # (T,B,Dx)
         return jnp.swapaxes(X_seq, 0, 1)  # (B,T,Dx)
+
+    def transform_fn(self, x: Array) -> Array:
+        return x

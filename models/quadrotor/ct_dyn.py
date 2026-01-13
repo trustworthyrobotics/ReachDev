@@ -15,6 +15,7 @@ class Continuous_Quad_Dynamics(eqx.Module):
     J_y: float = eqx.field(static=True)
     J_z: float = eqx.field(static=True)
     tau_phi: float = eqx.field(static=True)
+    frequency: float = eqx.field(static=True)
     dt: Array = eqx.field(static=True)
     dt0: Array = eqx.field(static=True)
     stepsize_controller: diffrax.PIDController = eqx.field(static=True)
@@ -28,9 +29,9 @@ class Continuous_Quad_Dynamics(eqx.Module):
         self.Du = data_cfg.get("ct_action_dim", 3)
         assert self.Dx == 12
         assert self.Du == 3 or self.Du == 4
-        frequency = data_cfg.get("ct_frequency", 60)
-        self.dt = jnp.array(1.0 / frequency, dtype=jnp.float32)
-        self.dt0 = jnp.array(self.dt / 5, dtype=jnp.float32)
+        self.frequency = float(data_cfg.get("ct_frequency", 60))
+        self.dt = 1 / self.frequency
+        self.dt0 = self.dt / 5
         self.g = data_cfg.get("g", 9.81)
         self.m = data_cfg.get("m", 1.4)
         self.J_x = data_cfg.get("J_x", 0.054)
@@ -158,3 +159,7 @@ class Continuous_Quad_Dynamics(eqx.Module):
         return self.dx(0.0, x, u)
     
     __call__ = forward_batchless_single_input
+
+    # it is only used for Jacobian regularization
+    def forward_batchless_for_jac(self, x: Array, u: Array) -> Array:
+        return self.dx(0.0, x, u)

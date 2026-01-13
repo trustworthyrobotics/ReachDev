@@ -118,6 +118,14 @@ class Quad_Sim_Ctl:
         return self.ct_sim.num_quads
 
     @property
+    def Dx(self):
+        return self.ct_sim.Dx
+
+    @property
+    def Du(self):
+        return self.ct_sim.Du
+
+    @property
     def curr_states(self):
         return self.ct_sim.curr_states
 
@@ -155,10 +163,7 @@ class Quad_Sim_Ctl:
             ct_step = self.ct_sim.update(u_low, n_sim_time=self.dt)
 
             # 3) log
-            step_data = {
-                "state": ct_step["state"],     # (num_quads, 12)
-                "action": v_cmds,               # (num_quads, 3)
-            }
+            step_data = ct_step
             self.add_history(step_data)
 
         return step_data
@@ -191,9 +196,9 @@ class Quad_Sim_DT:
     - Action: v_cmd (3D) at dt_frequency
     """
     def __init__(self, data_config: dict, num_quads: int = 1, init_poses=None, target_poses=None, controller=None):
-        self.Dx_dt = int(data_config.get("dt_state_dim", 6))
-        self.Du_dt = int(data_config.get("dt_action_dim", 3))
-        assert self.Dx_dt == 6 and self.Du_dt == 3
+        self.Dx = int(data_config.get("dt_state_dim", 6))
+        self.Du = int(data_config.get("dt_action_dim", 3))
+        assert self.Dx == 6 and self.Du == 3
 
         self.frequency = data_config.get("dt_frequency", 5)
         self.dt = 1.0 / self.frequency
@@ -213,7 +218,7 @@ class Quad_Sim_DT:
 
     def reset(self, init_poses=None, target_poses=None):
         if init_poses is None:
-            init_poses = jnp.zeros((self.num_quads, self.Dx_dt))
+            init_poses = jnp.zeros((self.num_quads, self.Dx))
         self.curr_states = init_poses
 
         if target_poses is not None:
@@ -221,9 +226,9 @@ class Quad_Sim_DT:
 
         # lift DT init -> CT init by padding remaining dims with zeros
         ct_Dx = self.ct_ctl_sim.ct_sim.Dx  # 12
-        ct_init = jnp.concatenate([init_poses, jnp.zeros((self.num_quads, ct_Dx - self.Dx_dt))], axis=-1)
+        ct_init = jnp.concatenate([init_poses, jnp.zeros((self.num_quads, ct_Dx - self.Dx))], axis=-1)
         ct_target = None if target_poses is None else jnp.concatenate(
-            [target_poses, jnp.zeros((self.num_quads, ct_Dx - self.Dx_dt))], axis=-1
+            [target_poses, jnp.zeros((self.num_quads, ct_Dx - self.Dx))], axis=-1
         )
 
         self.ct_ctl_sim.reset(ct_init, ct_target)
@@ -250,7 +255,7 @@ class Quad_Sim_DT:
             ct_step = self.ct_ctl_sim.update(v_cmds, n_sim_time=self.dt)
 
             # expose only DT state = first 6 dims of CT state
-            self.curr_states = ct_step["state"][:, :self.Dx_dt]
+            self.curr_states = ct_step["state"][:, :self.Dx]
 
             step_data = {
                 "state": self.curr_states,  # (num_quads, 6)

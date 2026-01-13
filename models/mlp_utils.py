@@ -9,11 +9,12 @@ Array = jnp.ndarray
 PRNGKey = jax.Array
 
 class MLP(eqx.Module):
-    layers: Tuple[Union[eqx.nn.Linear, Callable], ...]
-    in_size: Union[int, str]
-    out_size: Union[int, str]
-    hidden_size_list: Iterable[int]
-    depth: int
+    layers: Tuple[Union[eqx.nn.Linear, Callable], ...] = eqx.field(static=True)
+    in_size: Union[int, str] = eqx.field(static=True)
+    out_size: Union[int, str] = eqx.field(static=True)
+    hidden_size_list: Iterable[int] = eqx.field(static=True)
+    depth: int = eqx.field(static=True)
+    activation: Callable = eqx.field(static=True)
     """Standard Multi-Layer Perceptron; also known as a feed-forward network."""
     def __init__(
         self,

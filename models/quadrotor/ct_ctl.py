@@ -1,3 +1,4 @@
+from typing import List
 import jax
 import jax.numpy as jnp
 import equinox as eqx
@@ -5,17 +6,20 @@ import equinox as eqx
 from models.mlp_utils import MLP
 
 Array = jnp.ndarray
+PRNGKey = jax.Array
 
 class Base_Controller(eqx.Module):
     Dx: int = eqx.field(static=True, default=12)
     Du: int = eqx.field(static=True, default=3)
     Dv: int = eqx.field(static=True, default=3)  # velocity commands
+    Dr: int = eqx.field(static=True, default=3)
     action_bounds: Array = eqx.field(static=True)
 
     def __init__(self, data_cfg: dict):
         self.Dx = data_cfg.get("ct_state_dim", 12)
         self.Du = data_cfg.get("ct_action_dim", 3)
         self.Dv = data_cfg.get("dt_action_dim", 3)  # velocity commands
+        self.Dr = self.Dv # reference velocity commands
         if self.Du == 3:
             self.action_bounds = jnp.array(data_cfg.get("action_bounds", [[-15.0, -1.0, -1.0], [15.0, 1.0, 1.0]]))
         else:
@@ -97,16 +101,19 @@ class PID_Controller(Base_Controller):
 class MLP_Controller(Base_Controller):
     model: MLP
 
-    def __init__(self, data_cfg: dict, train_cfg: dict = {}):
+    def __init__(self, data_cfg: dict, train_cfg: dict, key: PRNGKey = jax.random.PRNGKey(0),):
         super().__init__(data_cfg)
         arch_list = train_cfg["architecture"]
         activation = train_cfg.get("activation", "relu")
         self.model = MLP(
             in_size=self.Dx + self.Dv,
             out_size=self.Du,
-            hidden_sizes=arch_list,
+            hidden_size_list=arch_list,
             activation=activation,
+            key=key,
         )
+    def _input_dims(self) -> List[int]:
+        return self.Dx, self.Dr
 
     def forward(self, x: Array, u: Array) -> Array:
         return jax.vmap(self.forward_batchless)(x, u)

@@ -47,4 +47,101 @@ data:
   training: True
   saving: True
   gif: false
-  # scale: 100 # normalize the data
+  scale: 1 # normalize the data
+
+train_dt_dyn:
+  out_dir: "output/runs/${settings.task_name}_dt_dyn"
+  data_dir: ${data.dt_dyn.out_path}
+  data_augment: False
+  train_valid_ratio: 0.9
+  architecture: [64, 64]
+  n_history: 1
+  n_rollout_valid: 10
+  horizon_scheduler:
+    type: "log" # log, linear, const
+    T_init: 1
+    T_final: 10
+    log_alpha: 1.0
+  step_weight_ub: 2
+  noise: 0.005 # std of the Gaussian noise to training data
+  lr_scheduler:
+    type: "cos" # cos, linear, const
+    lr_init: 0.001
+    lr_final: 0.0001
+  n_epoch: 20
+  reach:
+    mode: "none" # {"none","mid","after"}
+    every: 1 # only for "mid" and "after" mode, every N batches
+    after: 0.6 # only for "after" mode, after N*n_epoch epochs
+    eps_init: 0.08
+    eps_final: 0.05
+    # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
+    weight: 0.0015
+    # batch_size: 8
+  batch_size: 128
+  lam_jac_reg: 0.0e-3 # jacobian regularization weight
+  wandb:
+    enabled: false
+    project: "${settings.task_name}_dt_dyn"
+    run_name: "nt_${train_dt_dyn.horizon_scheduler.type}_${train_dt_dyn.lr_scheduler.type}_${train_dt_dyn.batch_size}_${train_dt_dyn.reach.mode}_eps${train_dt_dyn.reach.eps_init}_${train_dt_dyn.reach.eps_final}_w${train_dt_dyn.reach.weight}"
+    mode: "online"               # {"online","offline","disabled"}
+    log_every: 50                # log every N training iterations
+    save_checkpoints: true       # save model checkpoints to wandb  
+
+train_ct_ctl:
+  out_dir: "output/runs/${settings.task_name}_ct_ctl"
+  data_dir: ${data.ct_ctl.out_path}
+  data_augment: False
+  train_valid_ratio: 0.9
+  architecture: [64, 64, 64]
+  ctl_frequency: ${data.ct_ctl.frequency}
+  target_frequency: 1
+  loss_mode: "s"
+  n_history: 1
+  n_rollout_valid: 10
+  horizon_scheduler:
+    type: "log" # log, linear, const
+    T_init: 1
+    T_final: 10
+    log_alpha: 1.0
+  step_weight_ub: 2
+  noise: 0.005 # std of the Gaussian noise to training data
+  lr_scheduler:
+    type: "cos" # cos, linear, const
+    lr_init: 0.001
+    lr_final: 0.0001
+  n_epoch: 15
+  reach:
+    mode: "none" # {"none","mid","after"}
+    every: 1 # only for "mid" and "after" mode, every N batches
+    after: 0.6 # only for "after" mode, after N*n_epoch epochs
+    eps_init: 0.08
+    eps_final: 0.05
+    # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
+    weight: 0.001
+    # batch_size: 8
+    # below for CT reachability settings
+    init_remainder: ${reachability.init_remainder}
+    frr_rounds: ${reachability.frr_rounds}
+    frr_stop_ratio: ${reachability.frr_stop_ratio}
+    sr_window_size: ${reachability.sr_window_size}
+
+  batch_size: 128
+  lam_jac_reg: 0.0e-3 # jacobian regularization weight
+  wandb:
+    enabled: false
+    project: "${settings.task_name}_reach_ct_ctl_abs"
+    run_name: "${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}_${train_ct_ctl.loss_mode}_${train_ct_ctl.reach.mode}_${train_ct_ctl.reach.eps_init}_${train_ct_ctl.reach.eps_final}_${train_ct_ctl.reach.weight}"
+    mode: "online"               # {"online","offline","disabled"}
+    log_every: 50                # log every N training iterations
+    save_checkpoints: true       # save model checkpoints to wandb  
+
+reachability:
+  eps: 0.05
+  init_splits: {}
+  refine_splits: {0: 2, 1: 2, 2: 2}
+  # below for CT reachability settings
+  init_remainder: 5e-2
+  frr_rounds: 3
+  frr_stop_ratio: 0.95
+  sr_window_size: 100

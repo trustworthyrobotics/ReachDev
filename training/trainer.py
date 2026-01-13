@@ -28,7 +28,7 @@ class Trainer:
         cfg_full: Dict,
         seed: int = 0,
         logger: Optional[Logger] = None,
-        ct_dyn: Optional[eqx.Module] = None,
+        loss_fn = None,
     ):
         self.model = model
         self.train_loader = train_loader
@@ -94,23 +94,8 @@ class Trainer:
         self.reach_splits = reach_cfg.get("splits", {})
         self.reach_batch_size = int(reach_cfg.get("batch_size", self.batch_size))
 
-        if train_mode == "ct_ctl":
-            loss_class = TotalLossCtl
-            assert ct_dyn is not None, "ct_dyn must be provided for ct_ctl training."
-        else:
-            loss_class = TotalLoss
-        self.loss_fn = loss_class(
-            mode=train_mode,
-            state_dim=model.Dx,
-            action_dim=model.Du,
-            reach_cfg=reach_cfg,
-            dyn_frequency=float(cfg_full["data"]["ct_dyn"]["frequency"] if train_mode in {"ct_dyn", "ct_ctl"} else 1.0),
-            lam_jac=float(self.cfg.get("lam_jac_reg", 0.0)),
-            ct_dyn=ct_dyn if train_mode == "ct_ctl" else None,
-            reference_dim=model.Dr if train_mode == "ct_ctl" else None,
-            ctl_frequency=float(self.cfg["ctl_frequency"]) if train_mode == "ct_ctl" else None,
-            loss_mode=self.cfg.get("loss_mode", "s") if train_mode == "ct_ctl" else None,
-        )
+        assert loss_fn is not None, "loss_fn must be provided to Trainer."
+        self.loss_fn = loss_fn
 
         self._build_steps()
 

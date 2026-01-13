@@ -12,6 +12,7 @@ PRNGKey = jax.Array
 from models.dt_dyn import T_Dynamics
 
 class Continuous_T_Dynamics(T_Dynamics):
+    frequency: float = eqx.field(static=True)
     dt: Array = eqx.field(static=True)
     dt0: Array = eqx.field(static=True)
     stepsize_controller: diffrax.Controller = eqx.field(static=True)
@@ -24,6 +25,7 @@ class Continuous_T_Dynamics(T_Dynamics):
     ):
         super().__init__(data_cfg, train_cfg, key)
         frequency = train_cfg.get("frequency", 10)
+        self.frequency = float(frequency)
         self.dt = jnp.array(1.0 / frequency, dtype=jnp.float32)
         self.dt0 = jnp.array(self.dt / 5, dtype=jnp.float32)
         if train_cfg.get("ode_step_size_controller", "pid") == "const":

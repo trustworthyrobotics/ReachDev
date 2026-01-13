@@ -56,8 +56,12 @@ def main(config: DictConfig) -> None:
         for step in range(episode_length):
             v_cmds = vel_cmd_seq[step] # (num_quads, 3)
             env_dict = env.update(v_cmds, n_sim_time=env.dt)
-            eps_list.append(np.concatenate([env_dict["state"], env_dict["action"]], axis=-1))  # (num_quads, Dx+Du)
+            if data_mode == "dt_dyn":
+                eps_list.append(np.concatenate([env_dict["state"], env_dict["action"]], axis=-1))  # (num_quads, Dx+Du)
+            elif data_mode == "ct_ctl":
+                eps_list.append(np.concatenate([env_dict["state"], v_cmds, env_dict["action"]], axis=-1))  # (num_quads, Dx+Dv+Du)
         batch_data = np.stack(eps_list, axis=0)  # (episode_length, num_quads, Dx+Du)
+        batch_data[:-1, :, env.Dx:] = batch_data[1:, :, env.Dx:]  # shift actions
         batch_list.append(batch_data)
         if SAVE_IMG:
             env.visualize(out_path)

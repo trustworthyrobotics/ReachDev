@@ -16,6 +16,9 @@ Array = jnp.ndarray
 from models.dt_dyn import T_Dynamics
 from models.ct_dyn import Continuous_T_Dynamics
 from models.ct_ctl import T_controller
+from models.quadrotor.dt_dyn import Quad_Dynamics
+from models.quadrotor.ct_dyn import Continuous_Quad_Dynamics
+from models.quadrotor.ct_ctl import MLP_Controller
 
 # ----------------------------- utilities -----------------------------
 
@@ -213,6 +216,49 @@ class MSELossCtl(eqx.Module):
 
         return loss, {"mse": loss, "mse_s": mse_s.mean(), "mse_u": mse_u.mean(), "mse_t": mse_t}
 
+class MSELossCtl_quad(eqx.Module):
+    ct_dyn: Continuous_Quad_Dynamics = eqx.field(static=True)
+    loss_mode: str = eqx.field(static=True, default="s")
+
+    """Handles multi-step rollout control error."""
+    def __call__(self, model: MLP_Controller, X, U, step_weights):
+        # X: (B,T+1,Dx+Dv), U: (B,T,Du)
+        v_cmds = X[:, :-1, -model.Dv:]  # [B, T, Dv]
+        X = X[:, :, :-model.Dv]  # [B, T+1, Dx (4Dv)]
+
+        X_curr = X[:, 0, :] # [B, Dx]
+
+        def one_step_ctl_dyn(carry, xs):
+            X_curr = carry  # [B, Dx]
+            v_cmd = xs  # [B, Dv]
+            U_pred = model.forward(X_curr, v_cmd)  # [B, Du]
+            X_next = self.ct_dyn.forward(X_curr, U_pred)  # [B, Dx]
+            return X_next, (X_next, U_pred)
+
+        T = U.shape[1]
+        _, (X_preds, U_preds) = jax.lax.scan(one_step_ctl_dyn, X_curr, v_cmds.transpose(1, 0, 2), length=T)
+        X_preds = X_preds.transpose(1,0,2)  # [B, T, Dx]
+        U_preds = U_preds.transpose(1,0,2)  # [B, T, Du]
+
+        # Average over Batch and Dims
+        v_preds = X_preds[:, :, model.Dv: 2*model.Dv]  # [B, T, Dv]
+
+        mse_s = jnp.mean((X_preds - X[:, 1:, :])**2, axis=(0, 2))
+        mse_t = jnp.mean((v_preds - v_cmds)**2, axis=(0, 2)) # velocity command tracking
+        mse_u = jnp.mean((U_preds - U)**2, axis=(0, 2))
+
+        w = step_weights[:T]
+        w = w / jnp.sum(w)
+        loss = 0
+        if 's' in self.loss_mode:
+            loss = loss + jnp.sum(mse_s * w)
+        if 't' in self.loss_mode:
+            loss = loss + jnp.sum(mse_t * w)
+        if 'u' in self.loss_mode:
+            loss = loss + jnp.sum(mse_u * w)
+
+        return loss, {"mse": loss, "mse_s": mse_s.mean(), "mse_t": mse_t.mean(), "mse_u": mse_u.mean()}
+
 
 class TotalLossCtl(eqx.Module):
     mse_layer: MSELossCtl
@@ -255,3 +301,17 @@ class TotalLossCtl(eqx.Module):
             total_loss = total_loss + (self.lam_reach * l_reach)
             metrics.update(m_reach)
         return total_loss, metrics
+
+class TotalLossCtl_quad(TotalLossCtl):
+    mse_layer: MSELossCtl_quad
+
+    def __init__(self, mode: str, state_dim: int, action_dim: int, reach_cfg: dict, dyn_frequency: float, lam_jac: float, ct_dyn: Continuous_T_Dynamics, *args, **kwargs):
+        self.mse_layer = MSELossCtl_quad(ct_dyn, loss_mode=kwargs.get("loss_mode", "s"))
+        self.jac_layer = JacobianReg()
+        if reach_cfg.get("mode", "none") != "none":
+            self.reach_layer = ReachabilityPenalty(mode, state_dim, action_dim, reach_cfg, dyn_frequency, ct_dyn=ct_dyn, *args, **kwargs)
+        else:
+            self.reach_layer = None
+        self.lam_jac = lam_jac
+        self.lam_reach = reach_cfg.get("weight", 0.0)
+        self.reach_splits = reach_cfg.get("splits", {})
