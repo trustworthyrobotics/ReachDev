@@ -13,6 +13,8 @@ class Base_Controller(eqx.Module):
     Du: int = eqx.field(static=True, default=3)
     Dv: int = eqx.field(static=True, default=3)  # velocity commands
     Dr: int = eqx.field(static=True, default=3)
+    frequency: float = eqx.field(static=True, default=50.0)  # control frequency
+    dt: float = eqx.field(static=True, default=0.02)  # control timestep
     action_bounds: Array = eqx.field(static=True)
 
     def __init__(self, data_cfg: dict):
@@ -20,6 +22,8 @@ class Base_Controller(eqx.Module):
         self.Du = data_cfg.get("ct_action_dim", 3)
         self.Dv = data_cfg.get("dt_action_dim", 3)  # velocity commands
         self.Dr = self.Dv # reference velocity commands
+        self.frequency = data_cfg.get("ctl_frequency", 50.0)
+        self.dt = 1.0 / self.frequency
         if self.Du == 3:
             self.action_bounds = jnp.array(data_cfg.get("action_bounds", [[-15.0, -1.0, -1.0], [15.0, 1.0, 1.0]]))
         else:

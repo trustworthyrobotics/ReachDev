@@ -228,21 +228,23 @@ class MSELossCtl_quad(eqx.Module):
 
         X_curr = X[:, 0, :] # [B, Dx]
 
+        n_dyn_steps_per_ctl = round(self.ct_dyn.frequency / model.frequency)
+
         def one_step_ctl_dyn(carry, xs):
             X_curr = carry  # [B, Dx]
             v_cmd = xs  # [B, Dv]
             U_pred = model.forward(X_curr, v_cmd)  # [B, Du]
-            X_next = self.ct_dyn.forward(X_curr, U_pred)  # [B, Dx]
+            X_next = self.ct_dyn.rollout(X_curr, U_pred[:, None].repeat(n_dyn_steps_per_ctl, axis=1))  # [B, n_dyn_steps_per_ctl, Dx]
+            X_next = X_next[:, -1, :]  # take the last state after n_dyn_steps_per_ctl
             return X_next, (X_next, U_pred)
 
         T = U.shape[1]
         _, (X_preds, U_preds) = jax.lax.scan(one_step_ctl_dyn, X_curr, v_cmds.transpose(1, 0, 2), length=T)
         X_preds = X_preds.transpose(1,0,2)  # [B, T, Dx]
         U_preds = U_preds.transpose(1,0,2)  # [B, T, Du]
-
-        # Average over Batch and Dims
         v_preds = X_preds[:, :, model.Dv: 2*model.Dv]  # [B, T, Dv]
 
+        # Average over Batch and Dims
         mse_s = jnp.mean((X_preds - X[:, 1:, :])**2, axis=(0, 2))
         mse_t = jnp.mean((v_preds - v_cmds)**2, axis=(0, 2)) # velocity command tracking
         mse_u = jnp.mean((U_preds - U)**2, axis=(0, 2))

@@ -59,7 +59,7 @@ train_dt_dyn:
   n_rollout_valid: 10
   horizon_scheduler:
     type: "log" # log, linear, const
-    T_init: 1
+    T_init: 10
     T_final: 10
     log_alpha: 1.0
   step_weight_ub: 2
@@ -81,7 +81,7 @@ train_dt_dyn:
   batch_size: 128
   lam_jac_reg: 0.0e-3 # jacobian regularization weight
   wandb:
-    enabled: false
+    enabled: true
     project: "${settings.task_name}_dt_dyn"
     run_name: "nt_${train_dt_dyn.horizon_scheduler.type}_${train_dt_dyn.lr_scheduler.type}_${train_dt_dyn.batch_size}_${train_dt_dyn.reach.mode}_eps${train_dt_dyn.reach.eps_init}_${train_dt_dyn.reach.eps_final}_w${train_dt_dyn.reach.weight}"
     mode: "online"               # {"online","offline","disabled"}
@@ -96,19 +96,19 @@ train_ct_ctl:
   architecture: [64, 64, 64]
   ctl_frequency: ${data.ct_ctl.frequency}
   target_frequency: 1
-  loss_mode: "s"
+  loss_mode: "stu"
   n_history: 1
   n_rollout_valid: 10
   horizon_scheduler:
     type: "log" # log, linear, const
-    T_init: 1
+    T_init: 10
     T_final: 10
     log_alpha: 1.0
   step_weight_ub: 2
   noise: 0.005 # std of the Gaussian noise to training data
   lr_scheduler:
     type: "cos" # cos, linear, const
-    lr_init: 0.001
+    lr_init: 0.1
     lr_final: 0.0001
   n_epoch: 15
   reach:
@@ -129,7 +129,7 @@ train_ct_ctl:
   batch_size: 128
   lam_jac_reg: 0.0e-3 # jacobian regularization weight
   wandb:
-    enabled: false
+    enabled: true
     project: "${settings.task_name}_reach_ct_ctl_abs"
     run_name: "${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}_${train_ct_ctl.loss_mode}_${train_ct_ctl.reach.mode}_${train_ct_ctl.reach.eps_init}_${train_ct_ctl.reach.eps_final}_${train_ct_ctl.reach.weight}"
     mode: "online"               # {"online","offline","disabled"}
@@ -145,3 +145,7 @@ reachability:
   frr_rounds: 3
   frr_stop_ratio: 0.95
   sr_window_size: 100
+
+test_models:
+  dt_dyn_dir: "${train_dt_dyn.out_dir}/nt_log_cos_128_none_eps0.08_0.05_w0.0015_20260113_042201"
+  ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_stu_none_0.08_0.05_0.001_20260113_042133"

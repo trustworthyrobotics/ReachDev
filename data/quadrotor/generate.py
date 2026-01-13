@@ -29,7 +29,7 @@ def main(config: DictConfig) -> None:
     num_episodes = data_config[data_mode]["num_episodes"]
     num_batches = int(np.ceil(num_episodes / batch_size))
 
-    training = config["settings"].get("training", True) # generate training or testing data
+    training = config["data"].get("training", True) # generate training or testing data
     key = jax.random.PRNGKey(config["settings"].get("seed", 0))
     out_path = hydra.utils.to_absolute_path(data_config[data_mode]["out_path"])
     os.makedirs(out_path, exist_ok=True)
