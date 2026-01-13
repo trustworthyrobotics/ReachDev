@@ -9,52 +9,54 @@ import jax.numpy as jnp
 
 def sample_vel_cmd_sequence(
     key: jax.Array,
-    amax: float = 1.0,          # max acceleration (m/s^2)
+    num_quads: int = 1,      # number of quadrotors
     dt: float = 0.2,            # command update period (s), e.g. 5 Hz
     n_steps: int = 50,         # number of command steps
-    v0: jnp.ndarray | None = None,   # (3,) initial velocity command
-    v_bounds: jnp.ndarray | None = None,  # (2,3): [[vx_min,vy_min,vz_min],[vx_max,...]]
+    amax: jnp.ndarray | None = 1.0,  # (num_quads, 3,) max acceleration (m/s^2)
+    v0: jnp.ndarray | None = None,   # (num_quads, 3,) initial velocity command
+    v_bounds: jnp.ndarray | None = None,  # (num_quads, 2,3): [[vx_min,vy_min,vz_min],[vx_max,...]]
 ) -> jnp.ndarray:
     """
     Generate a random piecewise-constant velocity command sequence with bounded acceleration.
     Returns v_cmd_seq of shape (T, 3), where T = int(horizon/dt)+1, including v0 at t=0.
     """
     T = n_steps + 1
+    if amax is None:
+        amax = jnp.ones((num_quads, 3), dtype=jnp.float32)
+    else:
+        amax = jnp.asarray(amax, dtype=jnp.float32)
+        assert amax.shape == (num_quads, 3)
     if v0 is None:
-        v0 = jnp.zeros((3,), dtype=jnp.float32)
+        v0 = jnp.zeros((num_quads, 3), dtype=jnp.float32)
     else:
         v0 = jnp.asarray(v0, dtype=jnp.float32)
+        assert v0.shape == (num_quads, 3)
 
-    dv_max = amax * dt
-    dv = jax.random.uniform(key, (T - 1, 3), minval=-dv_max, maxval=dv_max)  # (T-1,3)
+    dv_max = (amax * dt) # (num_quads, 3)
 
-    v_seq = v0[None, :] + jnp.cumsum(dv, axis=0)             # (T-1,3), starts at v0+dv0
-    v_seq = jnp.concatenate([v0[None, :], v_seq], axis=0)    # (T,3)
+    dv_max = dv_max[None]
+    dv = jax.random.uniform(key, (T - 1, num_quads, 3), minval=-dv_max, maxval=dv_max)  # (T-1,num_quads,3)
+    v_seq = v0[None, :] + jnp.cumsum(dv, axis=0)             # (T-1,num_quads,3), starts at v0+dv0
+    v_seq = jnp.concatenate([v0[None, :], v_seq], axis=0)    # (T,num_quads,3)
     if v_bounds is not None:
-        v_bounds = jnp.asarray(v_bounds, dtype=jnp.float32)
-        assert v_bounds.shape == (2, 3)
-        v_seq = jnp.clip(v_seq, v_bounds[0], v_bounds[1])
-    return v_seq
+        assert v_bounds.shape == (num_quads, 2, 3)
+        v_seq = jnp.clip(v_seq, v_bounds[:, 0][None], v_bounds[:, 1][None])  # (T,num_quads,3)
 
-    # dv_max = amax * dt  # max change in velocity per command tick
-
-    # if v_bounds is not None:
-    #     v_bounds = jnp.asarray(v_bounds, dtype=jnp.float32)
-    #     assert v_bounds.shape == (2, 3)
+    return v_seq  # (T,num_quads,3)
 
     # def step(carry, k):
     #     v = carry
     #     # random delta-v with ||dv||_inf <= dv_max
     #     k, sub = jax.random.split(k)
-    #     dv = jax.random.uniform(sub, (3,), minval=-dv_max, maxval=dv_max)
+    #     dv = jax.random.uniform(sub, (num_quads, 3), minval=-dv_max, maxval=dv_max)
     #     v_next = v + dv
     #     if v_bounds is not None:
-    #         v_next = jnp.clip(v_next, v_bounds[0], v_bounds[1])
+    #         v_next = jnp.clip(v_next, v_bounds[:, 0], v_bounds[:, 1])
     #     return v_next, v_next
 
     # keys = jax.random.split(key, T - 1)
-    # _, v_hist = jax.lax.scan(step, v0, keys)  # (T-1,3)
-    # v_seq = jnp.concatenate([v0[None, :], v_hist], axis=0)  # (T,3)
+    # _, v_hist = jax.lax.scan(step, v0, keys)  # (T-1, num_quads, 3)
+    # v_seq = jnp.concatenate([v0[None, :], v_hist], axis=0)  # (T, num_quads, 3)
     # return v_seq
 
 def plot_quad_states_actions(state_seq, action_seq, dt, out_path):

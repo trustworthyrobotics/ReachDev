@@ -12,16 +12,19 @@ from envs.quadrotor.helper import plot_quad_states_actions, plot_3d_trajectories
 
 
 class Quad_Sim:
-    def __init__(self, data_config: dict, init_poses=None, target_poses=None):
+    def __init__(self, data_config: dict, num_quads: int = 1, init_poses=None, target_poses=None):
         self.model = Continuous_Quad_Dynamics(data_config)
         self.Dx = self.model.Dx
         self.Du = self.model.Du
         self.frequency = data_config.get("ct_frequency", 200)
+        self.dt = 1.0 / self.frequency
         
         # JIT the batch forward for the whole fleet
         self.forward_batch = eqx.filter_jit(jax.vmap(self.model.forward_batchless))
-        
-        self.num_quads = data_config.get("num_quads", 1)
+
+        self.num_quads = num_quads
+        if init_poses is not None:
+            assert self.num_quads == init_poses.shape[0]
         self.curr_states = init_poses  # (num_quads, Dx)
         self.SAVE_IMG = data_config.get("gif", False)
         self.reset(init_poses, target_poses)
@@ -47,7 +50,7 @@ class Quad_Sim:
         returns: dict with 'action' and 'state'
         """
         if n_sim_time is None:
-            n_sim_time = 1 / self.frequency
+            n_sim_time = self.dt
         n_sim_steps = max(1, int(self.frequency * n_sim_time))
 
         # Step dynamics forward
@@ -96,21 +99,23 @@ class Quad_Sim_Ctl:
     - Action: v_cmd (3D) at ctl_frequency
     Internally: v_cmd -> low-level u (thrust/torques) -> step CT sim for ctl_dt.
     """
-    def __init__(self, data_config: dict, init_poses=None, target_poses=None, controller=None):
-        self.ct_sim = Quad_Sim(data_config, init_poses, target_poses)
-        self.num_quads = self.ct_sim.num_quads
+    def __init__(self, data_config: dict, num_quads: int = 1, init_poses=None, target_poses=None, controller=None):
+        self.ct_sim = Quad_Sim(data_config, num_quads, init_poses, target_poses)
 
-        self.ctl_frequency = data_config.get("ctl_frequency", 20)
-        self.ctl_dt = 1.0 / self.ctl_frequency
+        self.frequency = data_config.get("ctl_frequency", 20)
+        self.dt = 1.0 / self.frequency
 
         # controller maps: (x12, v_cmd3) -> u_low (Du=3 or 4)
         self.controller = PID_Controller(data_config) if controller is None else controller
 
         # jit + vmap for fleet
-        self._ctl_fn = eqx.filter_jit(self.controller)
-        self._ctl_batch = eqx.filter_jit(jax.vmap(self._ctl_fn))
+        self._ctl_batch = eqx.filter_jit(jax.vmap(self.controller))
 
         self.reset(init_poses, target_poses)
+
+    @property
+    def num_quads(self):
+        return self.ct_sim.num_quads
 
     @property
     def curr_states(self):
@@ -137,9 +142,9 @@ class Quad_Sim_Ctl:
         Returns last step_data with CT state, v_cmd, and low-level action.
         """
         if n_sim_time is None:
-            n_sim_time = self.ctl_dt
+            n_sim_time = self.dt
 
-        n_ctl_steps = max(1, int(round(self.ctl_frequency * n_sim_time)))
+        n_ctl_steps = max(1, int(round(self.frequency * n_sim_time)))
 
         step_data = None
         for _ in range(n_ctl_steps):
@@ -147,7 +152,7 @@ class Quad_Sim_Ctl:
             u_low = self._ctl_batch(self.ct_sim.curr_states, v_cmds)  # (num_quads, Du)
 
             # 2) advance CT sim for one controller tick
-            ct_step = self.ct_sim.update(u_low, n_sim_time=self.ctl_dt)
+            ct_step = self.ct_sim.update(u_low, n_sim_time=self.dt)
 
             # 3) log
             step_data = {
@@ -165,14 +170,14 @@ class Quad_Sim_Ctl:
         # 1. plot 3D Trajectory Overview
         pose_seqs = np.array([h['state'] for h in self.history])[:, :, :3]  # (T, num_quads, 3)
         out_path = os.path.join(out_dir, "ctl_trajectories_3d.png")
-        plot_3d_trajectories(pose_seqs, self.num_quads, dt=self.ctl_dt, out_path=out_path)
+        plot_3d_trajectories(pose_seqs, self.num_quads, dt=self.dt, out_path=out_path)
         
         # 2.plot individual quad telemetry
         for i in range(self.num_quads):
             state_seq = np.array([h['state'][i] for h in self.history])  # (T, 12)
             action_seq = np.array([h['action'][i] for h in self.history])  # (T, 3)
             out_path = os.path.join(out_dir, f"ctl_quad_{i}_telemetry.png")
-            plot_quad_states_actions(state_seq, action_seq, dt=self.ctl_dt, out_path=out_path)
+            plot_quad_states_actions(state_seq, action_seq, dt=self.dt, out_path=out_path)
             
         self.ct_sim.visualize(out_dir=out_dir, fps=fps)
 
@@ -185,7 +190,7 @@ class Quad_Sim_DT:
     - Exposed state: 6D [pos(3), vel(3)] (slice of CT state)
     - Action: v_cmd (3D) at dt_frequency
     """
-    def __init__(self, data_config: dict, init_poses=None, target_poses=None, controller=None):
+    def __init__(self, data_config: dict, num_quads: int = 1, init_poses=None, target_poses=None, controller=None):
         self.Dx_dt = int(data_config.get("dt_state_dim", 6))
         self.Du_dt = int(data_config.get("dt_action_dim", 3))
         assert self.Dx_dt == 6 and self.Du_dt == 3
@@ -194,10 +199,13 @@ class Quad_Sim_DT:
         self.dt = 1.0 / self.frequency
 
         # use the CT-with-controller sim
-        self.ct_ctl_sim = Quad_Sim_Ctl(data_config, init_poses, target_poses, controller=controller)
-        self.num_quads = self.ct_ctl_sim.num_quads
+        self.ct_ctl_sim = Quad_Sim_Ctl(data_config, num_quads, init_poses, target_poses, controller=controller)
 
         self.reset(init_poses, target_poses)
+
+    @property
+    def num_quads(self):
+        return self.ct_ctl_sim.num_quads
 
     @property
     def SAVE_IMG(self):
@@ -277,43 +285,33 @@ class Quad_Sim_DT:
 @hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="quadrotor.yaml", version_base=None)
 def main(config: DictConfig) -> None:
     data_config = config["data"]
-    data_mode = config["settings"].get("data_mode", "dt_dyn")
+    data_mode = "dt_dyn"
     # data_config["frequency"] is the ode frequency limit
     frequency = min(data_config[data_mode]["frequency"], data_config["ct_frequency"])
-
+    data_config['gif'] = True  # enable visualization
     episode_length = data_config[data_mode]["episode_length"] * frequency
-
-    # env = Quad_Sim(data_config=data_config)
-
-    # const_action = jnp.array([9.81, 0.1, 0.1])[None].repeat(env.num_quads, axis=0)
-
-    # for step in range(episode_length):
-    #     env.update(const_action, n_sim_time=1/frequency)
-
-    # out_dir = "output/quad_sim_test"
-    # os.makedirs(out_dir, exist_ok=True)
-    # env.visualize(out_dir=out_dir)
-
-    # env.close()
 
     env_dt = Quad_Sim_DT(data_config=data_config)
 
-    # 
-    acc = 1
+    # Define velocity/acceleration limits
+    acc_limits = jnp.full((env_dt.num_quads, 3), data_config.get("acc_limits", 1.0))
+    vel_limits = jnp.full((env_dt.num_quads, 3), data_config.get("vel_limits", 2.0))
+    vel_limits = jnp.stack([-vel_limits, vel_limits], axis=1)  # (num_quads, 2, 3)
     # random velocity commands
     key = jax.random.PRNGKey(0)
     vel_cmd_seq = sample_vel_cmd_sequence(
         key=key,
-        amax=acc,
-        dt=1/env_dt.frequency,
+        amax=acc_limits,
+        num_quads=env_dt.num_quads,
+        dt=env_dt.dt,
         n_steps=episode_length,
-        v0=jnp.array([0.0, 0.0, 0.0]),
-        v_bounds=jnp.array([[-5.0, -5.0, -2.0], [5.0, 5.0, 2.0]]),
-    )  # (episode_length, 3)
+        v0=jnp.array([[0.0, 0.0, 0.0]]).repeat(env_dt.num_quads, axis=0),
+        v_bounds=vel_limits
+    )  # (episode_length, num_quads, 3)
 
     for step in range(episode_length):
-        v_cmds = vel_cmd_seq[step][None, :].repeat(env_dt.num_quads, axis=0)
-        env_dt.update(v_cmds, n_sim_time=1/env_dt.frequency)
+        v_cmds = vel_cmd_seq[step] # (num_quads, 3)
+        env_dt.update(v_cmds, n_sim_time=env_dt.dt)
     out_dir = "output/quad_sim_dt_test"
     os.makedirs(out_dir, exist_ok=True)
     env_dt.visualize(out_dir=out_dir)

@@ -2,7 +2,7 @@ settings:
   seed: 0
   task_name: "quadrotor"
   data_mode: "dt_dyn" # {"dt_dyn", "ct_ctl"}
-  train_mode: "dt_dyn" # {"dt_dyn", "ct_ctl"}
+  train_mode: "ct_ctl" # {"dt_dyn", "ct_ctl"}
 
 data:
   ct_state_dim: 12 # position + orientation + roll, pitch, yaw + roll, pitch, yaw rates
@@ -10,14 +10,14 @@ data:
   ct_frequency: 200  # CT simulation frequency
   ode_step_size_controller: 'pid'
 
+  action_bounds: [[-15.0, -1.0, -1.0], [15.0, 1.0, 1.0]] # min and max action limits
+  # action_bounds: [[-15.0, -1.0, -1.0, -0.5], [15.0, 1.0, 1.0, 0.5]] # min and max action limits for 4D action
+
   dt_state_dim: 6 # position + velocity
   dt_action_dim: 3 # velocity commands
   dt_frequency: 5  # DT simulation frequency
 
-  action_bounds: [[-15.0, -1.0, -1.0], [15.0, 1.0, 1.0]] # min and max action limits
-  # action_bounds: [[-15.0, -1.0, -1.0, -0.5], [15.0, 1.0, 1.0, 0.5]] # min and max action limits for 4D action
-
-  ctl_frequency: 50  # CT controller frequency
+  ctl_frequency: 20  # CT controller frequency
   pid_gains:
     kp_vel:  [3, 3, 10.0]
     kp_att:  [10, 10, 5]
@@ -28,24 +28,23 @@ data:
   J_y: 0.054
   J_z: 0.104
   tau_phi: 0.0
+  acc_limits: 1.0  # max acceleration for generating velocity commands
+  vel_limits: 5.0  # max velocity for generating velocity commands
 
   dt_dyn:
     out_path: "output/data/${settings.task_name}_freq${data.dt_dyn.frequency}"
-    num_episodes: 16000
-    episode_length: 5
-    num_workers: 48
+    ct_ctl: "pid" # "pid" or path to NN controller model
+    num_episodes: 25600
+    episode_length: 20
+    batch_size: 1024
     frequency: ${data.dt_frequency} # DT dynamics frequency
-  # ct_ctl:
-  #   out_path: "output/data/${settings.task_name}_freq${data.ct_ctl.frequency}_ctl"
-  #   num_episodes: 16000
-  #   episode_length: 30
-  #   num_workers: 48
-  #   dyn_frequency: 10 # CT dynamics frequency
-  #   frequency: 10 # CT control frequency, should be equal to dyn_frequency or its divisor
+  ct_ctl:
+    out_path: "output/data/${settings.task_name}_freq${data.ct_ctl.frequency}_ctl"
+    num_episodes: 102400
+    episode_length: 5
+    batch_size: 1024
+    frequency: ${data.ctl_frequency} # CT with controller frequency
   training: True
   saving: True
-  visualizing: False
-  gif: True
-  scale: 100 # normalize the data, (x,y)/scale
-  window_size: 500
-  enlarge_factor_for_gen: 4
+  gif: false
+  # scale: 100 # normalize the data
