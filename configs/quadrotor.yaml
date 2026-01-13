@@ -8,6 +8,7 @@ data:
   ct_state_dim: 12 # position + orientation + roll, pitch, yaw + roll, pitch, yaw rates
   ct_action_dim: 3 # 3 or 4 (thrust + torques w/ or w/o yaw control)
   ct_frequency: 200  # CT simulation frequency
+  ode_step_size_controller: 'pid'
 
   dt_state_dim: 6 # position + velocity
   dt_action_dim: 3 # velocity commands
@@ -16,12 +17,11 @@ data:
   action_bounds: [[-15.0, -1.0, -1.0], [15.0, 1.0, 1.0]] # min and max action limits
   # action_bounds: [[-15.0, -1.0, -1.0, -0.5], [15.0, 1.0, 1.0, 0.5]] # min and max action limits for 4D action
 
-  ctl_frequency: 20  # CT controller frequency
+  ctl_frequency: 50  # CT controller frequency
   pid_gains:
-    kp_vel: [0.1, 0.1, 0.1]
-    kp_att: [0.1, 0.1, 0.1]
-    kp_rate: [0.1, 0.1, 0.1]
-
+    kp_vel:  [3, 3, 10.0]
+    kp_att:  [10, 10, 5]
+    kp_rate: [1.0, 1.0, 0.8]
   g: 9.81
   m: 1.4
   J_x: 0.054
@@ -29,7 +29,6 @@ data:
   J_z: 0.104
   tau_phi: 0.0
 
-  ode_step_size_controller: 'pid'
   dt_dyn:
     out_path: "output/data/${settings.task_name}_freq${data.dt_dyn.frequency}"
     num_episodes: 16000

@@ -1,13 +1,16 @@
+import jax
 import jax.numpy as jnp
 import equinox as eqx
 
 from models.mlp_utils import MLP
 
+Array = jnp.ndarray
+
 class Base_Controller(eqx.Module):
     Dx: int = eqx.field(static=True, default=12)
     Du: int = eqx.field(static=True, default=3)
     Dv: int = eqx.field(static=True, default=3)  # velocity commands
-    action_bounds: jnp.ndarray = eqx.field(static=True)
+    action_bounds: Array = eqx.field(static=True)
 
     def __init__(self, data_cfg: dict):
         self.Dx = data_cfg.get("ct_state_dim", 12)
@@ -26,13 +29,12 @@ class Base_Controller(eqx.Module):
         raise NotImplementedError
 
 class PID_Controller(Base_Controller):
-    # Gains for the three nested loops
-    # Outer: Velocity -> Target Angles
+    # Outer: Velocity -> Target Angles + Thrust
     # Mid:   Angles   -> Target Rates
     # Inner: Rates    -> Torques
-    kp_vel: jnp.ndarray = eqx.field(static=True)
-    kp_att: jnp.ndarray = eqx.field(static=True)
-    kp_rate: jnp.ndarray = eqx.field(static=True)
+    kp_vel: Array = eqx.field(static=True)
+    kp_att: Array = eqx.field(static=True)
+    kp_rate: Array = eqx.field(static=True)
     m: float = eqx.field(static=True)
     g: float = eqx.field(static=True)
 
@@ -40,45 +42,55 @@ class PID_Controller(Base_Controller):
         super().__init__(data_cfg)
         self.g = data_cfg.get("g", 9.81)
         self.m = data_cfg.get("m", 1.4)
-        
+
         pid_config = data_cfg.get("pid_gains", {})
-        self.kp_vel = jnp.array(pid_config.get("kp", [1.5, 1.5, 10.0])) # [Lon, Lat, Ver]
-        self.kp_att = jnp.array(pid_config.get("kp_att", [5.0, 5.0, 2.0]))
-        self.kp_rate = jnp.array(pid_config.get("kp_rate", [10.0, 10.0, 5.0])) # [Roll, Pitch, Yaw]
+        # For world-velocity model: x[3:6] is world velocity [vx, vy, vz] (z-up if you follow ENU)
+        self.kp_vel  = jnp.array(pid_config.get("kp_vel",      [1.5, 1.5, 10.0]))
+        self.kp_att  = jnp.array(pid_config.get("kp_att",  [5.0, 5.0, 2.0]))
+        self.kp_rate = jnp.array(pid_config.get("kp_rate", [10.0, 10.0, 5.0]))
 
     def __call__(self, x, v_cmd):
-        # x: Full 12D state [pos_3, vel_3, att_3, rates_3]
-        # v_cmd: Target [v_lon, v_lat, v_ver]
-        
-        # 1. OUTER LOOP: Velocity -> Target Angles/Thrust
-        # Flip the sign of the vertical command because x6 is positive-down
-        v_cmd_adjusted = jnp.array([v_cmd[0], v_cmd[1], -v_cmd[2]])
-        v_err = v_cmd_adjusted - x[3:6]
-        
-        # Vertical velocity controls thrust (u1)
-        # u1 is INCREMENTAL thrust. Also, the ODE has -u1/m, so positive u1 creates negative acceleration (Up).
-        u1 = self.m * (self.kp_vel[2] * v_err[2])
-        
-        # Horizontal velocities set target Roll/Pitch
-        # Lon velocity (x4) is increased by increasing Pitch (x8)
-        # Lat velocity (x5) is increased by increasing Roll (x7)
-        pitch_des = -self.kp_vel[0] * v_err[0] 
-        roll_des = self.kp_vel[1] * v_err[1]
-        yaw_des = 0.0 # Maintain north or current heading
-        
-        # 2. MID LOOP: Attitude -> Target Rates
-        att_err = jnp.array([roll_des, pitch_des, yaw_des]) - x[6:9]
-        rate_des = self.kp_att * att_err
-        
-        # 3. INNER LOOP: Rates -> Torques
-        rate_err = rate_des - x[9:12]
-        torques = self.kp_rate * rate_err
-        
+        # x: 12D state [pos(3), velW(3), rpy(3), pqr(3)]
+        # v_cmd: desired world velocity [vx, vy, vz] (ENU z-up)
+
+        # unpack
+        vx, vy, vz = x[3], x[4], x[5]
+        roll, pitch, yaw = x[6], x[7], x[8]
+        p, q, r = x[9], x[10], x[11]
+
+        # 1) OUTER LOOP: velocity -> desired accel (world)
+        v_err = v_cmd - x[3:6]
+        ax_cmd = self.kp_vel[0] * v_err[0]
+        ay_cmd = self.kp_vel[1] * v_err[1]
+        az_cmd = self.kp_vel[2] * v_err[2]
+
+        # 1a) Thrust with gravity compensation (world-velocity dynamics)
+        # dvz = (u1/m)*b3z - g, b3z = cos(roll)*cos(pitch)
+        c7, c8 = jnp.cos(roll), jnp.cos(pitch)
+        b3z = c7 * c8
+        # avoid divide-by-zero if you ever get near 90deg (optional)
+        b3z = jnp.where(jnp.abs(b3z) < 1e-3, 1e-3 * jnp.sign(b3z + 1e-6), b3z)
+        u1 = self.m * (self.g + az_cmd) / b3z
+
+        # 1b) Desired roll/pitch from desired horizontal accel, yaw-aware (small-angle hover approx)
+        c9, s9 = jnp.cos(yaw), jnp.sin(yaw)
+        pitch_des = (ax_cmd * c9 + ay_cmd * s9) / self.g
+        roll_des  = (ax_cmd * s9 - ay_cmd * c9) / self.g
+        yaw_des = 0.0
+
+        # 2) MID LOOP: attitude -> desired body rates
+        att_err = jnp.array([roll_des, pitch_des, yaw_des]) - jnp.array([roll, pitch, yaw])
+        rate_des = self.kp_att * att_err  # [p_des, q_des, r_des]
+
+        # 3) INNER LOOP: body rates -> torques
+        rate_err = rate_des - jnp.array([p, q, r])
+        torques = self.kp_rate * rate_err  # [tau_x, tau_y, tau_z]
+
         if self.Du == 4:
-            # u2: Roll torque, u3: Pitch torque, u4: Yaw torque
             u = jnp.array([u1, torques[0], torques[1], torques[2]])
         else:
             u = jnp.array([u1, torques[0], torques[1]])
+
         return jnp.clip(u, self.action_bounds[0], self.action_bounds[1])
 
 
@@ -96,8 +108,17 @@ class MLP_Controller(Base_Controller):
             activation=activation,
         )
 
+    def forward(self, x: Array, u: Array) -> Array:
+        return jax.vmap(self.forward_batchless)(x, u)
+
     def forward_batchless(self, x, v_cmd):
         u = self.model(jnp.concatenate([x, v_cmd]))
         return jnp.clip(u, self.action_bounds[0], self.action_bounds[1])
     
-    __call__ = forward_batchless
+    def forward_batchless_single_input(self, inp):
+        x = inp[:self.Dx]
+        v_cmd = inp[-self.Dv:]
+        return self.forward_batchless(x, v_cmd)
+        
+    __call__ = forward_batchless_single_input
+
