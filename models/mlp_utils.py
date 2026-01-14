@@ -9,7 +9,7 @@ Array = jnp.ndarray
 PRNGKey = jax.Array
 
 class MLP(eqx.Module):
-    layers: Tuple[Union[eqx.nn.Linear, Callable], ...] = eqx.field(static=True)
+    layers: Tuple[Union[eqx.nn.Linear, Callable], ...]
     in_size: Union[int, str] = eqx.field(static=True)
     out_size: Union[int, str] = eqx.field(static=True)
     hidden_size_list: Iterable[int] = eqx.field(static=True)

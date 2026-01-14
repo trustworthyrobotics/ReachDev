@@ -57,7 +57,7 @@ class PID_Controller(Base_Controller):
         self.kp_att  = jnp.array(pid_config.get("kp_att",  [5.0, 5.0, 2.0]))
         self.kp_rate = jnp.array(pid_config.get("kp_rate", [10.0, 10.0, 5.0]))
 
-    def __call__(self, x, v_cmd):
+    def forward_batchless(self, x, v_cmd):
         # x: 12D state [pos(3), velW(3), rpy(3), pqr(3)]
         # v_cmd: desired world velocity [vx, vy, vz] (ENU z-up)
 
@@ -101,14 +101,26 @@ class PID_Controller(Base_Controller):
 
         return jnp.clip(u, self.action_bounds[0], self.action_bounds[1])
 
+    def forward(self, x: Array, v_cmd: Array) -> Array:
+        return jax.vmap(self.forward_batchless)(x, v_cmd)
+
+    __call__ = forward_batchless
 
 class MLP_Controller(Base_Controller):
     model: MLP
+    enforce_action_bounds: bool = eqx.field(static=True, default=True)
+    x_mean: Array = eqx.field(static=True)
+    x_std: Array = eqx.field(static=True)
+    v_mean: Array = eqx.field(static=True)
+    v_std: Array = eqx.field(static=True)
+    u_mean: Array = eqx.field(static=True)
+    u_std: Array = eqx.field(static=True)
 
-    def __init__(self, data_cfg: dict, train_cfg: dict, key: PRNGKey = jax.random.PRNGKey(0),):
+    def __init__(self, data_cfg: dict, train_cfg: dict, key: PRNGKey = jax.random.PRNGKey(0), stats: dict = None):
         super().__init__(data_cfg)
         arch_list = train_cfg["architecture"]
         activation = train_cfg.get("activation", "relu")
+        self.enforce_action_bounds = train_cfg.get("enforce_action_bounds", True)
         self.model = MLP(
             in_size=self.Dx + self.Dv,
             out_size=self.Du,
@@ -116,16 +128,50 @@ class MLP_Controller(Base_Controller):
             activation=activation,
             key=key,
         )
+        if stats is not None:
+            mean = jnp.array(stats["mean"])
+            std = jnp.array(stats["std"])
+            assert mean.shape == (self.Dx + self.Dv + self.Du,)
+            assert std.shape == (self.Dx + self.Dv + self.Du,)
+
+            self.x_mean = mean[:self.Dx]
+            self.x_std = std[:self.Dx]
+            self.v_mean = mean[self.Dx:self.Dx + self.Dv]
+            self.v_std = std[self.Dx:self.Dx + self.Dv]
+            self.u_mean = mean[self.Dx + self.Dv:]
+            self.u_std = std[self.Dx + self.Dv:]
+        else:
+            self.x_mean = jnp.zeros(self.Dx)
+            self.x_std = jnp.ones(self.Dx)
+            self.v_mean = jnp.zeros(self.Dv)
+            self.v_std = jnp.ones(self.Dv)
+            self.u_mean = jnp.zeros(self.Du)
+            self.u_std = jnp.ones(self.Du)
+
     def _input_dims(self) -> List[int]:
         return self.Dx, self.Dr
 
-    def forward(self, x: Array, u: Array) -> Array:
-        return jax.vmap(self.forward_batchless)(x, u)
+    def forward(self, x: Array, v_cmd: Array) -> Array:
+        return jax.vmap(self.forward_batchless)(x, v_cmd)
 
     def forward_batchless(self, x, v_cmd):
-        u = self.model(jnp.concatenate([x, v_cmd]))
-        return jnp.clip(u, self.action_bounds[0], self.action_bounds[1])
-    
+        # standardize
+        x = (x - self.x_mean) / self.x_std
+        v_cmd = (v_cmd - self.v_mean) / self.v_std
+        raw = self.model(jnp.concatenate([x, v_cmd], axis=-1))
+        if self.enforce_action_bounds:
+            lo, hi = self.action_bounds[0], self.action_bounds[1]
+            mid = 0.5 * (hi + lo)
+            half = 0.5 * (hi - lo)
+            u = mid + half * jnp.tanh(raw)
+            # unstandardize
+            u = u * self.u_std + self.u_mean
+            return u
+        else:
+            # unstandardize
+            raw = raw * self.u_std + self.u_mean
+            return raw
+
     def forward_batchless_single_input(self, inp):
         x = inp[:self.Dx]
         v_cmd = inp[-self.Dv:]

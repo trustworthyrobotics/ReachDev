@@ -12,7 +12,7 @@ import yaml
 
 from models.load import load_model
 from models.quadrotor.ct_dyn import Continuous_Quad_Dynamics
-from models.quadrotor.ct_ctl import MLP_Controller
+from models.quadrotor.ct_ctl import MLP_Controller, PID_Controller
 from envs.quadrotor.helper import plot_quad_states_actions, plot_3d_trajectories
 
 @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="quadrotor.yaml")
@@ -32,12 +32,18 @@ def main(config: DictConfig):
         eval_p_path = os.path.join(data_dir, "data_eval.p")
     else:
         eval_p_path = os.path.join(data_dir, "data.p")
-    model: MLP_Controller = load_model(model_dir=model_dir, model_type="ct_ctl", mode="best", task_name=task_name)
+
+    use_pid = True
+    if use_pid:
+        # model: MLP_Controller = load_model(model_dir=model_dir, model_type="ct_ctl", mode="best", task_name=task_name)
+        model = PID_Controller(data_cfg)  # use PID for testing CT dynamics only
+    else:
+        model: MLP_Controller = load_model(model_dir=model_dir, model_type="ct_ctl", mode="best", task_name=task_name)
 
     ct_dyn = Continuous_Quad_Dynamics(data_cfg)
 
     with open(eval_p_path, "rb") as f:
-        episodes = np.array(pickle.load(f))
+        episodes = jnp.array(pickle.load(f))
 
     B = episodes.shape[0]
     if episodes.shape[2] == 18:
@@ -56,11 +62,11 @@ def main(config: DictConfig):
         raise ValueError(f"Unknown data dimension: {episodes.shape[2]}")
     
     start_time_step = 0
-    horizon = 10
+    horizon = 20
     episodes = episodes[:, start_time_step:start_time_step + horizon + 1, :]  # [B, T+1, Dx+Du]
 
     X_gt = episodes[..., :state_dim]
-    v_cmds = episodes[..., state_dim:state_dim+v_cmd_dim]
+    v_cmds = episodes[:, :-1, state_dim:state_dim+v_cmd_dim]
     U_gt = episodes[..., -action_dim:]
 
     X_curr = X_gt[:, 0, :] # [B, Dx]
@@ -71,25 +77,38 @@ def main(config: DictConfig):
         X_curr = carry  # [B, Dx]
         v_cmd = xs  # [B, Dv]
         U_pred = model.forward(X_curr, v_cmd)  # [B, Du]
-        X_next = ct_dyn.rollout(X_curr, U_pred[:, None].repeat(n_dyn_steps_per_ctl, axis=1))  # [B, n_dyn_steps_per_ctl, Dx]
-        X_next = X_next[:, -1, :]  # take the last state after n_dyn_steps_per_ctl
+        # X_next = ct_dyn.rollout(X_curr, U_pred[:, None].repeat(n_dyn_steps_per_ctl, axis=1))  # [B, n_dyn_steps_per_ctl, Dx]
+        # X_next = X_next[:, -1, :]  # take the last state after n_dyn_steps_per_ctl
+
+        X_next = ct_dyn.forward(X_curr, U_pred, dt=model.dt)  # [B, Dx]
+
         return X_next, (X_next, U_pred)
 
 
     _, (X_preds, U_preds) = jax.lax.scan(one_step_ctl_dyn, X_curr, v_cmds.transpose(1, 0, 2), length=horizon)
     X_preds = X_preds.transpose(1,0,2)  # [B, T, Dx]
+    X_preds = jnp.concatenate([X_curr[:, None, :], X_preds], axis=1)  # [B, T+1, Dx]
     U_preds = U_preds.transpose(1,0,2)  # [B, T, Du]
-    v_preds = X_preds[:, :, v_cmd_dim: 2*v_cmd_dim]  # [B, T, Dv]
+    U_preds = jnp.concatenate([U_preds, U_preds[:, -1:, :]], axis=1)  # [B, T+1, Du]
+    v_cmds_preds = X_preds[:, 1:, v_cmd_dim: 2*v_cmd_dim]  # [B, T+1, Dv]
+    v_cmds_preds = jnp.concatenate([v_cmds_preds, v_cmds_preds[:, -1:, :]], axis=1)  # [B, T+1, Dv] for plotting
+    U_gt = U_gt.at[:, -1, :].set(U_gt[:, -2, :])  # for plotting
+    v_cmds = jnp.concatenate([v_cmds, v_cmds[:, -1:, :]], axis=1)  # [B, T+1, Dv] for plotting
 
-    out_dir = os.path.join(model_dir, "vis")
+    print(f"X error: {jnp.abs(X_gt - X_preds).mean()}")
+    print(f"U error: {jnp.abs(U_gt - U_preds).mean()}")
+    print(f"v_cmd error: {jnp.abs(v_cmds - v_cmds_preds).mean()}")
+    # exit()
+
+    out_dir = os.path.join(model_dir, f"vis{'_pid' if use_pid else ''}")
     os.makedirs(out_dir, exist_ok=True)
     n_samples = 5
     for i in range(n_samples):
         plot_3d_trajectories(X_gt[i, :, :3][:, None], num_quads=1, dt=model.dt, out_path=os.path.join(out_dir, f"gt_trajectories_{i}.png"))
-        plot_quad_states_actions(X_gt[i, :, :6], v_cmds[i], dt=model.dt, out_path=os.path.join(out_dir, f"gt_states_vcmd_{i}.png"))
-        plot_quad_states_actions(X_gt[i], U_gt[i], dt=model.dt, out_path=os.path.join(out_dir, f"gt_states_actions_{i}.png"))
         plot_3d_trajectories(X_preds[i, :, :3][:, None], num_quads=1, dt=model.dt, out_path=os.path.join(out_dir, f"pred_trajectories_{i}.png"))
-        plot_quad_states_actions(X_preds[i, :, :6], v_preds[i], dt=model.dt, out_path=os.path.join(out_dir, f"pred_states_vcmd_{i}.png"))
+        plot_quad_states_actions(X_gt[i, :, :6], v_cmds[i], dt=model.dt, out_path=os.path.join(out_dir, f"gt_states_vcmd_{i}.png"))
+        plot_quad_states_actions(X_preds[i, :, :6], v_cmds[i], dt=model.dt, out_path=os.path.join(out_dir, f"pred_states_vcmd_{i}.png"))
+        plot_quad_states_actions(X_gt[i], U_gt[i], dt=model.dt, out_path=os.path.join(out_dir, f"gt_states_actions_{i}.png"))
         plot_quad_states_actions(X_preds[i], U_preds[i], dt=model.dt, out_path=os.path.join(out_dir, f"pred_states_actions_{i}.png"))
 
 

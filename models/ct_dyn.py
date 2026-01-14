@@ -22,8 +22,10 @@ class Continuous_T_Dynamics(T_Dynamics):
         data_cfg: dict, 
         train_cfg: dict,
         key: PRNGKey = jax.random.PRNGKey(0),
+        *args,
+        **kwargs,
     ):
-        super().__init__(data_cfg, train_cfg, key)
+        super().__init__(data_cfg, train_cfg, key, *args, **kwargs)
         frequency = train_cfg.get("frequency", 10)
         self.frequency = float(frequency)
         self.dt = jnp.array(1.0 / frequency, dtype=jnp.float32)

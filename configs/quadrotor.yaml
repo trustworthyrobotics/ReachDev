@@ -2,12 +2,12 @@ settings:
   seed: 0
   task_name: "quadrotor"
   data_mode: "dt_dyn" # {"dt_dyn", "ct_ctl"}
-  train_mode: "ct_ctl" # {"dt_dyn", "ct_ctl"}
+  train_mode: "dt_dyn" # {"dt_dyn", "ct_ctl"}
 
 data:
   ct_state_dim: 12 # position + orientation + roll, pitch, yaw + roll, pitch, yaw rates
   ct_action_dim: 3 # 3 or 4 (thrust + torques w/ or w/o yaw control)
-  ct_frequency: 200  # CT simulation frequency
+  ct_frequency: 100  # CT simulation frequency
   ode_step_size_controller: 'pid'
 
   action_bounds: [[-15.0, -1.0, -1.0], [15.0, 1.0, 1.0]] # min and max action limits
@@ -40,9 +40,9 @@ data:
     frequency: ${data.dt_frequency} # DT dynamics frequency
   ct_ctl:
     out_path: "output/data/${settings.task_name}_freq${data.ct_ctl.frequency}_ctl"
-    num_episodes: 102400
+    num_episodes: 51200
     episode_length: 5
-    batch_size: 1024
+    batch_size: 512
     frequency: ${data.ctl_frequency} # CT with controller frequency
   training: True
   saving: True
@@ -52,15 +52,15 @@ data:
 train_dt_dyn:
   out_dir: "output/runs/${settings.task_name}_dt_dyn"
   data_dir: ${data.dt_dyn.out_path}
-  data_augment: False
+  standardize: False
   train_valid_ratio: 0.9
   architecture: [64, 64]
   n_history: 1
-  n_rollout_valid: 10
+  n_rollout_valid: 20
   horizon_scheduler:
     type: "log" # log, linear, const
-    T_init: 10
-    T_final: 10
+    T_init: 1
+    T_final: 20
     log_alpha: 1.0
   step_weight_ub: 2
   noise: 0.005 # std of the Gaussian noise to training data
@@ -83,7 +83,7 @@ train_dt_dyn:
   wandb:
     enabled: true
     project: "${settings.task_name}_dt_dyn"
-    run_name: "nt_${train_dt_dyn.horizon_scheduler.type}_${train_dt_dyn.lr_scheduler.type}_${train_dt_dyn.batch_size}_${train_dt_dyn.reach.mode}_eps${train_dt_dyn.reach.eps_init}_${train_dt_dyn.reach.eps_final}_w${train_dt_dyn.reach.weight}"
+    run_name: "${train_dt_dyn.horizon_scheduler.type}_${train_dt_dyn.lr_scheduler.type}_${train_dt_dyn.batch_size}_${train_dt_dyn.standardize}_${train_dt_dyn.reach.mode}_eps${train_dt_dyn.reach.eps_init}_${train_dt_dyn.reach.eps_final}_w${train_dt_dyn.reach.weight}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  
@@ -91,7 +91,7 @@ train_dt_dyn:
 train_ct_ctl:
   out_dir: "output/runs/${settings.task_name}_ct_ctl"
   data_dir: ${data.ct_ctl.out_path}
-  data_augment: False
+  standardize: False
   train_valid_ratio: 0.9
   architecture: [64, 64, 64]
   ctl_frequency: ${data.ct_ctl.frequency}
@@ -101,16 +101,16 @@ train_ct_ctl:
   n_rollout_valid: 10
   horizon_scheduler:
     type: "log" # log, linear, const
-    T_init: 10
+    T_init: 1
     T_final: 10
     log_alpha: 1.0
   step_weight_ub: 2
   noise: 0.005 # std of the Gaussian noise to training data
   lr_scheduler:
     type: "cos" # cos, linear, const
-    lr_init: 0.1
+    lr_init: 0.001
     lr_final: 0.0001
-  n_epoch: 15
+  n_epoch: 10
   reach:
     mode: "none" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
@@ -130,8 +130,8 @@ train_ct_ctl:
   lam_jac_reg: 0.0e-3 # jacobian regularization weight
   wandb:
     enabled: true
-    project: "${settings.task_name}_reach_ct_ctl_abs"
-    run_name: "${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}_${train_ct_ctl.loss_mode}_${train_ct_ctl.reach.mode}_${train_ct_ctl.reach.eps_init}_${train_ct_ctl.reach.eps_final}_${train_ct_ctl.reach.weight}"
+    project: "${settings.task_name}_ct_ctl"
+    run_name: "${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}_${train_ct_ctl.loss_mode}_${train_ct_ctl.standardize}_${train_ct_ctl.reach.mode}_${train_ct_ctl.reach.eps_init}_${train_ct_ctl.reach.eps_final}_${train_ct_ctl.reach.weight}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  
@@ -147,5 +147,5 @@ reachability:
   sr_window_size: 100
 
 test_models:
-  dt_dyn_dir: "${train_dt_dyn.out_dir}/nt_log_cos_128_none_eps0.08_0.05_w0.0015_20260113_042201"
-  ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_stu_none_0.08_0.05_0.001_20260113_042133"
+  dt_dyn_dir: "${train_dt_dyn.out_dir}/nt_log_cos_128_False_none_eps0.08_0.05_w0.0015_20260114_011954"
+  ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_stu_False_none_0.08_0.05_0.001_20260114_011947"

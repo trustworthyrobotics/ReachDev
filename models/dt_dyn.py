@@ -36,6 +36,8 @@ class T_Dynamics(eqx.Module):
         data_cfg: dict, 
         train_cfg: dict,
         key: PRNGKey = jax.random.PRNGKey(0),
+        *args,
+        **kwargs,
     ):
         arch_list: Sequence[int] = train_cfg["architecture"]
         assert len(arch_list) >= 1, "Architecture must have at least one hidden layer."

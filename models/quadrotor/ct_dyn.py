@@ -131,16 +131,19 @@ class Continuous_Quad_Dynamics(eqx.Module):
 
         return jnp.array([dx1,dx2,dx3,dx4,dx5,dx6,dx7,dx8,dx9,dx10,dx11,dx12])
 
-    def forward(self, x: Array, u: Array) -> Array:
+    def forward(self, x: Array, u: Array, dt: Array=None) -> Array:
         # x: (B,Dx), u: (B,Du)
         # One step forward prediction
-        return jax.vmap(self.forward_batchless)(x, u)
+        _step = jax.vmap(lambda x,u: self.forward_batchless(x, u, dt))
+        return _step(x, u)
 
-    def forward_batchless(self, x: Array, u: Array) -> Array:
+    def forward_batchless(self, x: Array, u: Array, dt: Array=None) -> Array:
+        if dt is None:
+            dt = self.dt
         # x: (Dx,), u: (Du,)
         term = diffrax.ODETerm(self.dx)
         solver = diffrax.Tsit5()
-        sol = diffrax.diffeqsolve(term, solver, t0=0, t1=self.dt, dt0=self.dt0, y0=x, args=u, stepsize_controller=self.stepsize_controller)
+        sol = diffrax.diffeqsolve(term, solver, t0=0, t1=dt, dt0=self.dt0, y0=x, args=u, stepsize_controller=self.stepsize_controller)
         return sol.ys[-1]
 
     def rollout(self, x0: Array, U: Array) -> Array:

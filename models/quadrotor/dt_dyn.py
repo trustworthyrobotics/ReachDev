@@ -19,6 +19,10 @@ class Quad_Dynamics(eqx.Module):
     frequency: float = eqx.field(static=True)
     arch: Tuple[int, ...] = eqx.field(static=True)
     dt: float = eqx.field(static=True)
+    x_mean: Array = eqx.field(static=True)
+    x_std: Array = eqx.field(static=True)
+    u_mean: Array = eqx.field(static=True)
+    u_std: Array = eqx.field(static=True)
 
     # ---- learnable parts ----
     mlp: MLP
@@ -28,6 +32,7 @@ class Quad_Dynamics(eqx.Module):
         data_cfg: dict, 
         train_cfg: dict,
         key: PRNGKey = jax.random.PRNGKey(0),
+        stats: Optional[dict] = None,
     ):
         arch_list: Sequence[int] = train_cfg["architecture"]
         assert len(arch_list) >= 1, "Architecture must have at least one hidden layer."
@@ -51,6 +56,21 @@ class Quad_Dynamics(eqx.Module):
             hidden_size_list=self.arch,
             key=key,
         )
+        if stats is not None:
+            mean = jnp.array(stats["mean"])
+            std = jnp.array(stats["std"])
+            assert mean.shape == (self.Dx + self.Du,)
+            assert std.shape == (self.Dx + self.Du,)
+
+            self.x_mean = mean[:self.Dx]
+            self.x_std = std[:self.Dx]
+            self.u_mean = mean[self.Dx:]
+            self.u_std = std[self.Dx:]
+        else:
+            self.x_mean = jnp.zeros(self.Dx)
+            self.x_std = jnp.ones(self.Dx)
+            self.u_mean = jnp.zeros(self.Du)
+            self.u_std = jnp.ones(self.Du)
 
     # --------------------------- helpers ---------------------------
     def _input_dims(self) -> List[int]:
@@ -61,6 +81,8 @@ class Quad_Dynamics(eqx.Module):
         return jax.vmap(self.forward_batchless)(x, u)
 
     def forward_batchless(self, x: Array, u: Array) -> Array:
+        x = (x - self.x_mean) / self.x_std
+        u = (u - self.u_mean) / self.u_std
         pos = x[:self.Dx - self.Dv]
         vel = x[self.Dx - self.Dv:self.Dx]
         inp = jnp.concatenate([vel, u], axis=-1)  # (3+3,)
@@ -68,6 +90,7 @@ class Quad_Dynamics(eqx.Module):
         new_vel = vel + delta_vel
         new_pos = pos + 0.5 * (vel + new_vel) * self.dt
         x_next = jnp.concatenate([new_pos, new_vel], axis=-1)  # (6,)
+        x_next = x_next * self.x_std + self.x_mean
         return x_next
 
     # --------------------------- batchless onnx for JAX ---------------------------

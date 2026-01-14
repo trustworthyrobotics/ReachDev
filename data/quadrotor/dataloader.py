@@ -32,7 +32,6 @@ def load_dynamics_dataset(data_cfg: dict, train_cfg: dict,
     n_roll = int(train_cfg["horizon_scheduler"]["T_final"] if phase == "train" else train_cfg["n_rollout_valid"])
     train_ratio = float(train_cfg["train_valid_ratio"])
     noise_std   = float(train_cfg["noise"]) if phase == "train" else 0.0
-    augment_en  = bool(train_cfg["data_augment"])
 
     # ---- Load and normalize ----
     data_file_name = os.path.join(train_cfg["data_dir"], "data.p")
@@ -63,6 +62,19 @@ def load_dynamics_dataset(data_cfg: dict, train_cfg: dict,
     else:
         raise AssertionError(f"Unknown phase {phase}")
 
+    if train_cfg.get("standardize", False):
+        # Compute stats on TRAIN ONLY and SAVE somewhere persistent in train_cfg["data_dir"]
+        stats_path = os.path.join(train_cfg["data_dir"], "norm_stats.npz")
+        if phase == "train" and not os.path.exists(stats_path):
+            mean = np.mean(episodes, axis=(0, 1))                     # [D]
+            std  = np.std(episodes, axis=(0, 1)) + 1e-6               # [D]
+            np.savez(stats_path, mean=mean, std=std)
+        else:
+            loaded = np.load(stats_path)
+            mean = loaded["mean"]
+            std  = loaded["std"]
+        episodes = (episodes - mean[None, None, :]) / std[None, None, :]
+
     # Adjust n_roll and n_sample
     n_roll   = min(T_ep - n_his, n_roll)
     n_sample = n_his + n_roll
@@ -83,9 +95,6 @@ def load_dynamics_dataset(data_cfg: dict, train_cfg: dict,
         np.random.seed(seed)
         obs = obs + np.random.normal(0.0, noise_std, size=obs.shape).astype(obs.dtype)
 
-    # ---- Train-time augmentation (single shared rotation) ----
-    if phase == "train" and augment_en:
-        pass
     # ---- Weights (ones) ----
     M = obs.shape[0]
     weights = np.ones((M, n_roll), dtype=np.float32)

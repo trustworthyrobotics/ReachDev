@@ -234,8 +234,11 @@ class MSELossCtl_quad(eqx.Module):
             X_curr = carry  # [B, Dx]
             v_cmd = xs  # [B, Dv]
             U_pred = model.forward(X_curr, v_cmd)  # [B, Du]
-            X_next = self.ct_dyn.rollout(X_curr, U_pred[:, None].repeat(n_dyn_steps_per_ctl, axis=1))  # [B, n_dyn_steps_per_ctl, Dx]
-            X_next = X_next[:, -1, :]  # take the last state after n_dyn_steps_per_ctl
+
+            # X_next = self.ct_dyn.rollout(X_curr, U_pred[:, None].repeat(n_dyn_steps_per_ctl, axis=1))  # [B, n_dyn_steps_per_ctl, Dx]
+            # X_next = X_next[:, -1, :]  # take the last state after n_dyn_steps_per_ctl
+
+            X_next = self.ct_dyn.forward(X_curr, U_pred, dt=model.dt)  # [B, Dx]
             return X_next, (X_next, U_pred)
 
         T = U.shape[1]

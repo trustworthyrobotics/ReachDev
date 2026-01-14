@@ -1,5 +1,9 @@
 
+import os
+import numpy as np
 import yaml
+import jax
+import jax.numpy as jnp
 import equinox as eqx
 
 from models.dt_dyn import T_Dynamics
@@ -34,7 +38,15 @@ def load_model(model_dir: str, model_type: str, mode: str="best", task_name: str
         elif model_type == "ct_ctl":
             model_class = MLP_Controller
 
-    model_def = model_class(data_config, train_config)
+    standardize = train_config.get("standardize", False)
+    stats = None
+    if standardize:
+        stats_path = os.path.join(train_config["data_dir"], "norm_stats.npz")
+        with open(stats_path, "rb") as f:
+            stats = np.load(f)
+            stats = {k: jnp.array(stats[k]) for k in stats.files}
+
+    model_def = model_class(data_config, train_config, stats=stats)
     assert mode in ["best", "last"], f"Unknown mode {mode} for loading model."
     model_path = f"{model_dir}/{mode}_model.eqx"
     with open(model_path, "rb") as f:

@@ -3,17 +3,18 @@ from __future__ import annotations
 import os
 import yaml
 import jax
-
-from training.losses_metrics import TotalLoss, TotalLossCtl, TotalLossCtl_quad
 # jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_default_matmul_precision", "highest")
+import jax.numpy as jnp
 import equinox as eqx
+
 import numpy as np
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from jax2onnx import to_onnx
 from datetime import datetime
 from training.trainer import Trainer
+from training.losses_metrics import TotalLoss, TotalLossCtl, TotalLossCtl_quad
 
 from utils.logging import PrintLogger, WandbLogger
 
@@ -21,7 +22,7 @@ from utils.logging import PrintLogger, WandbLogger
 def _save_ckpt(path_base: str, model, opt_state, step: int, cfg: dict):
     os.makedirs(os.path.dirname(path_base) or ".", exist_ok=True)
     eqx.tree_serialise_leaves(path_base + ".eqx", model)
-    to_onnx(model, [(sum(model._input_dims()),)], return_mode="file", output_path = path_base + ".onnx", opset=19)
+    # to_onnx(model, [(sum(model._input_dims()),)], return_mode="file", output_path = path_base + ".onnx", opset=19)
     np.savez(path_base + ".npz", step=np.array(step), config=np.array([yaml.dump(OmegaConf.to_yaml(cfg))]))
 
 @hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="quadrotor.yaml", version_base=None)
@@ -69,16 +70,23 @@ def main(config: DictConfig) -> None:
         else:
             raise ValueError(f"Unknown train_mode: {train_mode}")
     elif "quadrotor" in task_name:
+        standardize = tr_cfg.get("standardize", True)
+        stats = None
+        if standardize:
+            stats_path = os.path.join(tr_cfg["data_dir"], "norm_stats.npz")
+            with open(stats_path, "rb") as f:
+                stats = np.load(f)
+                stats = {k: jnp.array(stats[k]) for k in stats.files}
         if train_mode == "dt_dyn":
             from models.quadrotor.dt_dyn import Quad_Dynamics
-            model = Quad_Dynamics(data_cfg, tr_cfg, key=key)
+            model = Quad_Dynamics(data_cfg, tr_cfg, key=key, stats=stats)
             loss_class = TotalLoss
         elif train_mode == "ct_dyn":
             print("CT dynamics for quadrotor uses analytical model, no training needed.")
             exit(0)
         elif train_mode == "ct_ctl":
             from models.quadrotor.ct_ctl import MLP_Controller
-            model = MLP_Controller(data_cfg, tr_cfg, key=key)
+            model = MLP_Controller(data_cfg, tr_cfg, key=key, stats=stats)
             from models.quadrotor.ct_dyn import Continuous_Quad_Dynamics
             ct_dyn = Continuous_Quad_Dynamics(data_cfg)
             loss_class = TotalLossCtl_quad

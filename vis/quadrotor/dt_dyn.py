@@ -34,7 +34,7 @@ def main(config: DictConfig):
     model: Quad_Dynamics = load_model(model_dir=model_dir, model_type="dt_dyn", mode="best", task_name=task_name)
 
     with open(eval_p_path, "rb") as f:
-        episodes = np.array(pickle.load(f))
+        episodes = jnp.array(pickle.load(f))
 
     B = episodes.shape[0]
     if episodes.shape[2] == 18:
@@ -58,19 +58,24 @@ def main(config: DictConfig):
     episodes = episodes[:, start_time_step:start_time_step + horizon + 1, :]  # [B, T+1, Dx+Du]
 
     X_gt = episodes[..., :state_dim]
-    U_gt = episodes[..., -action_dim:]
+    U_gt = episodes[:, :-1, -action_dim:]
 
     X_curr = X_gt[:, 0, :] # [B, Dx]
 
     X_preds = model.rollout(X_curr, U_gt)  # [B, T, Dx]
+    X_preds = jnp.concatenate([X_curr[:, None, :], X_preds], axis=1)  # [B, T+1, Dx]
+    U_gt = jnp.concatenate([U_gt, U_gt[:, -1:, :]], axis=1)  # [B, T+1, Du] for plotting
+
+    print(f"X error: {jnp.abs(X_gt - X_preds).mean()}")
+    exit()
 
     out_dir = os.path.join(model_dir, "vis")
     os.makedirs(out_dir, exist_ok=True)
     n_samples = 5
     for i in range(n_samples):
         plot_3d_trajectories(X_gt[i, :, :3][:, None], num_quads=1, dt=model.dt, out_path=os.path.join(out_dir, f"gt_trajectories_{i}.png"))
-        plot_quad_states_actions(X_gt[i, :, :6], U_gt[i], dt=model.dt, out_path=os.path.join(out_dir, f"gt_states_vcmd_{i}.png"))
         plot_3d_trajectories(X_preds[i, :, :3][:, None], num_quads=1, dt=model.dt, out_path=os.path.join(out_dir, f"pred_trajectories_{i}.png"))
+        plot_quad_states_actions(X_gt[i, :, :6], U_gt[i], dt=model.dt, out_path=os.path.join(out_dir, f"gt_states_vcmd_{i}.png"))
         plot_quad_states_actions(X_preds[i, :, :6], U_gt[i], dt=model.dt, out_path=os.path.join(out_dir, f"pred_states_vcmd_{i}.png"))
 
 

@@ -400,14 +400,7 @@ def build_loaders(
     """
     ds_train = load_dynamics_dataset(data_cfg, train_cfg, seed=seed, phase="train")
     ds_valid = load_dynamics_dataset(data_cfg, train_cfg, seed=seed, phase="valid")
-    # if train_mode in {"dt_dyn", "ct_dyn"}:
-    #     ds_train = load_dynamics_dataset(data_cfg, train_cfg, seed=seed, phase="train")
-    #     ds_valid = load_dynamics_dataset(data_cfg, train_cfg, seed=seed, phase="valid")
-    # elif train_mode == "ct_ctl":
-    #     ds_train = load_controller_dataset(data_cfg, train_cfg, seed=seed, phase="train")
-    #     ds_valid = load_controller_dataset(data_cfg, train_cfg, seed=seed, phase="valid")
-    # else:
-    #     raise ValueError(f"Unknown train_mode: {train_mode}")
+
     batch_size = int(train_cfg["batch_size"])
 
     dl_train = Dataloader(
