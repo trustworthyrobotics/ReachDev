@@ -10,6 +10,7 @@ import sys
 sys.path.append('CROWN_Reach')
 from CROWN_Reach.src.reachability import DT_Plan_Reach, CT_Plan_Reach, CT_Ctl_Reach
 from CROWN_Reach.src.utils.box_set import calculate_volume, prepare_initial_set_v2
+from CROWN_Reach.src.settings import CONFIG
 
 Array = jnp.ndarray
 
@@ -71,14 +72,15 @@ class ReachabilityPenalty(eqx.Module):
     ct_dyn: Optional[Continuous_T_Dynamics] = eqx.field(static=True, default=None)
     
     def __init__(self, mode, state_dim, action_dim, reach_cfg, dyn_frequency, *args, **kwargs):
+        CONFIG["TRUNCATE_TO_AFFINE"] = reach_cfg.get("linear", False)
         self.mode = mode
         if mode == 'dt_dyn':
-            self.reach_analyzer = DT_Plan_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, n_steps_per_plan=1, step_size=1)
+            self.reach_analyzer = DT_Plan_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, n_steps_per_plan=1, step_size=1, config=CONFIG)
         elif mode == 'ct_dyn':
-            self.reach_analyzer = CT_Plan_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, n_steps_per_plan=1, step_size=1/dyn_frequency, init_remainder=reach_cfg.get("init_remainder", 1e-1), frr_rounds=reach_cfg.get("frr_rounds", 5), frr_stop_ratio=reach_cfg.get("frr_stop_ratio", 0.95), sr_window_size=reach_cfg.get("sr_window_size", 100))
+            self.reach_analyzer = CT_Plan_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, n_steps_per_plan=1, step_size=1/dyn_frequency, init_remainder=reach_cfg.get("init_remainder", 1e-1), frr_rounds=reach_cfg.get("frr_rounds", 5), frr_stop_ratio=reach_cfg.get("frr_stop_ratio", 0.95), sr_window_size=reach_cfg.get("sr_window_size", 100), config=CONFIG)
         elif mode == 'ct_ctl':
             self.ct_dyn = kwargs.get("ct_dyn", None)
-            self.reach_analyzer = CT_Ctl_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, controller=None, n_steps_per_control=round(dyn_frequency/kwargs.get("ctl_frequency", dyn_frequency)), step_size=1/dyn_frequency, init_remainder=reach_cfg.get("init_remainder", 1e-1), frr_rounds=reach_cfg.get("frr_rounds", 5), frr_stop_ratio=reach_cfg.get("frr_stop_ratio", 0.95), sr_window_size=reach_cfg.get("sr_window_size", 100), reference_dim=kwargs.get("reference_dim", 0))
+            self.reach_analyzer = CT_Ctl_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, controller=None, n_steps_per_control=round(dyn_frequency/kwargs.get("ctl_frequency", dyn_frequency)), step_size=1/dyn_frequency, init_remainder=reach_cfg.get("init_remainder", 1e-1), frr_rounds=reach_cfg.get("frr_rounds", 5), frr_stop_ratio=reach_cfg.get("frr_stop_ratio", 0.95), sr_window_size=reach_cfg.get("sr_window_size", 100), reference_dim=kwargs.get("reference_dim", 0), config=CONFIG)
         else:
             raise ValueError(f"Unknown mode for ReachabilityPenalty: {mode}")
 
@@ -142,14 +144,15 @@ class ReachabilityPenalty_quad(eqx.Module):
     ct_dyn: Optional[Continuous_T_Dynamics] = eqx.field(static=True, default=None)
     
     def __init__(self, mode, state_dim, action_dim, reach_cfg, dyn_frequency, *args, **kwargs):
+        CONFIG["TRUNCATE_TO_AFFINE"] = reach_cfg.get("linear", False)
         self.mode = mode
         if mode == 'dt_dyn':
-            self.reach_analyzer = DT_Plan_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, n_steps_per_plan=1, step_size=1)
+            self.reach_analyzer = DT_Plan_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, n_steps_per_plan=1, step_size=1, config=CONFIG)
         elif mode == 'ct_dyn':
             raise NotImplementedError("Continuous-time dynamics model for quadrotor uses analytical model, not implemented here.")
         elif mode == 'ct_ctl':
             self.ct_dyn = kwargs.get("ct_dyn", None)
-            self.reach_analyzer = CT_Ctl_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=False, controller=None, n_steps_per_control=round(dyn_frequency/kwargs.get("ctl_frequency", dyn_frequency)), step_size=1/dyn_frequency, init_remainder=reach_cfg.get("init_remainder", 1e-1), frr_rounds=reach_cfg.get("frr_rounds", 5), frr_stop_ratio=reach_cfg.get("frr_stop_ratio", 0.95), sr_window_size=reach_cfg.get("sr_window_size", 100), reference_dim=kwargs.get("reference_dim", 0))
+            self.reach_analyzer = CT_Ctl_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=False, controller=None, n_steps_per_control=round(dyn_frequency/kwargs.get("ctl_frequency", dyn_frequency)), step_size=1/dyn_frequency, init_remainder=reach_cfg.get("init_remainder", 1e-1), frr_rounds=reach_cfg.get("frr_rounds", 5), frr_stop_ratio=reach_cfg.get("frr_stop_ratio", 0.95), sr_window_size=reach_cfg.get("sr_window_size", 100), reference_dim=kwargs.get("reference_dim", 0), config=CONFIG)
         else:
             raise ValueError(f"Unknown mode for ReachabilityPenalty: {mode}")
 

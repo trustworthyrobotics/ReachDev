@@ -33,7 +33,7 @@ def main(config: DictConfig):
     else:
         eval_p_path = os.path.join(data_dir, "data.p")
 
-    use_pid = True
+    use_pid = False
     if use_pid:
         # model: MLP_Controller = load_model(model_dir=model_dir, model_type="ct_ctl", mode="best", task_name=task_name)
         model = PID_Controller(data_cfg)  # use PID for testing CT dynamics only
@@ -98,7 +98,7 @@ def main(config: DictConfig):
     print(f"X error: {jnp.abs(X_gt - X_preds).mean()}")
     print(f"U error: {jnp.abs(U_gt - U_preds).mean()}")
     print(f"v_cmd error: {jnp.abs(v_cmds - v_cmds_preds).mean()}")
-    # exit()
+    exit()
 
     out_dir = os.path.join(model_dir, f"vis{'_pid' if use_pid else ''}")
     os.makedirs(out_dir, exist_ok=True)

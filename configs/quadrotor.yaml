@@ -93,18 +93,18 @@ train_ct_ctl:
   out_dir: "output/runs/${settings.task_name}_ct_ctl"
   data_dir: ${data.ct_ctl.out_path}
   standardize: False
-  enforce_action_bounds: False
+  enforce_action_bounds: True
   train_valid_ratio: 0.9
-  architecture: [64, 64, 64]
+  architecture: [64, 64]
   ctl_frequency: ${data.ct_ctl.frequency}
   target_frequency: 1
-  loss_mode: "stu"
+  loss_mode: "s"
   n_history: 1
   n_rollout_valid: 10
   horizon_scheduler:
     type: "log" # log, linear, const
-    T_init: 1
-    T_final: 1
+    T_init: 10
+    T_final: 10
     log_alpha: 1.0
   step_weight_ub: 2
   noise: 0.005 # std of the Gaussian noise to training data
@@ -112,11 +112,12 @@ train_ct_ctl:
     type: "cos" # cos, linear, const
     lr_init: 0.001
     lr_final: 0.0001
-  n_epoch: 1
+  n_epoch: 5
   reach:
     mode: "mid" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
     after: 0.6 # only for "after" mode, after N*n_epoch epochs
+    linear: True
     eps_init: 0.08
     eps_final: 0.05
     # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
@@ -128,7 +129,7 @@ train_ct_ctl:
     frr_stop_ratio: ${reachability.frr_stop_ratio}
     sr_window_size: ${reachability.sr_window_size}
 
-  batch_size: 1
+  batch_size: 128
   lam_jac_reg: 0.0e-3 # jacobian regularization weight
   wandb:
     enabled: true
@@ -150,4 +151,4 @@ reachability:
 
 test_models:
   dt_dyn_dir: "${train_dt_dyn.out_dir}/log_cos_128_False_mid_eps0.08_0.05_w0.0015_20260114_035115"
-  ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_stu_False_none_0.08_0.05_0.001_20260114_011947"
+  ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_stu_False_True_mid_0.08_0.05_0.001_20260115_024244"
