@@ -7,14 +7,14 @@ import jax
 jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 import equinox as eqx
-
+# jax.profiler.save_device_memory_profile("memory.prof")
 import numpy as np
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from jax2onnx import to_onnx
 from datetime import datetime
 from training.trainer import Trainer
-from training.losses_metrics import TotalLoss, TotalLossCtl, TotalLossCtl_quad
+from training.losses_metrics import TotalLoss, TotalLossCtl, TotalLoss_quad, TotalLossCtl_quad
 
 from utils.logging import PrintLogger, WandbLogger
 
@@ -28,6 +28,10 @@ def _save_ckpt(path_base: str, model, opt_state, step: int, cfg: dict):
 @hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="quadrotor.yaml", version_base=None)
 # @hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml", version_base=None)
 def main(config: DictConfig) -> None:
+    if config["settings"].get("device", "gpu") == "cpu":
+        jax.config.update('jax_platforms', 'cpu')
+        print("Using CPU for training.")
+
     train_mode = config["settings"].get("train_mode", "dt_dyn")
     assert train_mode in {"dt_dyn", "ct_dyn", "ct_ctl"}, f"Unknown train_mode: {train_mode}"
     tr_cfg = config[f"train_{train_mode}"]
@@ -80,7 +84,7 @@ def main(config: DictConfig) -> None:
         if train_mode == "dt_dyn":
             from models.quadrotor.dt_dyn import Quad_Dynamics
             model = Quad_Dynamics(data_cfg, tr_cfg, key=key, stats=stats)
-            loss_class = TotalLoss
+            loss_class = TotalLoss_quad
         elif train_mode == "ct_dyn":
             print("CT dynamics for quadrotor uses analytical model, no training needed.")
             exit(0)
@@ -97,7 +101,7 @@ def main(config: DictConfig) -> None:
         mode=train_mode,
         state_dim=model.Dx,
         action_dim=model.Du,
-        reach_cfg=tr_cfg.get("reachability", {}),
+        reach_cfg=tr_cfg.get("reach", {}),
         dyn_frequency=model.frequency if train_mode != "ct_ctl" else ct_dyn.frequency,
         lam_jac=float(tr_cfg.get("lam_jac_reg", 0.0)),
         ct_dyn=ct_dyn if train_mode == "ct_ctl" else None,

@@ -10,6 +10,7 @@ PRNGKey = jax.Array
 
 class Base_Controller(eqx.Module):
     Dx: int = eqx.field(static=True, default=12)
+    Ds: int = eqx.field(static=True, default=12)
     Du: int = eqx.field(static=True, default=3)
     Dv: int = eqx.field(static=True, default=3)  # velocity commands
     Dr: int = eqx.field(static=True, default=3)
@@ -19,6 +20,7 @@ class Base_Controller(eqx.Module):
 
     def __init__(self, data_cfg: dict):
         self.Dx = data_cfg.get("ct_state_dim", 12)
+        self.Ds = self.Dx
         self.Du = data_cfg.get("ct_action_dim", 3)
         self.Dv = data_cfg.get("dt_action_dim", 3)  # velocity commands
         self.Dr = self.Dv # reference velocity commands
@@ -109,6 +111,7 @@ class PID_Controller(Base_Controller):
 class MLP_Controller(Base_Controller):
     model: MLP
     enforce_action_bounds: bool = eqx.field(static=True, default=True)
+    enable_standardization: bool = eqx.field(static=True, default=False)
     x_mean: Array = eqx.field(static=True)
     x_std: Array = eqx.field(static=True)
     v_mean: Array = eqx.field(static=True)
@@ -129,6 +132,7 @@ class MLP_Controller(Base_Controller):
             key=key,
         )
         if stats is not None:
+            self.enable_standardization = True
             mean = jnp.array(stats["mean"])
             std = jnp.array(stats["std"])
             assert mean.shape == (self.Dx + self.Dv + self.Du,)
@@ -141,6 +145,7 @@ class MLP_Controller(Base_Controller):
             self.u_mean = mean[self.Dx + self.Dv:]
             self.u_std = std[self.Dx + self.Dv:]
         else:
+            self.enable_standardization = False
             self.x_mean = jnp.zeros(self.Dx)
             self.x_std = jnp.ones(self.Dx)
             self.v_mean = jnp.zeros(self.Dv)
@@ -155,21 +160,23 @@ class MLP_Controller(Base_Controller):
         return jax.vmap(self.forward_batchless)(x, v_cmd)
 
     def forward_batchless(self, x, v_cmd):
-        # standardize
-        x = (x - self.x_mean) / self.x_std
-        v_cmd = (v_cmd - self.v_mean) / self.v_std
+        if self.enable_standardization:
+            # standardize
+            x = (x - self.x_mean) / self.x_std
+            v_cmd = (v_cmd - self.v_mean) / self.v_std
         raw = self.model(jnp.concatenate([x, v_cmd], axis=-1))
         if self.enforce_action_bounds:
             lo, hi = self.action_bounds[0], self.action_bounds[1]
-            mid = 0.5 * (hi + lo)
-            half = 0.5 * (hi - lo)
-            u = mid + half * jnp.tanh(raw)
-            # unstandardize
-            u = u * self.u_std + self.u_mean
+            # we use sigmoid to replace tanh because jax_verify does not handle tanh well
+            u = 0.5 * (hi + lo) + (hi - lo) * jax.nn.sigmoid(2 * raw) - 1
+            if self.enable_standardization:
+                # unstandardize
+                u = u * self.u_std + self.u_mean
             return u
         else:
-            # unstandardize
-            raw = raw * self.u_std + self.u_mean
+            if self.enable_standardization:
+                # unstandardize
+                raw = raw * self.u_std + self.u_mean
             return raw
 
     def forward_batchless_single_input(self, inp):

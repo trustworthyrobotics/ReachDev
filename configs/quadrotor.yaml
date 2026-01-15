@@ -2,7 +2,8 @@ settings:
   seed: 0
   task_name: "quadrotor"
   data_mode: "dt_dyn" # {"dt_dyn", "ct_ctl"}
-  train_mode: "dt_dyn" # {"dt_dyn", "ct_ctl"}
+  train_mode: "ct_ctl" # {"dt_dyn", "ct_ctl"}
+  device: "gpu" # {"cpu", "gpu"}
 
 data:
   ct_state_dim: 12 # position + orientation + roll, pitch, yaw + roll, pitch, yaw rates
@@ -70,7 +71,7 @@ train_dt_dyn:
     lr_final: 0.0001
   n_epoch: 20
   reach:
-    mode: "none" # {"none","mid","after"}
+    mode: "mid" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
     after: 0.6 # only for "after" mode, after N*n_epoch epochs
     eps_init: 0.08
@@ -92,6 +93,7 @@ train_ct_ctl:
   out_dir: "output/runs/${settings.task_name}_ct_ctl"
   data_dir: ${data.ct_ctl.out_path}
   standardize: False
+  enforce_action_bounds: False
   train_valid_ratio: 0.9
   architecture: [64, 64, 64]
   ctl_frequency: ${data.ct_ctl.frequency}
@@ -102,7 +104,7 @@ train_ct_ctl:
   horizon_scheduler:
     type: "log" # log, linear, const
     T_init: 1
-    T_final: 10
+    T_final: 1
     log_alpha: 1.0
   step_weight_ub: 2
   noise: 0.005 # std of the Gaussian noise to training data
@@ -110,9 +112,9 @@ train_ct_ctl:
     type: "cos" # cos, linear, const
     lr_init: 0.001
     lr_final: 0.0001
-  n_epoch: 10
+  n_epoch: 1
   reach:
-    mode: "none" # {"none","mid","after"}
+    mode: "mid" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
     after: 0.6 # only for "after" mode, after N*n_epoch epochs
     eps_init: 0.08
@@ -126,12 +128,12 @@ train_ct_ctl:
     frr_stop_ratio: ${reachability.frr_stop_ratio}
     sr_window_size: ${reachability.sr_window_size}
 
-  batch_size: 128
+  batch_size: 1
   lam_jac_reg: 0.0e-3 # jacobian regularization weight
   wandb:
     enabled: true
     project: "${settings.task_name}_ct_ctl"
-    run_name: "${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}_${train_ct_ctl.loss_mode}_${train_ct_ctl.standardize}_${train_ct_ctl.reach.mode}_${train_ct_ctl.reach.eps_init}_${train_ct_ctl.reach.eps_final}_${train_ct_ctl.reach.weight}"
+    run_name: "${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}_${train_ct_ctl.loss_mode}_${train_ct_ctl.standardize}_${train_ct_ctl.enforce_action_bounds}_${train_ct_ctl.reach.mode}_${train_ct_ctl.reach.eps_init}_${train_ct_ctl.reach.eps_final}_${train_ct_ctl.reach.weight}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  
@@ -142,10 +144,10 @@ reachability:
   refine_splits: {0: 2, 1: 2, 2: 2}
   # below for CT reachability settings
   init_remainder: 5e-2
-  frr_rounds: 3
+  frr_rounds: 1
   frr_stop_ratio: 0.95
   sr_window_size: 100
 
 test_models:
-  dt_dyn_dir: "${train_dt_dyn.out_dir}/nt_log_cos_128_False_none_eps0.08_0.05_w0.0015_20260114_011954"
+  dt_dyn_dir: "${train_dt_dyn.out_dir}/log_cos_128_False_mid_eps0.08_0.05_w0.0015_20260114_035115"
   ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_stu_False_none_0.08_0.05_0.001_20260114_011947"

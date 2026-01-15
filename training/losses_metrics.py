@@ -73,7 +73,7 @@ class ReachabilityPenalty(eqx.Module):
     def __init__(self, mode, state_dim, action_dim, reach_cfg, dyn_frequency, *args, **kwargs):
         self.mode = mode
         if mode == 'dt_dyn':
-            self.reach_analyzer = DT_Plan_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, n_steps_per_plan=1, step_size=int(1/dyn_frequency))
+            self.reach_analyzer = DT_Plan_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, n_steps_per_plan=1, step_size=1)
         elif mode == 'ct_dyn':
             self.reach_analyzer = CT_Plan_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, n_steps_per_plan=1, step_size=1/dyn_frequency, init_remainder=reach_cfg.get("init_remainder", 1e-1), frr_rounds=reach_cfg.get("frr_rounds", 5), frr_stop_ratio=reach_cfg.get("frr_stop_ratio", 0.95), sr_window_size=reach_cfg.get("sr_window_size", 100))
         elif mode == 'ct_ctl':
@@ -127,6 +127,66 @@ class ReachabilityPenalty(eqx.Module):
             else:
                 reference_seq = X_tgt
             reference_seq = reference_seq[:, None, :].repeat(T_reach, axis=1)  # [B, T, Dx+Du]
+            _, r_lo, r_up, _, _ = self.reach_analyzer.verify_w_model(f_wrapper, model, X_lo, X_up, n_total_steps=T_reach * self.reach_analyzer.n_steps_per_control, reference_seq=reference_seq)
+        else:
+            _, r_lo, r_up, _, _ = self.reach_analyzer.verify_w_model(f_wrapper, X_lo, X_up, n_total_steps=T_reach, action_seq=U.repeat(X_up.shape[0]//U.shape[0], axis=0)[:, None])
+
+        reach_vol = calculate_volume(r_lo.reshape(-1, T_reach + 1, D), r_up.reshape(-1, T_reach + 1, D), union_init=False, mode='sum') / r_lo.shape[0]
+        reach_penalty = jnp.log(1 + reach_vol)
+        return reach_penalty, {"reach_volume": reach_vol, "reach_penalty": reach_penalty}
+    
+class ReachabilityPenalty_quad(eqx.Module):
+    """Calculates the volume of the reachable set."""
+    mode: str = eqx.field(static=True)
+    reach_analyzer: Union[DT_Plan_Reach, CT_Plan_Reach, CT_Ctl_Reach] = eqx.field(static=True)
+    ct_dyn: Optional[Continuous_T_Dynamics] = eqx.field(static=True, default=None)
+    
+    def __init__(self, mode, state_dim, action_dim, reach_cfg, dyn_frequency, *args, **kwargs):
+        self.mode = mode
+        if mode == 'dt_dyn':
+            self.reach_analyzer = DT_Plan_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, n_steps_per_plan=1, step_size=1)
+        elif mode == 'ct_dyn':
+            raise NotImplementedError("Continuous-time dynamics model for quadrotor uses analytical model, not implemented here.")
+        elif mode == 'ct_ctl':
+            self.ct_dyn = kwargs.get("ct_dyn", None)
+            self.reach_analyzer = CT_Ctl_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=False, controller=None, n_steps_per_control=round(dyn_frequency/kwargs.get("ctl_frequency", dyn_frequency)), step_size=1/dyn_frequency, init_remainder=reach_cfg.get("init_remainder", 1e-1), frr_rounds=reach_cfg.get("frr_rounds", 5), frr_stop_ratio=reach_cfg.get("frr_stop_ratio", 0.95), sr_window_size=reach_cfg.get("sr_window_size", 100), reference_dim=kwargs.get("reference_dim", 0))
+        else:
+            raise ValueError(f"Unknown mode for ReachabilityPenalty: {mode}")
+
+    def __call__(self, model: Union[Quad_Dynamics, MLP_Controller], X, U, eps, reach_bs, key, splits_cfg):
+        T_reach = U.shape[1]
+        D = model.Dx + model.Du
+        # pick a random subset for reachability
+        if X.shape[0] > reach_bs:
+            perm = jax.random.permutation(key, X.shape[0])
+            idxs = perm[:reach_bs]
+            X = X[idxs]
+            U = U[idxs]
+        state_init = X[:, 0, :model.Ds]
+        state_lo = state_init - eps
+        state_up = state_init + eps
+
+        if self.mode == 'dt_dyn':
+            def f_wrapper(x):
+                state_next = model(x)
+                action_next = x[-model.Du:]
+                return jnp.concatenate([state_next, action_next], axis=-1)
+        elif self.mode == 'ct_dyn':
+            raise NotImplementedError("Continuous-time dynamics model for quadrotor uses analytical model, not implemented here.")
+        elif self.mode == 'ct_ctl':
+            def f_wrapper(x):
+                dx = self.ct_dyn(x)
+                du = jnp.zeros_like(x[-self.ct_dyn.Du:])
+                return jnp.concatenate([dx, du], axis=-1)
+        else:
+            raise ValueError(f"Unknown mode for ReachabilityPenalty: {self.mode}")
+        X_lo = jnp.concatenate([state_lo, jnp.zeros_like(U[:, 0, :])], axis=-1)
+        X_up = jnp.concatenate([state_up, jnp.zeros_like(U[:, 0, :])], axis=-1)
+        X_lo, X_up = prepare_initial_set_v2(X_lo, X_up, splits_cfg=splits_cfg)
+        if self.mode == 'ct_ctl':
+            v_cmds = X[:, :-1, -model.Dv:]  # [B, T, Dv]
+            reference_seq = v_cmds
+            T_reach = T_reach * self.reach_analyzer.n_steps_per_control
             _, r_lo, r_up, _, _ = self.reach_analyzer.verify_w_model(f_wrapper, model, X_lo, X_up, n_total_steps=T_reach, reference_seq=reference_seq)
         else:
             _, r_lo, r_up, _, _ = self.reach_analyzer.verify_w_model(f_wrapper, X_lo, X_up, n_total_steps=T_reach, action_seq=U.repeat(X_up.shape[0]//U.shape[0], axis=0)[:, None])
@@ -135,7 +195,6 @@ class ReachabilityPenalty(eqx.Module):
         reach_penalty = jnp.log(1 + reach_vol)
         return reach_penalty, {"reach_volume": reach_vol, "reach_penalty": reach_penalty}
     
-
 class TotalLoss(eqx.Module):
     mse_layer: MSELoss
     jac_layer: JacobianReg
@@ -157,7 +216,7 @@ class TotalLoss(eqx.Module):
         self.lam_reach = reach_cfg.get("weight", 0.0)
         self.reach_splits = reach_cfg.get("splits", {})
 
-    def __call__(self, model: Union[T_Dynamics, Continuous_T_Dynamics], X, U, enable_reach, key, step_weights, reach_eps=0.0, reach_bs=32):
+    def __call__(self, model, X, U, enable_reach, key, step_weights, reach_eps=0.0, reach_bs=32):
         
         # 1. Always compute MSE and Jacobian (Standard JAX code)
         l_mse, m_mse = self.mse_layer(model, X, U, step_weights=step_weights)
@@ -174,6 +233,20 @@ class TotalLoss(eqx.Module):
             total_loss = total_loss + (self.lam_reach * l_reach)
             metrics.update(m_reach)
         return total_loss, metrics
+
+class TotalLoss_quad(TotalLoss):
+    reach_layer: Optional[ReachabilityPenalty_quad]
+
+    def __init__(self, mode: str, state_dim: int, action_dim: int, reach_cfg: dict, dyn_frequency: float, lam_jac: float, *args, **kwargs):
+        self.mse_layer = MSELoss()
+        self.jac_layer = JacobianReg()
+        if reach_cfg.get("mode", "none") != "none":
+            self.reach_layer = ReachabilityPenalty_quad(mode, state_dim, action_dim, reach_cfg, dyn_frequency, *args, **kwargs)
+        else:
+            self.reach_layer = None
+        self.lam_jac = lam_jac
+        self.lam_reach = reach_cfg.get("weight", 0.0)
+        self.reach_splits = reach_cfg.get("splits", {})
 
 class MSELossCtl(eqx.Module):
     ct_dyn: Continuous_T_Dynamics = eqx.field(static=True)
@@ -309,12 +382,13 @@ class TotalLossCtl(eqx.Module):
 
 class TotalLossCtl_quad(TotalLossCtl):
     mse_layer: MSELossCtl_quad
+    reach_layer: Optional[ReachabilityPenalty_quad]
 
     def __init__(self, mode: str, state_dim: int, action_dim: int, reach_cfg: dict, dyn_frequency: float, lam_jac: float, ct_dyn: Continuous_T_Dynamics, *args, **kwargs):
         self.mse_layer = MSELossCtl_quad(ct_dyn, loss_mode=kwargs.get("loss_mode", "s"))
         self.jac_layer = JacobianReg()
         if reach_cfg.get("mode", "none") != "none":
-            self.reach_layer = ReachabilityPenalty(mode, state_dim, action_dim, reach_cfg, dyn_frequency, ct_dyn=ct_dyn, *args, **kwargs)
+            self.reach_layer = ReachabilityPenalty_quad(mode, state_dim, action_dim, reach_cfg, dyn_frequency, ct_dyn=ct_dyn, *args, **kwargs)
         else:
             self.reach_layer = None
         self.lam_jac = lam_jac

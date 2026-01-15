@@ -135,8 +135,13 @@ class Trainer:
         latest_reach_vol = 0
         latest_reach_penalty = 0
         curr_reach_eps = 0.0
+        last_T = self.T_init
         for epoch in range(1, self.cfg["n_epoch"] + 1):
             curr_T = int(self.T_schedule(epoch))
+            if curr_T != last_T:
+                print(f"Epoch {epoch}: updating curr_T from {last_T} to {curr_T}")
+                jax.clear_caches()
+                last_T = curr_T
             if self.reach_mode == "after" and epoch >= int(self.reach_after * self.cfg["n_epoch"]):
                 reach_enabled = True
             # ---- train ----

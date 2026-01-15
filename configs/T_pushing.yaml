@@ -48,7 +48,7 @@ train_dt_dyn:
   pred_mode: "pose" # {"state","pose"}
   train_valid_ratio: 0.9
   architecture: [96, 96, 96]
-  frequency: ${data.datat_dyn.frequency}
+  frequency: ${data.dt_dyn.frequency}
   abs_pose: ${data.abs_pose}
   delta_u: True
   n_history: 1

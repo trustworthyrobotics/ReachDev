@@ -73,7 +73,8 @@ class MLP(eqx.Module):
         if activation == "relu":
             self.activation = jax.nn.relu
         elif activation == "tanh":
-            self.activation = jax.nn.tanh
+            # we use sigmoid to replace tanh because jax_verify does not handle tanh well
+            self.activation = lambda x: 2 * jax.nn.sigmoid(2 * x) - 1
         elif activation == "sigmoid":
             self.activation = jax.nn.sigmoid
         else:

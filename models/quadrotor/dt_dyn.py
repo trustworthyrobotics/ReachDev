@@ -14,11 +14,13 @@ class Quad_Dynamics(eqx.Module):
 
     # ---- static / hyper params ----
     Dx: int = eqx.field(static=True)
+    Ds: int = eqx.field(static=True)
     Dv: int = eqx.field(static=True)
     Du: int = eqx.field(static=True)
     frequency: float = eqx.field(static=True)
     arch: Tuple[int, ...] = eqx.field(static=True)
     dt: float = eqx.field(static=True)
+    enable_standardization: bool = eqx.field(static=True, default=False)
     x_mean: Array = eqx.field(static=True)
     x_std: Array = eqx.field(static=True)
     u_mean: Array = eqx.field(static=True)
@@ -40,6 +42,7 @@ class Quad_Dynamics(eqx.Module):
 
         self.Du = int(data_cfg["dt_action_dim"])
         self.Dx = int(data_cfg["dt_state_dim"])
+        self.Ds = self.Dx
         assert self.Du == 3
         assert self.Dx == 6
         self.Dv = 3  # velocity commands
@@ -57,6 +60,7 @@ class Quad_Dynamics(eqx.Module):
             key=key,
         )
         if stats is not None:
+            self.enable_standardization = True
             mean = jnp.array(stats["mean"])
             std = jnp.array(stats["std"])
             assert mean.shape == (self.Dx + self.Du,)
@@ -67,6 +71,7 @@ class Quad_Dynamics(eqx.Module):
             self.u_mean = mean[self.Dx:]
             self.u_std = std[self.Dx:]
         else:
+            self.enable_standardization = False
             self.x_mean = jnp.zeros(self.Dx)
             self.x_std = jnp.ones(self.Dx)
             self.u_mean = jnp.zeros(self.Du)
@@ -81,8 +86,10 @@ class Quad_Dynamics(eqx.Module):
         return jax.vmap(self.forward_batchless)(x, u)
 
     def forward_batchless(self, x: Array, u: Array) -> Array:
-        x = (x - self.x_mean) / self.x_std
-        u = (u - self.u_mean) / self.u_std
+        if self.enable_standardization:
+            # standardize
+            x = (x - self.x_mean) / self.x_std
+            u = (u - self.u_mean) / self.u_std
         pos = x[:self.Dx - self.Dv]
         vel = x[self.Dx - self.Dv:self.Dx]
         inp = jnp.concatenate([vel, u], axis=-1)  # (3+3,)
@@ -90,7 +97,9 @@ class Quad_Dynamics(eqx.Module):
         new_vel = vel + delta_vel
         new_pos = pos + 0.5 * (vel + new_vel) * self.dt
         x_next = jnp.concatenate([new_pos, new_vel], axis=-1)  # (6,)
-        x_next = x_next * self.x_std + self.x_mean
+        if self.enable_standardization:
+            # unstandardize
+            x_next = x_next * self.x_std + self.x_mean
         return x_next
 
     # --------------------------- batchless onnx for JAX ---------------------------
