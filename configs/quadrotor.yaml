@@ -135,7 +135,7 @@ train_ct_ctl:
   lam_jac_reg: 0.0e-3 # jacobian regularization weight
   wandb:
     enabled: true
-    project: "${settings.task_name}_ct_ctl"
+    project: "${settings.task_name}_ct_ctl_3"
     run_name: "${train_ct_ctl.architecture}_${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}_${train_ct_ctl.loss_mode}_${train_ct_ctl.standardize}_${train_ct_ctl.enforce_action_bounds}_${train_ct_ctl.scale_actions}_${train_ct_ctl.reach.mode}_${train_ct_ctl.reach.eps_init}_${train_ct_ctl.reach.eps_final}_${train_ct_ctl.reach.weight}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
