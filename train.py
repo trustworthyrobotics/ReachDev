@@ -37,7 +37,7 @@ def main(config: DictConfig) -> None:
     tr_cfg = config[f"train_{train_mode}"]
     data_cfg = config["data"]
 
-    tr_cfg["wandb"]["run_name"] = f"{tr_cfg['wandb']['run_name']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    tr_cfg["wandb"]["run_name"] = f"{tr_cfg['wandb']['run_name'].replace(' ', '')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     tr_cfg["out_dir"] = os.path.join(tr_cfg["out_dir"], tr_cfg["wandb"]["run_name"])
     os.makedirs(tr_cfg["out_dir"], exist_ok=True)   
     # copy the config file to the output directory

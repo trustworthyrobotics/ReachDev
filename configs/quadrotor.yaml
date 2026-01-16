@@ -94,6 +94,7 @@ train_ct_ctl:
   data_dir: ${data.ct_ctl.out_path}
   standardize: False
   enforce_action_bounds: True
+  scale_actions: False
   train_valid_ratio: 0.9
   architecture: [64, 64]
   ctl_frequency: ${data.ct_ctl.frequency}
@@ -103,7 +104,7 @@ train_ct_ctl:
   n_rollout_valid: 10
   horizon_scheduler:
     type: "log" # log, linear, const
-    T_init: 10
+    T_init: 1
     T_final: 10
     log_alpha: 1.0
   step_weight_ub: 2
@@ -134,7 +135,7 @@ train_ct_ctl:
   wandb:
     enabled: true
     project: "${settings.task_name}_ct_ctl"
-    run_name: "${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}_${train_ct_ctl.loss_mode}_${train_ct_ctl.standardize}_${train_ct_ctl.enforce_action_bounds}_${train_ct_ctl.reach.mode}_${train_ct_ctl.reach.eps_init}_${train_ct_ctl.reach.eps_final}_${train_ct_ctl.reach.weight}"
+    run_name: "${train_ct_ctl.architecture}_${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}_${train_ct_ctl.loss_mode}_${train_ct_ctl.standardize}_${train_ct_ctl.enforce_action_bounds}_${train_ct_ctl.scale_actions}_${train_ct_ctl.reach.mode}_${train_ct_ctl.reach.eps_init}_${train_ct_ctl.reach.eps_final}_${train_ct_ctl.reach.weight}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  
@@ -151,4 +152,4 @@ reachability:
 
 test_models:
   dt_dyn_dir: "${train_dt_dyn.out_dir}/log_cos_128_False_mid_eps0.08_0.05_w0.0015_20260114_035115"
-  ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_stu_False_True_mid_0.08_0.05_0.001_20260115_024244"
+  ct_ctl_dir: "${train_ct_ctl.out_dir}/[64, 64]_log_10_lr0.001_su_False_True_False_mid_0.08_0.05_0.001_20260115_124934"

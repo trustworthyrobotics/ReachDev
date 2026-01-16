@@ -20,10 +20,9 @@ import sys
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
-from CROWN_Reach.src.utils.box_set import calculate_volume, prepare_initial_set_v2
-
 sys.path.append('CROWN_Reach')
 from CROWN_Reach.src.reachability import CT_Ctl_Reach
+from CROWN_Reach.src.utils.box_set import calculate_volume, prepare_initial_set_v2
 from CROWN_Reach.src.utils.vis import visualize_flowpipe_time
 from models.load import load_model
 from models.ct_dyn import Continuous_T_Dynamics

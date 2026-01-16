@@ -112,6 +112,7 @@ class MLP_Controller(Base_Controller):
     model: MLP
     enforce_action_bounds: bool = eqx.field(static=True, default=True)
     enable_standardization: bool = eqx.field(static=True, default=False)
+    action_scales: Array = eqx.field(static=True)
     x_mean: Array = eqx.field(static=True)
     x_std: Array = eqx.field(static=True)
     v_mean: Array = eqx.field(static=True)
@@ -124,6 +125,10 @@ class MLP_Controller(Base_Controller):
         arch_list = train_cfg["architecture"]
         activation = train_cfg.get("activation", "relu")
         self.enforce_action_bounds = train_cfg.get("enforce_action_bounds", True)
+        if train_cfg.get("scale_actions", False):
+            self.action_scales = (self.action_bounds[1] - self.action_bounds[0]) / 2.0
+        else:
+            self.action_scales = jnp.ones(self.Du)
         self.model = MLP(
             in_size=self.Dx + self.Dv,
             out_size=self.Du,
@@ -172,12 +177,12 @@ class MLP_Controller(Base_Controller):
             if self.enable_standardization:
                 # unstandardize
                 u = u * self.u_std + self.u_mean
-            return u
+            return u * self.action_scales
         else:
             if self.enable_standardization:
                 # unstandardize
                 raw = raw * self.u_std + self.u_mean
-            return raw
+            return raw * self.action_scales
 
     def forward_batchless_single_input(self, inp):
         x = inp[:self.Dx]
