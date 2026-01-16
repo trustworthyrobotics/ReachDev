@@ -63,7 +63,7 @@ def main(config: DictConfig):
         raise ValueError(f"Unknown data dimension: {episodes.shape[2]}")
     
     start_time_step = 0
-    horizon = 20
+    horizon = 100
     episodes = episodes[:, start_time_step:start_time_step + horizon + 1, :]  # [B, T+1, Dx+Du]
 
     X_gt = episodes[..., :state_dim]

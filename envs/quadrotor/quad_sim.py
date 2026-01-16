@@ -26,6 +26,7 @@ class Quad_Sim:
         if init_poses is not None:
             assert self.num_quads == init_poses.shape[0]
         self.curr_states = init_poses  # (num_quads, Dx)
+        self.curr_actions = jnp.zeros((self.num_quads, self.Du))  # (num_quads, Du)
         self.SAVE_IMG = data_config.get("gif", False)
         self.reset(init_poses, target_poses)
 
@@ -33,6 +34,7 @@ class Quad_Sim:
         if init_poses is None:
             init_poses = jnp.zeros((self.num_quads, self.Dx))
         self.curr_states = init_poses
+        self.curr_actions = jnp.zeros((self.num_quads, self.Du))
         if target_poses is not None:
             target_poses = jnp.array(target_poses)
         self.target_poses = target_poses
@@ -58,6 +60,7 @@ class Quad_Sim:
         for _ in range(n_sim_steps):
             next_states = self.forward_batch(self.curr_states, actions)
             self.curr_states = next_states
+            self.curr_actions = actions
 
             # Log to history
             step_data = {
@@ -67,6 +70,9 @@ class Quad_Sim:
             self.add_history(step_data)
             
         return step_data
+
+    def get_states(self):
+        return {'state': self.curr_states, 'action': self.curr_actions}
 
     def visualize(self, out_dir, fps=30):
         if not self.SAVE_IMG or not self.history:
@@ -130,6 +136,10 @@ class Quad_Sim_Ctl:
         return self.ct_sim.curr_states
 
     @property
+    def curr_actions(self):
+        return self.ct_sim.curr_actions
+
+    @property
     def SAVE_IMG(self):
         return self.ct_sim.SAVE_IMG
 
@@ -157,7 +167,7 @@ class Quad_Sim_Ctl:
         step_data = None
         for _ in range(n_ctl_steps):
             # 1) compute low-level action from current CT state and v_cmd
-            u_low = self._ctl_batch(self.ct_sim.curr_states, v_cmds)  # (num_quads, Du)
+            u_low = self._ctl_batch(self.curr_states, v_cmds)  # (num_quads, Du)
 
             # 2) advance CT sim for one controller tick
             ct_step = self.ct_sim.update(u_low, n_sim_time=self.dt)
@@ -167,6 +177,9 @@ class Quad_Sim_Ctl:
             self.add_history(step_data)
 
         return step_data
+
+    def get_states(self):
+        return {'state': self.curr_states, 'action': self.curr_actions}
 
     def visualize(self, out_dir, fps=30):
         if not self.SAVE_IMG or not self.history:
@@ -220,6 +233,7 @@ class Quad_Sim_DT:
         if init_poses is None:
             init_poses = jnp.zeros((self.num_quads, self.Dx))
         self.curr_states = init_poses
+        self.curr_actions = jnp.zeros((self.num_quads, self.Du))
 
         if target_poses is not None:
             target_poses = jnp.asarray(target_poses)
@@ -256,6 +270,7 @@ class Quad_Sim_DT:
 
             # expose only DT state = first 6 dims of CT state
             self.curr_states = ct_step["state"][:, :self.Dx]
+            self.curr_actions = v_cmds
 
             step_data = {
                 "state": self.curr_states,  # (num_quads, 6)
@@ -264,6 +279,9 @@ class Quad_Sim_DT:
             self.add_history(step_data)
 
         return step_data
+
+    def get_states(self):
+        return {'state': self.curr_states, 'action': self.curr_actions}
 
     def visualize(self, out_dir, fps=30):
         if not self.SAVE_IMG or not self.history:

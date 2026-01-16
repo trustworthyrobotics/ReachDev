@@ -42,7 +42,11 @@ def main(config: DictConfig):
     else:
         eval_p_path = os.path.join(data_dir, "data.p")
 
-    model: MLP_Controller = load_model(model_dir=model_dir, model_type="ct_ctl", mode="best", task_name=task_name)
+    use_pid = False
+    if use_pid:
+        model: PID_Controller = PID_Controller(data_cfg)  # use PID for testing CT dynamics only
+    else:
+        model: MLP_Controller = load_model(model_dir=model_dir, model_type="ct_ctl", mode="best", task_name=task_name)
 
     ct_dyn = Continuous_Quad_Dynamics(data_cfg)
 
@@ -66,7 +70,7 @@ def main(config: DictConfig):
         raise ValueError(f"Unknown data dimension: {episodes.shape[2]}")
     
     select_samples = [0]
-    start_time_step = 0
+    start_time_step = 20
     horizon = 10
     episodes = episodes[select_samples, start_time_step:start_time_step + horizon + 1, :]  # [B, T+1, Dx+Du]
 
@@ -107,10 +111,11 @@ def main(config: DictConfig):
     X_up = jnp.concatenate([state_up, jnp.zeros_like(U_gt[:, 0, :])], axis=-1)
     X_lo, X_up = prepare_initial_set_v2(X_lo, X_up, splits_cfg=splits_cfg)
     
-    v_cmds = X_gt[:, :-1, -model.Dv:]  # [B, T, Dv]
     reference_seq = v_cmds.repeat(max(X_lo.shape[0] // v_cmds.shape[0], 1), axis=0)  # [B, T, Dv]
     T_reach = horizon * reach_analyzer.n_steps_per_control
     enable_reach = True
+    if use_pid:
+        enable_reach = False
     if enable_reach:
         ts, r_lo, r_up, _, _ = reach_analyzer.verify_w_model(f_wrapper, model, X_lo, X_up, n_total_steps=T_reach, reference_seq=reference_seq)
         D = model.Dx + model.Du

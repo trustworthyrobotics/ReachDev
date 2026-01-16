@@ -25,7 +25,7 @@ def main(config: DictConfig) -> None:
     SAVE_IMG = data_config.get("gif", False)
     if SAVE_IMG:
         batch_size = 1
-    episode_length = data_config[data_mode]["episode_length"]
+    episode_length = data_config[data_mode]["episode_length"] + 1 # include initial state
     num_episodes = data_config[data_mode]["num_episodes"]
     num_batches = int(np.ceil(num_episodes / batch_size))
 

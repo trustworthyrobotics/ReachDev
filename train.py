@@ -11,7 +11,7 @@ import equinox as eqx
 import numpy as np
 import hydra
 from omegaconf import DictConfig, OmegaConf
-from jax2onnx import to_onnx
+# from jax2onnx import to_onnx
 from datetime import datetime
 from training.trainer import Trainer
 from training.losses_metrics import TotalLoss, TotalLossCtl, TotalLoss_quad, TotalLossCtl_quad
