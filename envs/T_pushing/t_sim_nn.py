@@ -11,7 +11,7 @@ import equinox as eqx
 
 from envs.T_pushing.t_sim import T_Sim, get_keypoints_from_pose, get_pose_from_keypoints
 from models.load import load_model
-from models.ct_dyn import Continuous_T_Dynamics
+from models.T_pushing.ct_dyn import Continuous_T_Dynamics
 
 class ShadowBody:
     """Minimalist body to mimic pymunk.Body."""

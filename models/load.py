@@ -6,9 +6,9 @@ import jax
 import jax.numpy as jnp
 import equinox as eqx
 
-from models.dt_dyn import T_Dynamics
-from models.ct_dyn import Continuous_T_Dynamics
-from models.ct_ctl import T_controller
+from models.T_pushing.dt_dyn import T_Dynamics
+from models.T_pushing.ct_dyn import Continuous_T_Dynamics
+from models.T_pushing.ct_ctl import T_controller
 
 from models.quadrotor.dt_dyn import Quad_Dynamics
 from models.quadrotor.ct_ctl import MLP_Controller

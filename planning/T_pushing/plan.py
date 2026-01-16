@@ -10,9 +10,9 @@ import pickle
 
 from envs.T_pushing.t_sim import generate_init_target_states, T_Sim
 from models.load import load_model
-from models.dt_dyn import T_Dynamics
-from models.ct_dyn import Continuous_T_Dynamics
-from models.ct_ctl import T_controller
+from models.T_pushing.dt_dyn import T_Dynamics
+from models.T_pushing.ct_dyn import Continuous_T_Dynamics
+from models.T_pushing.ct_ctl import T_controller
 from planning.planner import MPPIPlanner, CEMPlanner
 from planning.T_pushing.plan_utils import generate_test_cases, get_abs_states, make_rollout_and_reward_fns, plot_cost_stat
 

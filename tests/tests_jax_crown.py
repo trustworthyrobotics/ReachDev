@@ -11,7 +11,7 @@ import equinox as eqx
 import yaml
 
 from models.load import load_model
-from models.dt_dyn import T_Dynamics
+from models.T_pushing.dt_dyn import T_Dynamics
 
 state_dim = 8
 action_dim = 2

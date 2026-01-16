@@ -17,14 +17,15 @@ from envs.quadrotor.helper import plot_quad_states_actions, plot_3d_trajectories
 @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="quadrotor.yaml")
 def main(config: DictConfig):
     task_name = config["settings"]["task_name"]
-    model_dir = config["test_models"]["dt_dyn_dir"]
+    mode = "dt_dyn"
+    model_dir = config["test_models"][f"{mode}_dir"]
     config_path = os.path.join(model_dir, "config.yaml")
     # override config
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     data_cfg = config["data"]
-    train_cfg = config["train_dt_dyn"]
-    data_dir = train_cfg.get("data_dir", "output/data/T_pushing_freq10_ctl")
+    train_cfg = config[f"train_{mode}"]
+    data_dir = train_cfg["data_dir"]
 
     use_eval = True
     if use_eval:

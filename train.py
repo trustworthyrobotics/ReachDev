@@ -37,7 +37,7 @@ def main(config: DictConfig) -> None:
     tr_cfg = config[f"train_{train_mode}"]
     data_cfg = config["data"]
 
-    tr_cfg["wandb"]["run_name"] = f"{tr_cfg['wandb']['run_name'].replace(' ', '')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    tr_cfg["wandb"]["run_name"] = f"{tr_cfg['wandb']['run_name'].replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     tr_cfg["out_dir"] = os.path.join(tr_cfg["out_dir"], tr_cfg["wandb"]["run_name"])
     os.makedirs(tr_cfg["out_dir"], exist_ok=True)   
     # copy the config file to the output directory
@@ -57,15 +57,15 @@ def main(config: DictConfig) -> None:
     key = jax.random.PRNGKey(config["settings"]["seed"])
     if "T_pushing" in task_name:
         if train_mode == "dt_dyn":
-            from models.dt_dyn import T_Dynamics
+            from models.T_pushing.dt_dyn import T_Dynamics
             model = T_Dynamics(data_cfg, tr_cfg, key=key)
             loss_class = TotalLoss
         elif train_mode == "ct_dyn":
-            from models.ct_dyn import Continuous_T_Dynamics
+            from models.T_pushing.ct_dyn import Continuous_T_Dynamics
             model = Continuous_T_Dynamics(data_cfg, tr_cfg, key=key)
             loss_class = TotalLoss
         elif train_mode == "ct_ctl":
-            from models.ct_ctl import T_controller
+            from models.T_pushing.ct_ctl import T_controller
             model = T_controller(data_cfg, tr_cfg, key=key)
             from models.load import load_model
             model_dir = data_cfg["ct_ctl"]["model_dir"]

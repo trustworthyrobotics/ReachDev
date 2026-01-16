@@ -14,8 +14,8 @@ from omegaconf import DictConfig
 import yaml
 
 from models.load import load_model
-from models.ct_dyn import Continuous_T_Dynamics
-from models.ct_ctl import T_controller
+from models.T_pushing.ct_dyn import Continuous_T_Dynamics
+from models.T_pushing.ct_ctl import T_controller
 from utils.T_pushing import pose_to_kp
 
 def plot_Tee(tee_kp, c="orange", label=""):

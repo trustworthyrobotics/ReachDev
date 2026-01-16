@@ -9,7 +9,7 @@ Array = jnp.ndarray
 PRNGKey = jax.Array
 
 
-from models.dt_dyn import T_Dynamics
+from models.T_pushing.dt_dyn import T_Dynamics
 
 class Continuous_T_Dynamics(T_Dynamics):
     frequency: float = eqx.field(static=True)

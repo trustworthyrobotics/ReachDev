@@ -93,7 +93,7 @@ train_ct_ctl:
   out_dir: "output/runs/${settings.task_name}_ct_ctl"
   data_dir: ${data.ct_ctl.out_path}
   standardize: False
-  enforce_action_bounds: True
+  enforce_action_bounds: False
   scale_actions: False
   train_valid_ratio: 0.9
   architecture: [64, 64]
@@ -113,7 +113,7 @@ train_ct_ctl:
     type: "cos" # cos, linear, const
     lr_init: 0.001
     lr_final: 0.0001
-  n_epoch: 5
+  n_epoch: 4
   reach:
     mode: "mid" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
@@ -122,7 +122,7 @@ train_ct_ctl:
     eps_init: 0.08
     eps_final: 0.05
     # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
-    weight: 0.001
+    weight: 0.0005
     # batch_size: 8
     # below for CT reachability settings
     init_remainder: ${reachability.init_remainder}
@@ -152,4 +152,5 @@ reachability:
 
 test_models:
   dt_dyn_dir: "${train_dt_dyn.out_dir}/log_cos_128_False_mid_eps0.08_0.05_w0.0015_20260114_035115"
-  ct_ctl_dir: "${train_ct_ctl.out_dir}/[64, 64]_log_10_lr0.001_su_False_True_False_mid_0.08_0.05_0.001_20260115_124934"
+  # ct_ctl_dir: "${train_ct_ctl.out_dir}/[64,_64]_log_10_lr0.001_s_False_True_False_none_0.08_0.05_0.001_20260115_194139"
+  ct_ctl_dir: "${train_ct_ctl.out_dir}/[64,_64]_log_10_lr0.001_s_False_False_False_mid_0.05_0.05_0.0005_20260115_222733"

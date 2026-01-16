@@ -25,7 +25,7 @@ sys.path.append('CROWN_Reach')
 from CROWN_Reach.src.reachability import DT_Plan_Reach
 from CROWN_Reach.src.utils.vis import visualize_flowpipe_time
 from models.load import load_model
-from models.dt_dyn import T_Dynamics
+from models.T_pushing.dt_dyn import T_Dynamics
 from utils.T_pushing import pose_to_kp
 from envs.T_pushing.t_sim import T_Sim
 import numpy as np
