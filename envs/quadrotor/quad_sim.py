@@ -20,8 +20,11 @@ class Quad_Sim:
         self.dt = 1.0 / self.frequency
         
         # JIT the batch forward for the whole fleet
-        self.forward_batch = eqx.filter_jit(jax.vmap(self.model.forward_batchless))
-
+        self.forward_batch = eqx.filter_jit(self.model.forward)
+        if self.Du == 3:
+            self.action_bounds = jnp.array(data_config.get("action_bounds", [[-15.0, -1.0, -1.0], [15.0, 1.0, 1.0]]))
+        else:
+            self.action_bounds = jnp.array(data_config.get("action_bounds", [[-15.0, -1.0, -1.0, -0.5], [15.0, 1.0, 1.0, 0.5]]))
         self.num_quads = num_quads
         if init_poses is not None:
             assert self.num_quads == init_poses.shape[0]
@@ -57,6 +60,7 @@ class Quad_Sim:
 
         # Step dynamics forward
         # forward_batch integrates from t=0 to t=self.dt (typically 0.1s for this benchmark)
+        actions = jnp.clip(actions, self.action_bounds[0], self.action_bounds[1])
         for _ in range(n_sim_steps):
             next_states = self.forward_batch(self.curr_states, actions)
             self.curr_states = next_states
@@ -71,8 +75,12 @@ class Quad_Sim:
             
         return step_data
 
-    def get_states(self):
+    def get_env_states(self):
         return {'state': self.curr_states, 'action': self.curr_actions}
+
+    def force_update(self, deltas):
+        self.curr_states = self.curr_states + jnp.array(deltas)
+        return
 
     def visualize(self, out_dir, fps=30):
         if not self.SAVE_IMG or not self.history:
@@ -115,7 +123,7 @@ class Quad_Sim_Ctl:
         self.controller = PID_Controller(data_config) if controller is None else controller
 
         # jit + vmap for fleet
-        self._ctl_batch = eqx.filter_jit(jax.vmap(self.controller))
+        self._ctl_batch = eqx.filter_jit(self.controller.forward)
 
         self.reset(init_poses, target_poses)
 
@@ -178,8 +186,12 @@ class Quad_Sim_Ctl:
 
         return step_data
 
-    def get_states(self):
+    def get_env_states(self):
         return {'state': self.curr_states, 'action': self.curr_actions}
+
+    def force_update(self, deltas):
+        self.ct_sim.force_update(deltas)
+        return
 
     def visualize(self, out_dir, fps=30):
         if not self.SAVE_IMG or not self.history:
@@ -280,7 +292,7 @@ class Quad_Sim_DT:
 
         return step_data
 
-    def get_states(self):
+    def get_env_states(self):
         return {'state': self.curr_states, 'action': self.curr_actions}
 
     def visualize(self, out_dir, fps=30):

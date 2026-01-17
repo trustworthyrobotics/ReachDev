@@ -106,7 +106,12 @@ class PID_Controller(Base_Controller):
     def forward(self, x: Array, v_cmd: Array) -> Array:
         return jax.vmap(self.forward_batchless)(x, v_cmd)
 
-    __call__ = forward_batchless
+    def forward_batchless_single_input(self, inp):
+        x = inp[:self.Dx]
+        v_cmd = inp[-self.Dv:]
+        return self.forward_batchless(x, v_cmd)
+
+    __call__ = forward_batchless_single_input
 
 class MLP_Controller(Base_Controller):
     model: MLP
@@ -173,7 +178,7 @@ class MLP_Controller(Base_Controller):
         if self.enforce_action_bounds:
             lo, hi = self.action_bounds[0], self.action_bounds[1]
             # we use sigmoid to replace tanh because jax_verify does not handle tanh well
-            u = 0.5 * (hi + lo) + (hi - lo) * jax.nn.sigmoid(2 * raw) - 1
+            u = 0.5 * (hi + lo) + 0.5 * (hi - lo) * (2 * jax.nn.sigmoid(2 * raw) - 1)
             if self.enable_standardization:
                 # unstandardize
                 u = u * self.u_std + self.u_mean

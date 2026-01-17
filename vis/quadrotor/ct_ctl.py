@@ -99,7 +99,7 @@ def main(config: DictConfig):
     print(f"X error: {jnp.abs(X_gt - X_preds).mean()}")
     print(f"U error: {jnp.abs(U_gt - U_preds).mean()}")
     print(f"v_cmd error: {jnp.abs(v_cmds - v_cmds_preds).mean()}")
-    # exit()
+    exit()
 
     out_dir = os.path.join(model_dir, f"vis{'_pid' if use_pid else ''}")
     os.makedirs(out_dir, exist_ok=True)

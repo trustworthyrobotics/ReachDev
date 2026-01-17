@@ -44,7 +44,7 @@ class SamplingPlannerBase(eqx.Module):
         # required
         self.rollout_fn      = model_rollout_fn
         self.eval_fn         = evaluate_traj_fn
-        self.action_dim      = int(config["data"]["action_dim"])
+        self.action_dim      = int(planning_config["action_dim"])
         self.n_sample        = int(planning_config["n_sample"])
         self.horizon    = int(planning_config["horizon"])
         self.n_update_iter   = int(planning_config["n_update_iter"])

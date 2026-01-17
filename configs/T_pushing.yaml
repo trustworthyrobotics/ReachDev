@@ -209,7 +209,8 @@ planning:
   n_act_step: 1
   num_test: 1
   test_id: 0
-  action_bound: 30
+  action_dim: ${data.dt_action_dim}
+  action_bound: ${data.action_bound}
   verbose: True
 
   disturbance:
