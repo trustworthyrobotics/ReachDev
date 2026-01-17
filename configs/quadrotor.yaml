@@ -92,7 +92,7 @@ train_dt_dyn:
 train_ct_ctl:
   out_dir: "output/runs/${settings.task_name}_ct_ctl"
   data_dir: ${data.ct_ctl.out_path}
-  activation: "relu" # {"relu", "tanh"}
+  activation: "tanh" # {"relu", "tanh"}
   standardize: False
   enforce_action_bounds: True
   scale_actions: False
@@ -123,7 +123,7 @@ train_ct_ctl:
     eps_init: 0.03
     eps_final: 0.01
     # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
-    weight: 0.001
+    weight: 0.0011
     # batch_size: 8
     # below for CT reachability settings
     init_remainder: ${reachability.init_remainder}
@@ -154,4 +154,4 @@ reachability:
 test_models:
   dt_dyn_dir: "${train_dt_dyn.out_dir}/log_cos_128_False_mid_eps0.08_0.05_w0.0015_20260114_035115"
   # ct_ctl_dir: "${train_ct_ctl.out_dir}/[64,_64]_log_10_lr0.001_s_False_True_False_none_0.08_0.05_0.001_20260115_194139"
-  ct_ctl_dir: "${train_ct_ctl.out_dir}/[64,_64]_log_10_lr0.001_s_False_True_False_mid_0.08_0.05_0.001_20260116_015806"
+  ct_ctl_dir: "${train_ct_ctl.out_dir}/[64,_64]_log_10_lr0.001_s_False_True_False_mid_0.03_0.01_0.0011_20260116_195334"
