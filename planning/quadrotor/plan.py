@@ -3,6 +3,7 @@ import numpy as np
 import hydra
 from omegaconf import DictConfig
 import jax
+# jax.config.update('jax_platforms', 'cpu')
 jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 import equinox as eqx
@@ -41,6 +42,8 @@ def main(config: DictConfig):
 
     action_lower_lim = -action_bound * jnp.ones((dt_action_dim,)) / scale
     action_upper_lim = action_bound * jnp.ones((dt_action_dim,)) / scale
+    action_bounds = jnp.stack([action_lower_lim, action_upper_lim], axis=0)[None]
+    acc_limits = jnp.full((1, 3), data_config.get("acc_limits", 1.0))
     
     cost_norm, only_final_cost = planning_config["cost_norm"], planning_config["only_final_cost"]
     max_steps = planning_config["max_steps"] + 1  # +1 to account for initial step
@@ -127,10 +130,11 @@ def main(config: DictConfig):
 
             key, subkey = jax.random.split(key)
             init_act_seq = 0 * jax.random.uniform(subkey,(horizon, dt_action_dim),minval=action_lower_lim,maxval=action_upper_lim,)
+            # init_act_seq = eqx.filter_jit(sample_vel_cmd_sequence)(subkey, amax=acc_limits, num_quads=1, dt=1/dyn_frequency, n_steps=horizon, v0=state_cur[-dt_action_dim:][None], v_bounds=action_bounds).squeeze(axis=1)[1:]
             key, subkey = jax.random.split(key)
             # with jax.disable_jit():
-            #     planning_res = eqx.filter_jit(planner.trajectory_optimization)(key, state_cur, init_act_seq, skip=False, target_state=scaled_target_state)
-            planning_res = eqx.filter_jit(planner.trajectory_optimization)(subkey, state_cur, init_act_seq, skip=False, target_state=scaled_target_state)
+            #     planning_res = eqx.filter_jit(planner.trajectory_optimization)(key, state_cur, init_act_seq, skip=succeed, target_state=scaled_target_state)
+            planning_res = eqx.filter_jit(planner.trajectory_optimization)(subkey, state_cur, init_act_seq, skip=succeed, target_state=scaled_target_state)
             scaled_act_seq = planning_res["act_seq"]
             scaled_state_seq = planning_res["state_seq"]
             act_seq = scaled_act_seq * scale  # (horizon, action_dim)
@@ -183,7 +187,7 @@ def main(config: DictConfig):
                     print(env_state[-1][:dt_state_dim])
                     print(f"   step {t} cost: {step_cost}, action: {env_dict['action']}")
                 step_cost_list.append(step_cost)
-                if step_cost < 1:
+                if step_cost < 5:
                     succeed = True
                 if t >= max_steps:
                     break

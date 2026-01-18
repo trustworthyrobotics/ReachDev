@@ -88,16 +88,16 @@ def main(config: DictConfig):
 
     reach_cfg = train_cfg["reach"]
     eps = float(train_cfg["reach"]["eps_final"])
-    # eps = 0.01
+    eps = 0.02
     # init_remainder = reach_cfg.get("init_remainder", 1e-1)
     # frr_rounds = reach_cfg.get("frr_rounds", 5)
     # frr_stop_ratio = reach_cfg.get("frr_stop_ratio", 0.95)
     # sr_window_size = reach_cfg.get("sr_window_size", 100)
-    init_remainder = eps
+    init_remainder = eps * 5
     frr_rounds = 5
     frr_stop_ratio = 0.95
     sr_window_size = 100
-    # CONFIG["TRUNCATE_TO_AFFINE"] = reach_cfg.get("linear", False)
+    CONFIG["TRUNCATE_TO_AFFINE"] = reach_cfg.get("linear", False)
     reach_analyzer = CT_Ctl_Reach(f_wrapper, state_dim=model.Dx, action_dim=model.Du, nn_dyn=False, controller=model,
                                   n_steps_per_control=n_dyn_steps_per_ctl, step_size=1/dyn_frequency,
                                   init_remainder=init_remainder, frr_rounds=frr_rounds, frr_stop_ratio=frr_stop_ratio, sr_window_size=sr_window_size)
@@ -117,12 +117,13 @@ def main(config: DictConfig):
     if use_pid:
         enable_reach = False
     if enable_reach:
-        ts, r_lo, r_up, _, _ = reach_analyzer.verify_w_model(f_wrapper, model, X_lo, X_up, n_total_steps=T_reach, reference_seq=reference_seq)
+        ts, r_lo, r_up, _, init_shrinked_all = reach_analyzer.verify_w_model(f_wrapper, model, X_lo, X_up, n_total_steps=T_reach, reference_seq=reference_seq)
         D = model.Dx + model.Du
         r_lo = r_lo.reshape(-1, T_reach + 1, D)
         r_up = r_up.reshape(-1, T_reach + 1, D)
         reach_vol = calculate_volume(r_lo, r_up, union_init=False, mode='sum') / r_lo.shape[0]
         print(f"Reachable set volume at time step {T_reach} over {r_lo.shape[0]} partitions: {reach_vol}")
+        print(f"init_shrinked_all: {init_shrinked_all.all()}")
     n_samples = 64
     key = jrandom.PRNGKey(42)
 

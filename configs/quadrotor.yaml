@@ -30,7 +30,7 @@ data:
   J_z: 0.104
   tau_phi: 0.0
   acc_limits: 1.0  # max acceleration for generating velocity commands
-  vel_limits: 5.0  # max velocity for generating velocity commands
+  vel_limits: 2.0  # max velocity for generating velocity commands
 
   dt_dyn:
     out_path: "output/data/${settings.task_name}_freq${data.dt_dyn.frequency}"
@@ -40,9 +40,9 @@ data:
     batch_size: 1024
     frequency: ${data.dt_frequency} # DT dynamics frequency
   ct_ctl:
-    out_path: "output/data/${settings.task_name}_freq${data.ct_ctl.frequency}_ctl"
-    num_episodes: 51200
-    episode_length: 5
+    out_path: "output/data/${settings.task_name}_freq${data.ct_ctl.frequency}_ctl_x1"
+    num_episodes: 10240 # 51200
+    episode_length: 25
     batch_size: 512
     frequency: ${data.ctl_frequency} # CT with controller frequency
   training: True
@@ -92,7 +92,7 @@ train_dt_dyn:
 train_ct_ctl:
   out_dir: "output/runs/${settings.task_name}_ct_ctl"
   data_dir: ${data.ct_ctl.out_path}
-  activation: "tanh" # {"relu", "tanh"}
+  activation: "relu" # {"relu", "tanh"}
   standardize: False
   enforce_action_bounds: False
   scale_actions: False
@@ -116,12 +116,12 @@ train_ct_ctl:
     lr_final: 0.0001
   n_epoch: 4
   reach:
-    mode: "none" # {"none","mid","after"}
+    mode: "mid" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
     after: 0.6 # only for "after" mode, after N*n_epoch epochs
     linear: True
-    eps_init: 0.03
-    eps_final: 0.01
+    eps_init: 0.05
+    eps_final: 0.03
     # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
     weight: 0.0011
     # batch_size: 8
@@ -135,8 +135,8 @@ train_ct_ctl:
   lam_jac_reg: 0.0e-3 # jacobian regularization weight
   wandb:
     enabled: true
-    project: "${settings.task_name}_ct_ctl_3"
-    run_name: "${train_ct_ctl.architecture}_${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}_${train_ct_ctl.loss_mode}_${train_ct_ctl.standardize}_${train_ct_ctl.enforce_action_bounds}_${train_ct_ctl.scale_actions}_${train_ct_ctl.reach.mode}_${train_ct_ctl.reach.eps_init}_${train_ct_ctl.reach.eps_final}_${train_ct_ctl.reach.weight}"
+    project: "${settings.task_name}_ct_ctl_6"
+    run_name: "${train_ct_ctl.activation}_${train_ct_ctl.architecture}_${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}_${train_ct_ctl.loss_mode}_${train_ct_ctl.standardize}_${train_ct_ctl.enforce_action_bounds}_${train_ct_ctl.scale_actions}_${train_ct_ctl.reach.mode}_${train_ct_ctl.reach.eps_init}_${train_ct_ctl.reach.eps_final}_${train_ct_ctl.reach.weight}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  
@@ -147,19 +147,19 @@ reachability:
   refine_splits: {0: 2, 1: 2, 2: 2}
   # below for CT reachability settings
   init_remainder: 5e-2
-  frr_rounds: 1
+  frr_rounds: 2
   frr_stop_ratio: 0.95
   sr_window_size: 100
 
 test_models:
   dt_dyn_dir: "${train_dt_dyn.out_dir}/log_cos_128_False_mid_eps0.08_0.05_w0.0015_20260116_214411"
   # ct_ctl_dir: "${train_ct_ctl.out_dir}/[64,_64]_log_10_lr0.001_s_False_True_False_none_0.08_0.05_0.001_20260115_194139"
-  ct_ctl_dir: "${train_ct_ctl.out_dir}/[64,_64]_log_10_lr0.001_su_False_True_False_none_0.03_0.01_0.0011_20260117_023802"
+  ct_ctl_dir: "${train_ct_ctl.out_dir}/relu_[64,_64]_log_10_lr0.001_su_False_False_False_none_0.05_0.03_0.0011_20260117_205922"
 
 planning:
   out_path: "output/planning/${settings.task_name}/${planning.test_id}_${planning.disturbance.type}_${planning.disturbance.init}_${planning.disturbance.inter}_${planning.planner}_${planning.n_sample}"
   horizon: 15
-  max_steps: 50
+  max_steps: 100
   n_act_step: 1
   num_test: 1
   test_id: 0
@@ -173,7 +173,7 @@ planning:
     inter: 0.01
 
   enable_ctl: true
-  use_pid: true
+  use_pid: false
   reach_in_obj: false
   reach_weight: 0.1
   refinement:
@@ -192,7 +192,7 @@ planning:
   reject_bad: True
   mppi:
     reward_weight: 50
-    noise_level: 0.5
+    noise_level: 0.2
     # noise_decay: 0.95
     # beta_filter: 0.7
   cem:

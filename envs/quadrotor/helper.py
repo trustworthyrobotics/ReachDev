@@ -32,32 +32,33 @@ def sample_vel_cmd_sequence(
         v0 = jnp.asarray(v0, dtype=jnp.float32)
         assert v0.shape == (num_quads, 3)
 
+    # dv_max = (amax * dt) # (num_quads, 3)
+
+    # dv_max = dv_max[None]
+    # dv = jax.random.uniform(key, (T - 1, num_quads, 3), minval=-dv_max, maxval=dv_max)  # (T-1,num_quads,3)
+    # v_seq = v0[None, :] + jnp.cumsum(dv, axis=0)             # (T-1,num_quads,3), starts at v0+dv0
+    # v_seq = jnp.concatenate([v0[None, :], v_seq], axis=0)    # (T,num_quads,3)
+    # if v_bounds is not None:
+    #     assert v_bounds.shape == (num_quads, 2, 3)
+    #     v_seq = jnp.clip(v_seq, v_bounds[:, 0][None], v_bounds[:, 1][None])  # (T,num_quads,3)
+
+    # return v_seq  # (T,num_quads,3)
+
     dv_max = (amax * dt) # (num_quads, 3)
+    def step(carry, k):
+        v = carry
+        # random delta-v with ||dv||_inf <= dv_max
+        k, sub = jax.random.split(k)
+        dv = jax.random.uniform(sub, (num_quads, 3), minval=-dv_max, maxval=dv_max)
+        v_next = v + dv
+        if v_bounds is not None:
+            v_next = jnp.clip(v_next, v_bounds[:, 0], v_bounds[:, 1])
+        return v_next, v_next
 
-    dv_max = dv_max[None]
-    dv = jax.random.uniform(key, (T - 1, num_quads, 3), minval=-dv_max, maxval=dv_max)  # (T-1,num_quads,3)
-    v_seq = v0[None, :] + jnp.cumsum(dv, axis=0)             # (T-1,num_quads,3), starts at v0+dv0
-    v_seq = jnp.concatenate([v0[None, :], v_seq], axis=0)    # (T,num_quads,3)
-    if v_bounds is not None:
-        assert v_bounds.shape == (num_quads, 2, 3)
-        v_seq = jnp.clip(v_seq, v_bounds[:, 0][None], v_bounds[:, 1][None])  # (T,num_quads,3)
-
-    return v_seq  # (T,num_quads,3)
-
-    # def step(carry, k):
-    #     v = carry
-    #     # random delta-v with ||dv||_inf <= dv_max
-    #     k, sub = jax.random.split(k)
-    #     dv = jax.random.uniform(sub, (num_quads, 3), minval=-dv_max, maxval=dv_max)
-    #     v_next = v + dv
-    #     if v_bounds is not None:
-    #         v_next = jnp.clip(v_next, v_bounds[:, 0], v_bounds[:, 1])
-    #     return v_next, v_next
-
-    # keys = jax.random.split(key, T - 1)
-    # _, v_hist = jax.lax.scan(step, v0, keys)  # (T-1, num_quads, 3)
-    # v_seq = jnp.concatenate([v0[None, :], v_hist], axis=0)  # (T, num_quads, 3)
-    # return v_seq
+    keys = jax.random.split(key, T - 1)
+    _, v_hist = jax.lax.scan(step, v0, keys)  # (T-1, num_quads, 3)
+    v_seq = jnp.concatenate([v0[None, :], v_hist], axis=0)  # (T, num_quads, 3)
+    return v_seq
 
 def plot_quad_states_actions(state_seq, action_seq, dt, out_path):
     """Plots states and actions in a grid."""
