@@ -25,13 +25,14 @@ def _gen_pose_list(num_test, seed, lo, hi):
 def generate_test_cases(seed, num_test, test_id=0):
     if test_id == 0:
         mid = jnp.zeros((12,))
-        eps = 0.01
-        lo = mid - eps
-        hi = mid + eps
+        pos_eps = 1
+        other_eps = 0.05
+        lo = jnp.concatenate([mid[:3] - pos_eps, mid[3:] - other_eps])
+        hi = jnp.concatenate([mid[:3] + pos_eps, mid[3:] + other_eps])
         init_pose_list = _gen_pose_list(num_test, seed, lo, hi)
         target_mid = mid.at[:3].set(10)
-        target_lo = target_mid - eps
-        target_hi = target_mid + eps
+        target_lo = jnp.concatenate([target_mid[:3] - pos_eps, target_mid[3:] - other_eps])
+        target_hi = jnp.concatenate([target_mid[:3] + pos_eps, target_mid[3:] + other_eps])
         target_pose_list = _gen_pose_list(num_test, seed, target_lo, target_hi)
     else:
         raise ValueError(f"Unknown test_id: {test_id}")

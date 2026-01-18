@@ -218,6 +218,11 @@ planning:
     init: 0.05
     inter: 0.01
 
+  hole:
+    enable: False
+    center: [250, 500]
+    size: [60, 100] # width, height
+
   enable_ctl: true
   reach_in_obj: false
   reach_weight: 0.1

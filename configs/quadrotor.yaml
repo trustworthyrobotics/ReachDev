@@ -123,7 +123,7 @@ train_ct_ctl:
     eps_init: 0.02
     eps_final: 0.01
     # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
-    weight: 0.0008
+    weight: 0.0009
     # batch_size: 8
     # below for CT reachability settings
     init_remainder: ${reachability.init_remainder}
@@ -154,21 +154,22 @@ reachability:
 test_models:
   dt_dyn_dir: "${train_dt_dyn.out_dir}/log_cos_128_False_mid_eps0.08_0.05_w0.0015_20260116_214411"
   # ct_ctl_dir: "${train_ct_ctl.out_dir}/relu_[64,_64]_log_10_lr0.001_su_False_False_False_none_0.02_0.01_0.0011_20260118_000309"
-  ct_ctl_dir: "${train_ct_ctl.out_dir}/relu_[64,_64]_log_10_lr0.001_su_False_False_False_mid_0.02_0.01_0.0008_20260118_003531"
+  # ct_ctl_dir: "${train_ct_ctl.out_dir}/relu_[64,_64]_log_10_lr0.001_su_False_False_False_none_0.05_0.03_0.0011_20260117_205814"
+  ct_ctl_dir: "${train_ct_ctl.out_dir}/relu_[64,_64]_log_5_lr0.001_su_False_False_False_mid_0.02_0.01_0.0009_20260118_020057"
 
 planning:
   out_path: "output/planning/${settings.task_name}/${planning.test_id}_${planning.disturbance.type}_${planning.disturbance.init}_${planning.disturbance.inter}_${planning.planner}_${planning.n_sample}"
   horizon: 20
   max_steps: 100
   n_act_step: 1
-  num_test: 1
+  num_test: 10
   test_id: 0
   action_dim: ${data.dt_action_dim}
   action_bound: 1
   verbose: False
 
   disturbance:
-    type: "normal" # {"none","normal","uniform"}
+    type: "uniform" # {"none","normal","uniform"}
     init: 0.05
     inter: 0.01
     per_act: true # whether to add disturbance per action step (true) or per control step (false)
@@ -176,7 +177,7 @@ planning:
   obstacle:
     enable: true
     pos_list: [[5.0, 5.0, 5.0]]
-    size_list: [3.0]
+    size_list: [2.0]
     inflate: 0.2
     norm: 2
     penalty: 100.0
