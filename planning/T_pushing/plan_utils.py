@@ -173,7 +173,7 @@ def make_rollout_and_reward_fns(
         reach_loss = 0.0
         if use_reach:
             reach_loss = reach_weight * jnp.log1p(reach_aux["reach_vol"])
-            costs = reach_loss  # penalize large reachable set
+            costs = costs + reach_loss  # penalize large reachable set
         return {"rewards": -costs, "reward_seqs": -cost_seqs, "reach_aux": reach_aux, "reach_loss": reach_loss}
 
     def step_cost_fn_np(state, target_state):

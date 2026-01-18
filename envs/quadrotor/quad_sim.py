@@ -79,7 +79,7 @@ class Quad_Sim:
         return {'state': self.curr_states, 'action': self.curr_actions}
 
     def force_update(self, deltas):
-        self.curr_states = self.curr_states + jnp.array(deltas)
+        self.curr_states = self.curr_states.at[:, :deltas.shape[1]].add(deltas)
         return
 
     def visualize(self, out_dir, fps=30):

@@ -121,6 +121,9 @@ def main(config: DictConfig):
         D = model.Dx + model.Du
         r_lo = r_lo.reshape(-1, T_reach + 1, D)
         r_up = r_up.reshape(-1, T_reach + 1, D)
+        # roll actions forward a step to match state dims
+        r_lo = r_lo.at[:, :-1, model.Dx:].set(r_lo[:, 1:, model.Dx:])
+        r_up = r_up.at[:, :-1, model.Dx:].set(r_up[:, 1:, model.Dx:])
         reach_vol = calculate_volume(r_lo, r_up, union_init=False, mode='sum') / r_lo.shape[0]
         print(f"Reachable set volume at time step {T_reach} over {r_lo.shape[0]} partitions: {reach_vol}")
         print(f"init_shrinked_all: {init_shrinked_all.all()}")

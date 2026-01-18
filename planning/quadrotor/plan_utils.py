@@ -81,9 +81,29 @@ def make_rollout_and_reward_fns(
         eps = reach_config.get("eps", 0.05)
         splits_cfg = reach_config.get("refine_splits", {})
         reach_weight = reach_config.get("reach_weight", 0.1)
+        reach_loss_max = reach_config.get("reach_loss_max", 10.0)
 
         _calculate_volume = lambda lo, up: calculate_volume(lo, up, union_init=False, mode='sum')
 
+    enable_obstacle = planning_config.get("obstacle", {}).get("enable", False)
+    if enable_obstacle:
+        obstacle_pos_list = jnp.array(planning_config["obstacle"]["pos_list"])  # [n_obstacle, 3]
+        obstacle_size_list = jnp.array(planning_config["obstacle"]["size_list"])  # [n_obstacle]
+        norm = planning_config["obstacle"].get("norm", 2)
+        penalty = planning_config["obstacle"].get("penalty", 100.0)
+        inflate = planning_config["obstacle"].get("inflate", 0.0)
+
+        def obstacle_cost_fn(state_seqs: jnp.ndarray) -> jnp.ndarray:
+            # state_seqs: [n_sample, horizon, state_dim]
+            pos_seqs = state_seqs[..., :3]  # [n_sample, horizon, 3]
+            n_sample = pos_seqs.shape[0]
+            pos_seqs_exp = pos_seqs[:, :, None, :]  # [n_sample, horizon, 1, 3]
+            obstacle_pos_exp = obstacle_pos_list[None, None, :, :]  # [1, 1, n_obstacle, 3]
+            dists = jnp.linalg.norm(pos_seqs_exp - obstacle_pos_exp, axis=-1, ord=norm)  # [n_sample, horizon, n_obstacle]
+            size_exp = obstacle_size_list[None, None, :] * (1 + inflate)  # [1, 1, n_obstacle]
+            penalties = jnp.maximum(0.0, size_exp - dists)  # [n_sample, horizon, n_obstacle]
+            total_penalty = jnp.sum(penalties, axis=(1, 2)) * penalty # [n_sample]
+            return total_penalty
 
     # [state_dim], [n_sample, horizon, action_dim] -> [n_sample, horizon, state_dim]
     def rollout_fn(state_cur: jnp.ndarray, act_seqs: jnp.ndarray, use_reach: bool) -> jnp.ndarray:
@@ -124,8 +144,11 @@ def make_rollout_and_reward_fns(
             costs = jnp.sum(cost_seqs * step_weight[None, :], axis=-1)
         reach_loss = 0.0
         if use_reach:
-            reach_loss = reach_weight * jnp.log1p(reach_aux["reach_vol"])
-            costs = reach_loss  # penalize large reachable set
+            reach_loss = jnp.clip(reach_weight * jnp.log1p(reach_aux["reach_vol"]), a_max=reach_loss_max)
+            costs = costs + reach_loss  # penalize large reachable set
+        if enable_obstacle:
+            obs_costs = obstacle_cost_fn(state_seqs)
+            costs = costs + obs_costs
         return {"rewards": -costs, "reward_seqs": -cost_seqs, "reach_aux": reach_aux, "reach_loss": reach_loss}
 
     def step_cost_fn_np(state, target_state):

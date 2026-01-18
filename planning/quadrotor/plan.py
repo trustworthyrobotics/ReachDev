@@ -69,10 +69,12 @@ def main(config: DictConfig):
     assert ctl_frequency % dyn_frequency == 0
     n_ctl_per_dyn = round(ctl_frequency / dyn_frequency)
 
-    noise_type = planning_config.get("disturbance", {}).get("type", "none")
+    dist_config = planning_config.get("disturbance", {})
+    noise_type = dist_config.get("type", "none")
     assert noise_type in {"none", "normal", "uniform"}, f"Unknown disturbance type: {noise_type}"
-    noise_init = planning_config.get("disturbance", {}).get("init", 0.0)
-    noise_inter = planning_config.get("disturbance", {}).get("inter", 0.0)
+    noise_init = dist_config.get("init", 0.0)
+    noise_inter = dist_config.get("inter", 0.0)
+    per_act = dist_config.get("per_act", False)
 
     # reward and planning part
     rollout_fn, reward_fn, step_cost_fn, step_cost_fn_np = make_rollout_and_reward_fns(
@@ -120,12 +122,12 @@ def main(config: DictConfig):
             key, subkey = jax.random.split(key)
             noise_param = noise_init
             if noise_type == "normal":
-                noise = jax.random.normal(subkey, shape=(ct_state_dim,)) * noise_param
+                noise = jax.random.normal(subkey, shape=(dt_state_dim,)) * noise_param
             elif noise_type == "uniform":
-                noise = jax.random.uniform(subkey, shape=(ct_state_dim,), minval=-1.0, maxval=1.0) * noise_param
+                noise = jax.random.uniform(subkey, shape=(dt_state_dim,), minval=-1.0, maxval=1.0) * noise_param
             else:
-                noise = jnp.zeros((ct_state_dim,))
-            # state_cur = state_cur.at[0:ct_state_dim].add(noise)
+                noise = jnp.zeros((dt_state_dim,))
+            state_cur = state_cur.at[0:dt_state_dim].add(noise)
             # env.force_update([[noise[0] * scale, noise[1] * scale, noise[2]]])  # apply disturbance
 
             key, subkey = jax.random.split(key)
@@ -153,7 +155,32 @@ def main(config: DictConfig):
             for step in range(n_act_step):
                 v_cmd = scaled_act_seq[step, :]
                 sub_env_states = []
+
+                if per_act:
+                    key, subkey = jax.random.split(key)
+                    noise_param = noise_inter
+                    if noise_type == "normal":
+                        noise = jax.random.normal(subkey, shape=(ct_state_dim,)) * noise_param
+                    elif noise_type == "uniform":
+                        noise = jax.random.uniform(subkey, shape=(ct_state_dim,), minval=-1.0, maxval=1.0) * noise_param
+                    else:
+                        noise = jnp.zeros((ct_state_dim,))
+
+                    env.force_update(noise[:ct_state_dim][None])  # apply disturbance
+
                 for ctl_step in range(n_ctl_per_dyn):
+                    if not per_act:
+                        key, subkey = jax.random.split(key)
+                        noise_param = noise_inter
+                        if noise_type == "normal":
+                            noise = jax.random.normal(subkey, shape=(ct_state_dim,)) * noise_param
+                        elif noise_type == "uniform":
+                            noise = jax.random.uniform(subkey, shape=(ct_state_dim,), minval=-1.0, maxval=1.0) * noise_param
+                        else:
+                            noise = jnp.zeros((ct_state_dim,))
+
+                        env.force_update(noise[:dt_state_dim][None] * scale)  # apply disturbance
+
                     next_action = v_cmd[None]
                     if verbose:
                         print(f"   controller action: {next_action}")
@@ -164,18 +191,6 @@ def main(config: DictConfig):
 
                     # state_cur = jnp.array(env_dict["state"]).squeeze()[:dt_state_dim] / scale
                     env_state = np.concatenate([env_dict["state"], next_action, env_dict["action"]], axis=-1).squeeze()
-                    
-                    key, subkey = jax.random.split(key)
-                    noise_param = noise_inter
-                    if noise_type == "normal":
-                        noise = jax.random.normal(subkey, shape=(ct_state_dim,)) * noise_param
-                    elif noise_type == "uniform":
-                        noise = jax.random.uniform(subkey, shape=(ct_state_dim,), minval=-1.0, maxval=1.0) * noise_param
-                    else:
-                        noise = jnp.zeros((ct_state_dim,))
-                    # state_cur = state_cur + noise
-
-                    env.force_update([noise * scale])  # apply disturbance
 
                     sub_env_states.append(env_state)
                 env_state = np.array(sub_env_states)
@@ -187,7 +202,7 @@ def main(config: DictConfig):
                     print(env_state[-1][:dt_state_dim])
                     print(f"   step {t} cost: {step_cost}, action: {env_dict['action']}")
                 step_cost_list.append(step_cost)
-                if step_cost < 5:
+                if step_cost < 1:
                     succeed = True
                 if t >= max_steps:
                     break
@@ -211,8 +226,8 @@ def main(config: DictConfig):
         X_gt = jnp.concatenate(gt_states, axis=0)[:, None]
         v_cmds = X_gt[:, :, ct_state_dim:ct_state_dim + dt_action_dim]
         U_gt = X_gt[:, :, -ct_action_dim:]
-        plot_3d_trajectories(X_gt[:, :, :3], num_quads=1, dt=ct_ctl.dt, out_path=os.path.join(out_dir, f"gt_trajectories_{i}.png"))
-        plot_quad_states_actions(X_gt[:, 0, :dt_state_dim], v_cmds[:, 0], dt=ct_ctl.dt, out_path=os.path.join(out_dir, f"pred_states_vcmd_{i}.png"))
+        plot_3d_trajectories(X_gt[:, :, :3], num_quads=1, dt=ct_ctl.dt, out_path=os.path.join(out_dir, f"gt_trajectories_{i}.png"), targets=target_pose[None, :3], obs_config=planning_config.get("obstacle", None))
+        plot_quad_states_actions(X_gt[:, 0, :dt_state_dim], v_cmds[:, 0], dt=ct_ctl.dt, out_path=os.path.join(out_dir, f"gt_states_vcmd_{i}.png"))
         plot_quad_states_actions(X_gt[:, 0, :ct_state_dim], U_gt[:, 0], dt=ct_ctl.dt, out_path=os.path.join(out_dir, f"gt_states_actions_{i}.png"))
         env.close()
 
