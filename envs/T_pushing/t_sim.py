@@ -144,6 +144,9 @@ def get_t_comp_centers(stem_size, bar_size):
     x_m, y_m = calculate_com([x_s, x_b], [y_s, y_b], [m_s, m_b])
     return [x_s, y_s], [x_b, y_b], [x_m, y_m]
 
+def get_t_comp_centers_w_com(stem_size, bar_size):
+    [x_s, y_s], [x_b, y_b], [x_m, y_m] = get_t_comp_centers(stem_size, bar_size)
+    return [x_s - x_m, y_s - y_m], [x_b - x_m, y_b - y_m]
 
 def get_keypoints_from_pose(pose, param_dict, include_com=False):
     stem_size, bar_size = param_dict["stem_size"], param_dict["bar_size"]
@@ -204,11 +207,15 @@ def get_offests_w_origin(param_dict):
 
 if __name__ == "__main__":
     param_dict = {
-        "stem_size": (10, 60),
-        "bar_size": (60, 10),
+        "stem_size": [30, 90],
+        "bar_size": [120, 30],
         "pusher_size": 5,
-        "save_img": False,
-        "enable_vis": True,
+        "save_img": True,
+        "enable_vis": False,
+        "window_size": 500,
+        "obs_norm": 1,
+        "obs_pos_list": [[110., 450.], [390., 450.]],
+        "obs_size_list": [[110.,  50.], [110.,  50.]],
     }
 
     # init_poses = [[[250,250,math.radians(45)], [150,150,math.radians(-45)]]]
@@ -228,3 +235,5 @@ if __name__ == "__main__":
     for i in range(5):
         sim.render()
         time.sleep(0.5)
+    sim.save_gif("output/t_sim.gif")
+    sim.close()

@@ -165,7 +165,7 @@ def main(config: DictConfig):
     print(f"v_cmd error: {jnp.abs(v_cmds - v_cmds_preds).mean()}")
     # exit()
 
-    out_dir = os.path.join(model_dir, f"vis_reach")
+    out_dir = os.path.join(model_dir, f"vis_reach_T{horizon}_eps{eps}_split{X_lo.shape[0]}")
     os.makedirs(out_dir, exist_ok=True)
 
     if enable_reach:

@@ -88,6 +88,8 @@ class SamplingPlannerBase(eqx.Module):
             (loss, aux), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(act_seq)
             updates, opt_state = optim.update(grads, opt_state, params=eqx.filter(act_seq, eqx.is_inexact_array))
             act_seq = eqx.apply_updates(act_seq, updates)
+            # clip back into box
+            act_seq = self._clip_actions(act_seq)
             return act_seq, opt_state, loss, aux
 
         for _ in range(self.n_refine_iter):

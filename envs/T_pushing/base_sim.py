@@ -51,7 +51,7 @@ class Base_Sim(object):
         self.obs_color = (128, 128, 128, 255)
         self.obs_pos_list = param_dict.get("obs_pos_list", None)
         self.obs_size_list = param_dict.get("obs_size_list", None)
-        self.obs_type = param_dict.get("obs_type", None)
+        self.obs_norm = param_dict.get("obs_norm", None)
 
     def create_world(self, init_poses, pusher_pos):
         self.space = pymunk.Space()
@@ -319,10 +319,10 @@ class Base_Sim(object):
         if self.obs_pos_list is not None:
             for obs_pos, obs_size in zip(self.obs_pos_list, self.obs_size_list):
                 obs_pos = np.array(obs_pos, dtype=np.int32)
-                obs_size = int(obs_size)
-                if self.obs_type == "circle":
+                obs_size = np.array(obs_size, dtype=np.int32)
+                if self.obs_norm == 2:  # circle
                     cv2.circle(img, obs_pos, obs_size, self.obs_color[:3], -1)
-                elif self.obs_type == "square":
+                elif self.obs_norm == 1:  # rectangle
                     cv2.rectangle(img, tuple(obs_pos - obs_size), tuple(obs_pos + obs_size), self.obs_color[:3], -1)
 
         for draw_target in [True, False]:

@@ -7,6 +7,9 @@ import matplotlib.pyplot as plt
 import jax
 import jax.numpy as jnp
 import sys
+
+from utils.T_pushing import hole_to_walls_aabbs, detect_T_hole_interaction, box_corners_nd
+from envs.T_pushing.t_sim import get_t_comp_centers_w_com, gen_vertices_from_poses
 sys.path.append('CROWN_Reach')
 from CROWN_Reach.src.reachability import DT_Plan_Reach
 from CROWN_Reach.src.utils.box_set import calculate_volume, prepare_initial_set_v2
@@ -35,17 +38,21 @@ def generate_test_cases(seed, num_test, test_id=0):
         init_pose_list = _gen_pose_list(num_test, seed, (240, 250), (130, 150), (30, 60))
         target_pose_list = _gen_pose_list(num_test, seed, (230, 250), (280, 300), (90, 120))
     elif test_id == 1:
-        init_pusher_pos_list = _gen_pose_list(num_test, seed, (100, 100), (100, 100), None)
-        init_pose_list = _gen_pose_list(num_test, seed, (120, 120), (120, 120), (30, 60))
-        target_pose_list = _gen_pose_list(num_test, seed, (200, 200), (200, 200), (0, 0))
-    elif test_id == 2:
-        init_pusher_pos_list = _gen_pose_list(num_test, seed, (100, 100), (100, 100), None)
-        init_pose_list = _gen_pose_list(num_test, seed, (150, 175), (90, 110), (90, 90))
-        target_pose_list = _gen_pose_list(num_test, seed, (215, 235), (365, 385), (160, 200))
-    elif test_id == 3:
-        init_pusher_pos_list = _gen_pose_list(num_test, seed, (100, 100), (100, 100), None)
-        init_pose_list = _gen_pose_list(num_test, seed, (150, 200), (80, 140), (-90, -90))
-        target_pose_list = _gen_pose_list(num_test, seed, (225, 225), (340, 380), (315, 315))
+        init_pusher_pos_list = _gen_pose_list(num_test, seed, (140, 160), (170, 190), None)
+        init_pose_list = _gen_pose_list(num_test, seed, (180, 200), (130, 150), (90, 135))
+        target_pose_list = _gen_pose_list(num_test, seed, (250, 250), (420, 420), (180, 180))
+    # elif test_id == 1:
+    #     init_pusher_pos_list = _gen_pose_list(num_test, seed, (100, 100), (100, 100), None)
+    #     init_pose_list = _gen_pose_list(num_test, seed, (120, 120), (120, 120), (30, 60))
+    #     target_pose_list = _gen_pose_list(num_test, seed, (200, 200), (200, 200), (0, 0))
+    # elif test_id == 2:
+    #     init_pusher_pos_list = _gen_pose_list(num_test, seed, (100, 100), (100, 100), None)
+    #     init_pose_list = _gen_pose_list(num_test, seed, (150, 175), (90, 110), (90, 90))
+    #     target_pose_list = _gen_pose_list(num_test, seed, (215, 235), (365, 385), (160, 200))
+    # elif test_id == 3:
+    #     init_pusher_pos_list = _gen_pose_list(num_test, seed, (100, 100), (100, 100), None)
+    #     init_pose_list = _gen_pose_list(num_test, seed, (150, 200), (80, 140), (-90, -90))
+    #     target_pose_list = _gen_pose_list(num_test, seed, (225, 225), (340, 380), (315, 315))
     else:
         raise ValueError(f"Unknown test_id: {test_id}")
     return init_pusher_pos_list, init_pose_list, target_pose_list
@@ -98,11 +105,13 @@ def plot_cost_stat(cost_stat, out_path):
 
 def make_rollout_and_reward_fns(
     dt_dyn,
-    planning_config: Dict,
+    config: Dict,
     abs_pose: bool = True,
     pred_mode: str = "pose",
     reach_config: Dict = {},
 ):
+    planning_config = config["planning"]
+    data_config = config["data"]
     horizon = planning_config["horizon"]
     cost_norm = planning_config["cost_norm"]
     only_final_cost = planning_config["only_final_cost"]
@@ -115,14 +124,39 @@ def make_rollout_and_reward_fns(
             action_next = x[dt_dyn.Dx:]
             return jnp.concatenate([state_next, action_next], axis=-1)
 
-
         reach_analyzer = DT_Plan_Reach(f_wrapper, state_dim=dt_dyn.Dx, action_dim=dt_dyn.Du, nn_dyn=True, n_steps_per_plan=1, step_size=1)
         eps = reach_config.get("eps", 0.05)
         splits_cfg = reach_config.get("refine_splits", {})
         reach_weight = reach_config.get("reach_weight", 0.1)
+        reach_loss_max = reach_config.get("reach_loss_max", 10.0)
 
         _calculate_volume = lambda lo, up: calculate_volume(lo, up, union_init=False, mode='sum')
 
+    hole_config = planning_config.get("hole", {})
+    enable_hole = hole_config.get("enable", False)
+    if enable_hole:
+        assert pred_mode == "pose", "Hole interaction only implemented for pose prediction mode."
+        hole_center = jnp.array(hole_config["center"])  # [2,]
+        hole_size = jnp.array(hole_config["size"])  # [2,]
+        c_wall, h_wall = hole_to_walls_aabbs(hole_center, hole_size, window_size=data_config["window_size"])
+        c_wall = jnp.array(c_wall)
+        h_wall = jnp.array(h_wall)
+        stem_size = data_config["stem_size"]
+        bar_size = data_config["bar_size"]
+        scale = data_config.get("scale", 1.0)
+        h_T = jnp.array([[stem_size[0] / 2, stem_size[1] / 2],
+                         [bar_size[0] / 2, bar_size[1] / 2]]) / scale  # [2,2]
+        c_s, c_b = get_t_comp_centers_w_com(stem_size, bar_size)
+        c_T_ori = jnp.array([c_s, c_b])[None, :] / scale  # [1,2,2]
+
+        def _detect_interaction(state_seq):
+            # state_seq: [horizon, 3]
+            c_T = c_T_ori + state_seq[..., None, 0:2] # [horizon, 2, 2]
+            angle_T = jnp.concatenate([state_seq[..., 2:3], state_seq[..., 2:3]+jnp.pi/2], axis=-1) # [horizon, 2]
+            interact, _ = detect_T_hole_interaction(c_wall, h_wall, c_T, h_T, angle_T) # [horizon]
+            return interact
+        penalty_factor = hole_config.get("penalty", 100.0)
+        pass
 
     # [state_dim], [n_sample, horizon, action_dim] -> [n_sample, horizon, state_dim]
     def rollout_fn(state_cur: jnp.ndarray, act_seqs: jnp.ndarray, use_reach: bool) -> jnp.ndarray:
@@ -159,6 +193,7 @@ def make_rollout_and_reward_fns(
 
     # assume all are scaled
     def reward_fn(state_seqs: jnp.ndarray, act_seqs: jnp.ndarray, use_reach: bool, reach_aux: Dict, target_state: jnp.ndarray, pusher_pos: jnp.ndarray) -> Dict:
+        # state_seqs: [n_sample, horizon, state_dim]
         if abs_pose:
             abs_state_seqs = state_seqs[..., :-act_seqs.shape[-1]]
         else:
@@ -172,9 +207,16 @@ def make_rollout_and_reward_fns(
             costs = jnp.sum(cost_seqs * step_weight[None, :], axis=-1)
         reach_loss = 0.0
         if use_reach:
-            reach_loss = reach_weight * jnp.log1p(reach_aux["reach_vol"])
+            reach_loss = jnp.clip(reach_weight * jnp.log1p(reach_aux["reach_vol"]), a_max=reach_loss_max)
             costs = costs + reach_loss  # penalize large reachable set
-        return {"rewards": -costs, "reward_seqs": -cost_seqs, "reach_aux": reach_aux, "reach_loss": reach_loss}
+        collision_loss = 0.0
+        if enable_hole:
+            interact = jax.vmap(_detect_interaction)(abs_state_seqs)  # [n_sample, horizon]
+            interact = interact.astype(jnp.float32)
+            collision_loss = jnp.sum(interact, axis=-1) * penalty_factor
+            costs = costs + collision_loss
+
+        return {"rewards": -costs, "reward_seqs": -cost_seqs, "reach_aux": reach_aux, "reach_loss": reach_loss, "collision_loss": collision_loss}
 
     def step_cost_fn_np(state, target_state):
         return (np.linalg.norm(target_state - state, cost_norm)) ** cost_norm
@@ -188,7 +230,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, PillowWriter
 
-def plot_planning_animation(polys_seqs, window_size=(500, 500), fps=10, save_path="plan.gif"):
+def plot_planning_animation(polys_seqs, pusher_pos_seqs, target_polys=None, window_size=(500, 500), pusher_size=5, obs_dict={}, fps=10, save_path="plan.gif"):
     """
     polys_seqs: List of arrays, each [steps, horizon, vertices, 2]
     """
@@ -209,6 +251,22 @@ def plot_planning_animation(polys_seqs, window_size=(500, 500), fps=10, save_pat
         ax.grid(True, linestyle='--', alpha=0.5)
         ax.set_title(f"Sim Step: {frame}")
 
+        # Plot Obstacles
+        if obs_dict and "obs_pos_list" in obs_dict and "obs_size_list" in obs_dict:
+            for obs_pos, obs_size in zip(obs_dict["obs_pos_list"], obs_dict["obs_size_list"]):
+                obs_pos = np.array(obs_pos, dtype=np.int32)
+                obs_size = np.array(obs_size, dtype=np.int32)
+                if obs_dict.get("obs_norm", 1) == 2:  # circle
+                    ax.add_patch(plt.Circle((obs_pos[0], obs_pos[1]), obs_size, color='gray', alpha=0.7, zorder=0))
+                else:  # rectangle
+                    ax.add_patch(plt.Rectangle((obs_pos[0] - obs_size[0], obs_pos[1] - obs_size[1]), 2*obs_size[0], 2*obs_size[1], color='gray', alpha=0.7, zorder=0))
+
+        # Plot Target Polygon
+        # target_polys: [vertices, 2]
+        if target_polys is not None:
+            target_poly = plt.Polygon(target_polys, facecolor='black', edgecolor='none', alpha=0.5, zorder=0)
+            ax.add_patch(target_poly)
+
         # Iterate through different polygon types (stem, bar, etc.)
         # 1. Plot Planned Horizon (Increasing transparency)
         for t in range(1, horizon + 1):
@@ -219,6 +277,10 @@ def plot_planning_animation(polys_seqs, window_size=(500, 500), fps=10, save_pat
                 poly = plt.Polygon(vertices, facecolor=colors[-t], 
                                 edgecolor='none', alpha=alpha * 0.8, zorder=horizon + 1-t)
                 ax.add_patch(poly)
+            # 3. Plot Pusher Position
+            pusher_pos = pusher_pos_seqs[frame, t]
+            ax.add_patch(plt.Circle((pusher_pos[0], pusher_pos[1]), pusher_size, color='black', fill=True, alpha=alpha * 0.8, zorder=horizon + 1-t))
+
         for j in range(n_samples):
             # 2. Plot Current State (Highlighted)
             curr_vertices = polys_seqs[j, frame, 0]
@@ -226,6 +288,9 @@ def plot_planning_animation(polys_seqs, window_size=(500, 500), fps=10, save_pat
                                     facecolor='darkred', 
                                     edgecolor='none', linewidth=2, zorder=horizon + 1)
             ax.add_patch(curr_poly)
+        # 3. Plot Current Pusher Position
+        curr_pusher_pos = pusher_pos_seqs[frame, 0]
+        ax.add_patch(plt.Circle((curr_pusher_pos[0], curr_pusher_pos[1]), pusher_size, color='black', fill=True, zorder=horizon + 1))
 
     ani = FuncAnimation(fig, update, frames=n_sim_steps + 1, repeat=False)
     ani.save(save_path, writer=PillowWriter(fps=fps))
@@ -252,17 +317,31 @@ def merge_t_shape(stem_vertices, bar_vertices):
     ], axis=-2)
     return merged_poly
 
+def plot_plan_from_poses(state_seqs, pusher_pos_seqs, target_pose=None, stem_size=(30, 90), bar_size=(120, 30), window_size=(500, 500), obs_dict={}, fps=10, save_path="plan.gif"):
+    # state_seqs: (N, n_sim_steps+1, horizon+1, 3), pusher_pos_seqs: (n_sim_steps+1, horizon+1, 2), target_pose: (3,)
+    # a list of arrays (N, n_sim_steps+1, horizon+1, n_vertices, 2). there are stem and bar polys with 4 vertices each
+    polys_seqs = merge_t_shape(*np.array(gen_vertices_from_poses(stem_size, bar_size, state_seqs)))
+    target_polys = merge_t_shape(*np.array(gen_vertices_from_poses(stem_size, bar_size, target_pose))) if target_pose is not None else None
+    plot_planning_animation(polys_seqs, pusher_pos_seqs, target_polys=target_polys, window_size=window_size, obs_dict=obs_dict, fps=fps, save_path=save_path)
+
 if __name__ == "__main__":
     import pickle
-    pkl_file = "output/planning/T_pushing/0_uniform_0.05_0.01_mppi_1000_True/001407/planning_res_0000.pkl"
+    pkl_file = "output/planning/T_pushing/1_none_0.05_0.01_mppi_1000_False/001407_053141/planning_res_0000.pkl"
     with open(pkl_file, "rb") as f:
         data = pickle.load(f)
 
     # parameters
-    stem_size = [30, 91]
+    stem_size = [30, 90]
     bar_size = [120, 30]
     window_size = [500, 500]
     scale = 100
+
+    # obs_dict = {}
+    obs_dict = {
+        "obs_norm": 1,
+        "obs_pos_list": [[110., 455.], [390., 455.]],
+        "obs_size_list": [[110.,  45.], [110.,  45.]],
+    }
 
     act_seqs = np.array([d["act_seq"] for d in data])
     state_seqs = np.array([d["state_seq"] for d in data])[..., :3]
@@ -276,23 +355,18 @@ if __name__ == "__main__":
     r_up_seqs[..., :2] = r_up_seqs[..., :2] * scale
 
     # sample from r_lo_seqs and r_up_seqs
-    n_samples = 8
-    sample_states = np.random.uniform(size=(n_samples, *state_seqs.shape))
-    sample_state_seqs = r_lo_seqs[None] + sample_states * (r_up_seqs - r_lo_seqs)[None]
+    # n_samples = 8
+    # sample_states = np.random.uniform(size=(n_samples, *state_seqs.shape))
+    # sample_state_seqs = r_lo_seqs[None] + sample_states * (r_up_seqs - r_lo_seqs)[None]
 
-    from envs.T_pushing.t_sim import gen_vertices_from_poses
+    sample_state_seqs = box_corners_nd(r_lo_seqs, r_up_seqs)  # (8, n_sim_steps+1, horizon+1, 3)
+    n_samples = sample_state_seqs.shape[0]
 
-    # a list of arrays (1, n_sim_steps+1, horizon+1, n_vertices, 2). there are stem and bar polys with 4 vertices each
-    polys_seqs = np.array(gen_vertices_from_poses(stem_size, bar_size, state_seqs[None]))
-    # a list of arrays (n_samples, n_sim_steps+1, horizon+1, n_vertices, 2).
-    sample_polys_seqs = np.array(gen_vertices_from_poses(stem_size, bar_size, sample_state_seqs))
-
-    polys_seqs = merge_t_shape(*polys_seqs)
-    sample_polys_seqs = merge_t_shape(*sample_polys_seqs)
+    target_pose = [250, 420, math.radians(180)]
 
     fps = 2
     save_path = pkl_file.replace(".pkl", ".gif")
-    plot_planning_animation(polys_seqs, window_size=window_size, fps=fps, save_path=save_path)
+    plot_plan_from_poses(state_seqs[None], pusher_pos_seqs, target_pose=target_pose, stem_size=stem_size, bar_size=bar_size, window_size=window_size, obs_dict=obs_dict, fps=fps, save_path=save_path)
     save_path = pkl_file.replace(".pkl", "_sample.gif")
-    plot_planning_animation(sample_polys_seqs, window_size=window_size, fps=fps, save_path=save_path)
+    plot_plan_from_poses(sample_state_seqs, pusher_pos_seqs, target_pose=target_pose, stem_size=stem_size, bar_size=bar_size, window_size=window_size, obs_dict=obs_dict, fps=fps, save_path=save_path)
     pass

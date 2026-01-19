@@ -78,8 +78,8 @@ train_dt_dyn:
   lam_jac_reg: 0.0e-3 # jacobian regularization weight
   wandb:
     enabled: true
-    project: "${settings.task_name}_dt_dyn_abs"
-    run_name: "nt_${train_dt_dyn.horizon_scheduler.type}_${train_dt_dyn.lr_scheduler.type}_${train_dt_dyn.batch_size}_${train_dt_dyn.reach.mode}_${train_dt_dyn.reach.every}_${train_dt_dyn.reach.after}_eps${train_dt_dyn.reach.eps_init}_${train_dt_dyn.reach.eps_final}_w${train_dt_dyn.reach.weight}_j${train_dt_dyn.lam_jac_reg}_${train_dt_dyn.delta_u}_${train_dt_dyn.abs_pose}"
+    project: "${settings.task_name}_dt_dyn"
+    run_name: "${train_dt_dyn.architecture}_${train_dt_dyn.horizon_scheduler.type}_${train_dt_dyn.lr_scheduler.type}_${train_dt_dyn.batch_size}_${train_dt_dyn.reach.mode}_${train_dt_dyn.reach.every}_${train_dt_dyn.reach.after}_eps${train_dt_dyn.reach.eps_init}_${train_dt_dyn.reach.eps_final}_w${train_dt_dyn.reach.weight}_j${train_dt_dyn.lam_jac_reg}_${train_dt_dyn.delta_u}_${train_dt_dyn.abs_pose}"
     mode: "online"               # {"online","offline","disabled"}
     log_every: 50                # log every N training iterations
     save_checkpoints: true       # save model checkpoints to wandb  
@@ -204,32 +204,33 @@ test_models:
 
 planning:
   out_path: "output/planning/${settings.task_name}/${planning.test_id}_${planning.disturbance.type}_${planning.disturbance.init}_${planning.disturbance.inter}_${planning.planner}_${planning.n_sample}_${planning.enable_ctl}"
-  horizon: 15
+  horizon: 5
   max_steps: 25
   n_act_step: 1
   num_test: 1
-  test_id: 0
-  action_dim: ${data.dt_action_dim}
+  test_id: 1
+  action_dim: ${data.action_dim}
   action_bound: ${data.action_bound}
-  verbose: True
+  verbose: False
 
   disturbance:
-    type: "uniform" # {"none","normal","uniform"}
+    type: "none" # {"none","normal","uniform"}
     init: 0.05
     inter: 0.01
 
   hole:
-    enable: False
+    enable: true
     center: [250, 500]
-    size: [60, 100] # width, height
+    size: [60, 80] # width, height
+    penalty: 100.0
 
-  enable_ctl: true
+  enable_ctl: false
   reach_in_obj: false
   reach_weight: 0.1
   refinement:
     enable: true
-    lr: 0.01
-    n_iter: 10
+    lr: 0.1
+    n_iter: 5
     reach_in_obj: true
 
   cost_norm: 1

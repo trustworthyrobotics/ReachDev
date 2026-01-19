@@ -3,6 +3,7 @@ import numpy as np
 import hydra
 from omegaconf import DictConfig
 import jax
+jax.config.update('jax_platforms', 'cpu')
 jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 import equinox as eqx
@@ -14,7 +15,8 @@ from models.T_pushing.dt_dyn import T_Dynamics
 from models.T_pushing.ct_dyn import Continuous_T_Dynamics
 from models.T_pushing.ct_ctl import T_controller
 from planning.planner import MPPIPlanner, CEMPlanner
-from planning.T_pushing.plan_utils import generate_test_cases, get_abs_states, make_rollout_and_reward_fns, plot_cost_stat
+from planning.T_pushing.plan_utils import generate_test_cases, get_abs_states, make_rollout_and_reward_fns, plot_cost_stat, plot_plan_from_poses
+from utils.T_pushing import hole_to_walls_aabbs, box_corners_nd
 
 @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
 def main(config: DictConfig):
@@ -38,9 +40,6 @@ def main(config: DictConfig):
                 "enable_vis": False,
                 "window_size": data_config["window_size"],}
 
-    out_dir = os.path.join(planning_config["out_path"], dt_dyn_dir[-6:])
-    os.makedirs(out_dir, exist_ok=True)
-
     action_bound = planning_config["action_bound"]
     scale = float(data_config["scale"])
     state_dim, pose_dim, action_dim = data_config["state_dim"], data_config["pose_dim"], data_config["action_dim"]
@@ -53,12 +52,27 @@ def main(config: DictConfig):
     horizon = planning_config["horizon"]
     n_act_step = planning_config["n_act_step"]
 
+    hole_config = planning_config.get("hole", {})
+    hole_enable = hole_config.get("enable", False)
+    obs_dict = {}
+    if hole_enable:
+        hole_center = hole_config["center"]
+        hole_size = hole_config["size"]
+        c_wall, h_wall = hole_to_walls_aabbs(hole_center, hole_size, window_size=data_config["window_size"])
+        obs_dict["obs_pos_list"] = c_wall
+        obs_dict["obs_size_list"] = h_wall
+        obs_dict["obs_norm"] = 1
+        param_dict.update(obs_dict)
+
     enable_ctl = planning_config.get("enable_ctl", False)
     if enable_ctl:
         assert abs_pose, "Controller can only be enabled when using absolute pose prediction."
     ct_ctl_dir = config["test_models"]["ct_ctl_dir"]
     ct_ctl: T_controller = load_model(model_dir=ct_ctl_dir, model_type="ct_ctl", mode="best")
     ctl_frequency = ct_ctl.ctl_frequency
+
+    out_dir = os.path.join(planning_config["out_path"], f"{dt_dyn_dir[-6:]}_{ct_ctl_dir[-6:]}")
+    os.makedirs(out_dir, exist_ok=True)
 
     noise_type = planning_config.get("disturbance", {}).get("type", "none")
     assert noise_type in {"none", "normal", "uniform"}, f"Unknown disturbance type: {noise_type}"
@@ -70,7 +84,7 @@ def main(config: DictConfig):
     # reward and planning part
     rollout_fn, reward_fn, step_cost_fn, step_cost_fn_np = make_rollout_and_reward_fns(
         dt_dyn,
-        planning_config,
+        config,
         abs_pose,
         pred_mode,
         reach_config=config.get("reachability", {}),
@@ -108,12 +122,15 @@ def main(config: DictConfig):
         env = T_Sim(param_dict=param_dict, init_poses=[init_pose], target_poses=[target_pose], pusher_pos=init_pusher_pos)
         for _ in range(2):
             env_dict = env.update((init_pusher_pos[0], init_pusher_pos[1]), rel=False)
-            env_state = np.concatenate([env_dict["state"][:state_dim], env_dict["pusher_pos"]], axis=0)
+            if pred_mode == "pose":
+                env_state = np.concatenate([np.array(env_dict["com_pos"]), np.array(env_dict["angle"]), env_dict["pusher_pos"]], axis=0)
+            else:
+                env_state = np.concatenate([env_dict["state"][:state_dim], env_dict["pusher_pos"]], axis=0)
 
         # executtion loop
         planning_res_list = []
         step_cost_list = []
-        gt_states = [env_state.tolist()]
+        gt_states = [env_state]
         t = 0
         succeed = False
         init_follow = True
@@ -245,7 +262,48 @@ def main(config: DictConfig):
         gt_states_path = os.path.join(out_dir, f"gt_states_{i:04d}.pkl")
         with open(gt_states_path, "wb") as f:
             pickle.dump(gt_states, f)
-        env.save_gif(os.path.join(out_dir, f"planning_vis_{i:04d}.gif"))
+        env.save_gif(os.path.join(out_dir, f"sim_vis_{i:04d}.gif"))
+        if pred_mode == "pose":
+            act_seqs = np.array([d["act_seq"] for d in planning_res_list])
+            state_seqs = np.array([d["state_seq"] for d in planning_res_list])[..., :pose_dim]
+            pusher_pos_seqs = np.array([d["pusher_pos_seq"] for d in planning_res_list])
+
+            plot_plan_from_poses(
+                state_seqs=state_seqs[None],
+                pusher_pos_seqs=pusher_pos_seqs,
+                target_pose=target_pose,
+                stem_size=data_config["stem_size"],
+                bar_size=data_config["bar_size"],
+                window_size=(data_config["window_size"], data_config["window_size"]),
+                obs_dict=obs_dict,
+                fps=5,
+                save_path=os.path.join(out_dir, f"plan_vis_{i:04d}.gif"),
+            )
+            enable_reach = planning_config.get("reach_in_obj", False) or (planning_config.get("refinement", {}).get('enable', False) and planning_config.get("refinement", {}).get("reach_in_obj", False))
+            if enable_reach:
+                # r_lo_seqs, r_up_seqs: (n_sim_steps+1, horizon+1, 3)
+                r_lo_seqs = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['r_lo'] for d in planning_res_list]).reshape((*state_seqs.shape[:2], -1))[..., :pose_dim]
+                r_up_seqs = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['r_up'] for d in planning_res_list]).reshape((*state_seqs.shape[:2], -1))[..., :pose_dim]
+
+                r_lo_seqs[..., :2] = r_lo_seqs[..., :2] * scale
+                r_up_seqs[..., :2] = r_up_seqs[..., :2] * scale
+
+                # sample from r_lo_seqs and r_up_seqs: choose corners for each dimension, 2^3 = 8 samples
+                sample_states = box_corners_nd(r_lo_seqs, r_up_seqs)  # (8, n_sim_steps+1, horizon+1, 3)
+                n_samples = sample_states.shape[0]
+                sample_states = np.random.uniform(size=(n_samples, *state_seqs.shape))
+                sample_state_seqs = r_lo_seqs[None] + sample_states * (r_up_seqs - r_lo_seqs)[None]
+                plot_plan_from_poses(
+                    state_seqs=sample_state_seqs,
+                    pusher_pos_seqs=pusher_pos_seqs,
+                    target_pose=target_pose,
+                    stem_size=data_config["stem_size"],
+                    bar_size=data_config["bar_size"],
+                    window_size=(data_config["window_size"], data_config["window_size"]),
+                    obs_dict=obs_dict,
+                    fps=5,
+                    save_path=os.path.join(out_dir, f"plan_reach_vis_{i:04d}.gif"),
+                )
         env.close()
 
     cost_stat = np.array(cost_stat)  # (num_test, max_steps)

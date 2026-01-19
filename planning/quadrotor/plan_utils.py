@@ -86,13 +86,14 @@ def make_rollout_and_reward_fns(
 
         _calculate_volume = lambda lo, up: calculate_volume(lo, up, union_init=False, mode='sum')
 
-    enable_obstacle = planning_config.get("obstacle", {}).get("enable", False)
+    obstacle_config = planning_config.get("obstacle", {})
+    enable_obstacle = obstacle_config.get("enable", False)
     if enable_obstacle:
-        obstacle_pos_list = jnp.array(planning_config["obstacle"]["pos_list"])  # [n_obstacle, 3]
-        obstacle_size_list = jnp.array(planning_config["obstacle"]["size_list"])  # [n_obstacle]
-        norm = planning_config["obstacle"].get("norm", 2)
-        penalty = planning_config["obstacle"].get("penalty", 100.0)
-        inflate = planning_config["obstacle"].get("inflate", 0.0)
+        obstacle_pos_list = jnp.array(obstacle_config["pos_list"])  # [n_obstacle, 3]
+        obstacle_size_list = jnp.array(obstacle_config["size_list"])  # [n_obstacle]
+        norm = obstacle_config.get("norm", 2)
+        penalty = obstacle_config.get("penalty", 100.0)
+        inflate = obstacle_config.get("inflate", 0.0)
 
         def obstacle_cost_fn(state_seqs: jnp.ndarray) -> jnp.ndarray:
             # state_seqs: [n_sample, horizon, state_dim]
