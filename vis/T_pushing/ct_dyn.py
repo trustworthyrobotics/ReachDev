@@ -164,7 +164,7 @@ def main(config: DictConfig):
     
     pred_diff = jnp.abs(X_pred_full_norm - x_gt_norm)[:, :, :T_dim]
     mean_diff = jnp.mean(pred_diff, axis=(0)) # mean over B
-    print(f"Mean absolute error per dim over time: {mean_diff[::horizon//10]}")
+    print(f"Mean absolute error per dim over time: {mean_diff[horizon//10-1::horizon//10]}")
 
     if pred_mode == "pose":
         # renormalize angle in predicted poses

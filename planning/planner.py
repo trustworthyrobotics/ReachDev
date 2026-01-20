@@ -53,7 +53,7 @@ class SamplingPlannerBase(eqx.Module):
 
         self.use_last      = bool(planning_config.get("use_last", True))
         self.reject_bad    = bool(planning_config.get("reject_bad", False))
-        self.reach_in_obj  = bool(planning_config.get("reach_in_obj", False))
+        self.reach_in_obj  = bool(planning_config.get("reach_in_obj", {}).get("enable", False))
         refinement_config = planning_config.get("refinement", {})
         self.enable_refinement = bool(refinement_config.get("enable", False))
         self.lr = float(refinement_config.get("lr", 0.001))

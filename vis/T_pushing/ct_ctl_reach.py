@@ -341,7 +341,7 @@ def main(config: DictConfig):
         reference_seq = tgt_seq  # [1, n_track, Dx]
 
     reach_eps = float(train_config["reach"]["eps_final"])
-    # reach_eps = 0.01
+    reach_eps = 0.01
     state_init_lo = state_init - reach_eps
     state_init_up = state_init + reach_eps
     if abs_pose:

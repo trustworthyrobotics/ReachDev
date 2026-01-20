@@ -38,7 +38,7 @@ def gen_data(config, process_id, seed, num_episode):
     enlarge_factor_for_gen = data_config.get("enlarge_factor_for_gen", 1)
     window_size = window_size * enlarge_factor_for_gen
 
-    episode_shift = data_config.get("episode_shift", 0)
+    episode_shift = data_config[data_mode].get("episode_shift", 0)
     episode_length += episode_shift
     training, visualizing, saving, gif = (
         data_config["training"],
@@ -79,16 +79,14 @@ def gen_data(config, process_id, seed, num_episode):
     box_range = 100
     save_dir = os.path.join(data_config[data_mode]["out_path"], "vis")
 
-    if data_mode == "dt_dyn" or data_mode == "ct_dyn":
-        from envs.T_pushing.t_sim import T_Sim
-        sim = T_Sim(param_dict=param_dict)
-    elif data_mode == "ct_ctl":
+    if data_mode == "ct_ctl" and data_config[data_mode].get("use_nn", False):
         import jax
         jax.config.update('jax_platform_name', 'cpu')
         from envs.T_pushing.t_sim_nn import NN_T_Sim
         sim = NN_T_Sim(param_dict=param_dict, model_dir=data_config[data_mode]["model_dir"])
     else:
-        raise NotImplementedError
+        from envs.T_pushing.t_sim import T_Sim
+        sim = T_Sim(param_dict=param_dict)
 
     dataset = []
     for j in tqdm(range(num_episode)):
@@ -206,6 +204,8 @@ def main(config: DictConfig) -> None:
     frequency = min(data_config[data_mode]["frequency"], 60)
 
     data_config[data_mode]["episode_length"] = data_config[data_mode]["episode_length"] * frequency
+    if "episode_shift" in data_config[data_mode]:
+        data_config[data_mode]["episode_shift"] = data_config[data_mode]["episode_shift"] * frequency
     data_config[data_mode]["num_episodes"] = data_config[data_mode]["num_episodes"] // frequency
 
     num_episodes, training, visualizing, saving, gif = (

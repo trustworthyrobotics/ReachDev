@@ -68,7 +68,9 @@ def make_rollout_and_reward_fns(
     horizon = planning_config["horizon"]
     cost_norm = planning_config["cost_norm"]
     only_final_cost = planning_config["only_final_cost"]
-    enable_reach = planning_config.get("reach_in_obj", False) or planning_config.get("refinement", {}).get("reach_in_obj", False)
+    reach_in_obj_config = planning_config.get("reach_in_obj", {})
+
+    enable_reach = reach_in_obj_config.get("enable", False) or planning_config.get("refinement", {}).get("reach_in_obj", False)
 
     if enable_reach:
         # reachability part
@@ -81,8 +83,8 @@ def make_rollout_and_reward_fns(
         reach_analyzer = DT_Plan_Reach(f_wrapper, state_dim=dt_dyn.Dx, action_dim=dt_dyn.Du, nn_dyn=True, n_steps_per_plan=1, step_size=1)
         eps = reach_config.get("eps", 0.05)
         splits_cfg = reach_config.get("refine_splits", {})
-        reach_weight = reach_config.get("reach_weight", 0.1)
-        reach_loss_max = reach_config.get("reach_loss_max", 10.0)
+        reach_weight = reach_in_obj_config.get("reach_weight", 0.1)
+        reach_loss_max = reach_in_obj_config.get("reach_loss_max", 10.0)
 
         _calculate_volume = lambda lo, up: calculate_volume(lo, up, union_init=False, mode='sum')
 

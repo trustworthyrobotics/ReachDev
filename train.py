@@ -25,8 +25,8 @@ def _save_ckpt(path_base: str, model, opt_state, step: int, cfg: dict):
     # to_onnx(model, [(sum(model._input_dims()),)], return_mode="file", output_path = path_base + ".onnx", opset=19)
     np.savez(path_base + ".npz", step=np.array(step), config=np.array([yaml.dump(OmegaConf.to_yaml(cfg))]))
 
-@hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="quadrotor.yaml", version_base=None)
-# @hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml", version_base=None)
+# @hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="quadrotor.yaml", version_base=None)
+@hydra.main(config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml", version_base=None)
 def main(config: DictConfig) -> None:
     if config["settings"].get("device", "gpu") == "cpu":
         jax.config.update('jax_platforms', 'cpu')
@@ -68,7 +68,7 @@ def main(config: DictConfig) -> None:
             from models.T_pushing.ct_ctl import T_controller
             model = T_controller(data_cfg, tr_cfg, key=key)
             from models.load import load_model
-            model_dir = data_cfg["ct_ctl"]["model_dir"]
+            model_dir = tr_cfg["ct_dyn_dir"]
             ct_dyn = load_model(model_dir=model_dir, model_type="ct_dyn", mode="best")
             loss_class = TotalLossCtl
         else:

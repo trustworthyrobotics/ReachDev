@@ -41,18 +41,10 @@ def generate_test_cases(seed, num_test, test_id=0):
         init_pusher_pos_list = _gen_pose_list(num_test, seed, (140, 160), (170, 190), None)
         init_pose_list = _gen_pose_list(num_test, seed, (180, 200), (130, 150), (90, 135))
         target_pose_list = _gen_pose_list(num_test, seed, (250, 250), (420, 420), (180, 180))
-    # elif test_id == 1:
-    #     init_pusher_pos_list = _gen_pose_list(num_test, seed, (100, 100), (100, 100), None)
-    #     init_pose_list = _gen_pose_list(num_test, seed, (120, 120), (120, 120), (30, 60))
-    #     target_pose_list = _gen_pose_list(num_test, seed, (200, 200), (200, 200), (0, 0))
-    # elif test_id == 2:
-    #     init_pusher_pos_list = _gen_pose_list(num_test, seed, (100, 100), (100, 100), None)
-    #     init_pose_list = _gen_pose_list(num_test, seed, (150, 175), (90, 110), (90, 90))
-    #     target_pose_list = _gen_pose_list(num_test, seed, (215, 235), (365, 385), (160, 200))
-    # elif test_id == 3:
-    #     init_pusher_pos_list = _gen_pose_list(num_test, seed, (100, 100), (100, 100), None)
-    #     init_pose_list = _gen_pose_list(num_test, seed, (150, 200), (80, 140), (-90, -90))
-    #     target_pose_list = _gen_pose_list(num_test, seed, (225, 225), (340, 380), (315, 315))
+    elif test_id == 2:
+        init_pusher_pos_list = _gen_pose_list(num_test, seed, (125, 125), (140, 140), None)
+        init_pose_list = _gen_pose_list(num_test, seed, (180, 180), (140, 140), (90, 90))
+        target_pose_list = _gen_pose_list(num_test, seed, (250, 250), (420, 420), (180, 180))
     else:
         raise ValueError(f"Unknown test_id: {test_id}")
     return init_pusher_pos_list, init_pose_list, target_pose_list
@@ -81,7 +73,8 @@ def get_abs_states(state_seqs, pusher_start_pos, act_seqs, pred_mode="state"):
         abs_state_seqs = abs_state_seqs.at[:, :, 1::2].add(pusher_pos_seqs[:, 1:, 1:2])
     return abs_state_seqs, pusher_pos_seqs
 
-def plot_cost_stat(cost_stat, out_path):
+def plot_cost_stat(cost_stat, out_name):
+    cost_stat = np.asarray(cost_stat)
     # cost_stat: (num_test, max_steps)
     plt.figure()
     for i in range(cost_stat.shape[0]):
@@ -97,10 +90,32 @@ def plot_cost_stat(cost_stat, out_path):
     plt.ylabel("Step cost")
     plt.title("Step Cost over Time for Each Test Case")
     plt.grid()
-    out_name = os.path.join(out_path, "step_costs.png")
     plt.savefig(out_name)
     print(f"Step cost plot saved to {out_name}")
     plt.close()
+
+    num_test, max_steps = cost_stat.shape
+    data = [cost_stat[:, t] for t in range(max_steps)]
+    xticks = np.arange(max_steps)
+    xlabel = "Time step"
+    plt.figure(figsize=(max(10, len(data) * 0.18), 5))
+    plt.boxplot(
+        data,
+        positions=np.arange(len(data)),
+        widths=0.6,
+        showfliers=False,   # cleaner; set True if you want outliers
+    )
+    plt.xticks(np.arange(len(data)), xticks)
+    plt.xlabel(xlabel)
+    plt.ylabel("Step cost")
+    plt.title("Step Cost Distribution over Time (Boxplot across test cases)")
+    plt.grid(True, axis="y")
+    plt.legend(loc="best")
+
+    out_name = out_name.replace(".png", "_boxplot.png")
+    plt.savefig(out_name, bbox_inches="tight", dpi=200)
+    print(f"Boxplot saved to {out_name}")
+
     return
 
 def make_rollout_and_reward_fns(
@@ -115,7 +130,8 @@ def make_rollout_and_reward_fns(
     horizon = planning_config["horizon"]
     cost_norm = planning_config["cost_norm"]
     only_final_cost = planning_config["only_final_cost"]
-    enable_reach = planning_config.get("reach_in_obj", False) or planning_config.get("refinement", {}).get("reach_in_obj", False)
+    reach_in_obj_config = planning_config.get("reach_in_obj", {})
+    enable_reach = reach_in_obj_config.get("enable", False) or planning_config.get("refinement", {}).get("reach_in_obj", False)
 
     if enable_reach:
         # reachability part
@@ -127,8 +143,8 @@ def make_rollout_and_reward_fns(
         reach_analyzer = DT_Plan_Reach(f_wrapper, state_dim=dt_dyn.Dx, action_dim=dt_dyn.Du, nn_dyn=True, n_steps_per_plan=1, step_size=1)
         eps = reach_config.get("eps", 0.05)
         splits_cfg = reach_config.get("refine_splits", {})
-        reach_weight = reach_config.get("reach_weight", 0.1)
-        reach_loss_max = reach_config.get("reach_loss_max", 10.0)
+        reach_weight = reach_in_obj_config.get("reach_weight", 0.1)
+        reach_loss_max = reach_in_obj_config.get("reach_loss_max", 10.0)
 
         _calculate_volume = lambda lo, up: calculate_volume(lo, up, union_init=False, mode='sum')
 
@@ -230,9 +246,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, PillowWriter
 
-def plot_planning_animation(polys_seqs, pusher_pos_seqs, target_polys=None, window_size=(500, 500), pusher_size=5, obs_dict={}, fps=10, save_path="plan.gif"):
+def plot_planning_animation(polys_seqs, pusher_pos_seqs, target_polys=None, gt_polys_seqs=None, window_size=(500, 500), pusher_size=5, obs_dict={}, fps=10, add_edge=False, save_path="plan.gif"):
     """
-    polys_seqs: List of arrays, each [steps, horizon, vertices, 2]
+    polys_seqs: List of arrays, each [samples, steps, horizon, vertices, 2]
     """
     fig, ax = plt.subplots()
     # figsize=(window_size[0]/100, window_size[1]/100)
@@ -275,8 +291,16 @@ def plot_planning_animation(polys_seqs, pusher_pos_seqs, target_polys=None, wind
                 alpha = 1.0 - (t / (horizon + 1)) # Fade out into the future
                 
                 poly = plt.Polygon(vertices, facecolor=colors[-t], 
-                                edgecolor='none', alpha=alpha * 0.8, zorder=horizon + 1-t)
+                                edgecolor=colors[-t] if add_edge else 'none', alpha=alpha * 0.8, zorder=horizon + 1-t)
                 ax.add_patch(poly)
+            if gt_polys_seqs is not None:
+                for j in range(gt_polys_seqs.shape[0]):
+                    # 2. Plot GT State
+                    gt_vertices = gt_polys_seqs[j, frame, t]
+                    gt_poly = plt.Polygon(gt_vertices, 
+                                        facecolor=colors[-t], 
+                                edgecolor='black', alpha=alpha * 0.8, zorder=horizon + 1-t)
+                    ax.add_patch(gt_poly)
             # 3. Plot Pusher Position
             pusher_pos = pusher_pos_seqs[frame, t]
             ax.add_patch(plt.Circle((pusher_pos[0], pusher_pos[1]), pusher_size, color='black', fill=True, alpha=alpha * 0.8, zorder=horizon + 1-t))
@@ -285,15 +309,28 @@ def plot_planning_animation(polys_seqs, pusher_pos_seqs, target_polys=None, wind
             # 2. Plot Current State (Highlighted)
             curr_vertices = polys_seqs[j, frame, 0]
             curr_poly = plt.Polygon(curr_vertices, 
-                                    facecolor='darkred', 
-                                    edgecolor='none', linewidth=2, zorder=horizon + 1)
+                                    facecolor='darkred', alpha=0.9,
+                                    edgecolor='darkred' if add_edge else 'none', linewidth=2, zorder=horizon + 1)
+        
+        for j in range(gt_polys_seqs.shape[0]):
+            if gt_polys_seqs is not None:
+                curr_gt_vertices = gt_polys_seqs[j, frame, 0]
+                curr_gt_poly = plt.Polygon(curr_gt_vertices, 
+                                        facecolor='darkred', alpha=0.9,
+                                        edgecolor='black', linewidth=2, zorder=horizon + 1)
+                ax.add_patch(curr_gt_poly)
             ax.add_patch(curr_poly)
         # 3. Plot Current Pusher Position
         curr_pusher_pos = pusher_pos_seqs[frame, 0]
         ax.add_patch(plt.Circle((curr_pusher_pos[0], curr_pusher_pos[1]), pusher_size, color='black', fill=True, zorder=horizon + 1))
 
-    ani = FuncAnimation(fig, update, frames=n_sim_steps + 1, repeat=False)
-    ani.save(save_path, writer=PillowWriter(fps=fps))
+    if n_sim_steps == 0:
+        update(0)
+        save_path = save_path.replace(".gif", ".png")
+        plt.savefig(save_path)
+    else:
+        ani = FuncAnimation(fig, update, frames=n_sim_steps + 1, repeat=False)
+        ani.save(save_path, writer=PillowWriter(fps=fps))
     print(f"Animation saved to {save_path}")
     plt.close()
 
@@ -317,12 +354,13 @@ def merge_t_shape(stem_vertices, bar_vertices):
     ], axis=-2)
     return merged_poly
 
-def plot_plan_from_poses(state_seqs, pusher_pos_seqs, target_pose=None, stem_size=(30, 90), bar_size=(120, 30), window_size=(500, 500), obs_dict={}, fps=10, save_path="plan.gif"):
+def plot_plan_from_poses(state_seqs, pusher_pos_seqs, target_pose=None, gt_state_seqs=None, stem_size=(30, 90), bar_size=(120, 30), window_size=(500, 500), obs_dict={}, fps=10, add_edge=False, save_path="plan.gif"):
     # state_seqs: (N, n_sim_steps+1, horizon+1, 3), pusher_pos_seqs: (n_sim_steps+1, horizon+1, 2), target_pose: (3,)
     # a list of arrays (N, n_sim_steps+1, horizon+1, n_vertices, 2). there are stem and bar polys with 4 vertices each
     polys_seqs = merge_t_shape(*np.array(gen_vertices_from_poses(stem_size, bar_size, state_seqs)))
     target_polys = merge_t_shape(*np.array(gen_vertices_from_poses(stem_size, bar_size, target_pose))) if target_pose is not None else None
-    plot_planning_animation(polys_seqs, pusher_pos_seqs, target_polys=target_polys, window_size=window_size, obs_dict=obs_dict, fps=fps, save_path=save_path)
+    gt_polys_seqs = merge_t_shape(*np.array(gen_vertices_from_poses(stem_size, bar_size, gt_state_seqs))) if gt_state_seqs is not None else None
+    plot_planning_animation(polys_seqs, pusher_pos_seqs, target_polys=target_polys, gt_polys_seqs=gt_polys_seqs, window_size=window_size, obs_dict=obs_dict, fps=fps, add_edge=add_edge, save_path=save_path)
 
 if __name__ == "__main__":
     import pickle

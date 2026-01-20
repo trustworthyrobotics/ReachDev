@@ -184,9 +184,10 @@ planning:
 
   enable_ctl: true
   use_pid: false
-  reach_in_obj: false
-  reach_weight: 0.1
-  reach_loss_max: 10.0
+  reach_in_obj:
+    enable: false
+    reach_weight: 0.3
+    reach_loss_max: 10
   refinement:
     enable: false
     lr: 0.01
