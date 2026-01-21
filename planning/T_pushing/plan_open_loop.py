@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import jax
 # jax.config.update('jax_platforms', 'cpu')
 jax.config.update("jax_default_matmul_precision", "highest")
@@ -16,7 +16,8 @@ from models.T_pushing.ct_dyn import Continuous_T_Dynamics
 from models.T_pushing.ct_ctl import T_controller
 from planning.planner import MPPIPlanner, CEMPlanner
 from planning.T_pushing.plan_utils import generate_test_cases, get_abs_states, make_rollout_and_reward_fns, plot_cost_stat, plot_plan_from_poses
-from utils.T_pushing import hole_to_walls_aabbs, box_corners_nd
+from utils.T_pushing import hole_to_walls_aabbs
+from utils.misc import box_corners_nd
 
 @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
 def main(config: DictConfig):
@@ -255,8 +256,9 @@ def main(config: DictConfig):
                     else:
                         next_action = ref_action
                     next_pusher_pos = (pusher_pos + next_action) * scale
-                    env.update((next_pusher_pos[0], next_pusher_pos[1]), rel=False, n_sim_time=1/ctl_frequency)
-                    env_dict = sample_env.update((next_pusher_pos[0], next_pusher_pos[1]), rel=False, n_sim_time=1/ctl_frequency)
+                    env_dict = env.update((next_pusher_pos[0], next_pusher_pos[1]), rel=False, n_sim_time=1/ctl_frequency)
+                    if open_loop:
+                        env_dict = sample_env.update((next_pusher_pos[0], next_pusher_pos[1]), rel=False, n_sim_time=1/ctl_frequency)
                     state_cur, env_state, pusher_pos = trans_fn(env_dict)
                     
                     key, subkey = jax.random.split(key)
@@ -270,7 +272,8 @@ def main(config: DictConfig):
                     # state_cur = state_cur.at[0:T_dim].add(noise)
 
                     env.force_update([[noise[0] * scale, noise[1] * scale, noise[2]]])  # apply disturbance
-                    sample_env.force_update([[noise[0] * scale, noise[1] * scale, noise[2]]])  # apply disturbance
+                    if open_loop:
+                        sample_env.force_update([[noise[0] * scale, noise[1] * scale, noise[2]]])  # apply disturbance
 
                     sub_env_states.append(env_state)
                 env_state = np.array(sub_env_states)
@@ -301,7 +304,8 @@ def main(config: DictConfig):
         with open(gt_states_path, "wb") as f:
             pickle.dump(gt_states, f)
         env.save_gif(os.path.join(out_dir, f"sim_vis_{i:04d}.gif"))
-        sample_env.save_gif(os.path.join(out_dir, f"noisy_sim_vis_{i:04d}.gif"))
+        if open_loop:
+            sample_env.save_gif(os.path.join(out_dir, f"open_loop_sim_vis_{i:04d}.gif"))
         if pred_mode == "pose":
             act_seqs = np.array([d["act_seq"] for d in planning_res_list])
             state_seqs = np.array([d["state_seq"] for d in planning_res_list])[..., :pose_dim]
@@ -373,6 +377,7 @@ def main(config: DictConfig):
     print(f"Average step cost over time over {num_test} test cases: {avg_step_cost}")
     print(f"Std of step cost over time over {num_test} test cases: {std_step_cost}")
     plot_cost_stat(cost_stat, os.path.join(out_dir, "step_costs.png"))
+
     if open_loop:
         open_loop_cost_stat = np.array(open_loop_cost_stat)
         cost_stat_file = os.path.join(out_dir, "open_loop_step_costs.npy")
@@ -439,6 +444,11 @@ def main(config: DictConfig):
                     add_edge=True,
                     save_path=os.path.join(out_dir, f"open_loop_agg_plan_reach_vis_{i:04d}.gif"),
                 )
+    
+    # copy config file to out_dir
+    with open(os.path.join(out_dir, "planning_config.yaml"), "w") as f:
+        f.write(OmegaConf.to_yaml(config, resolve=True))
+    
     return
 
 if __name__ == "__main__":

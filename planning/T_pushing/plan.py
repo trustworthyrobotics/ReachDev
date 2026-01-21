@@ -16,7 +16,8 @@ from models.T_pushing.ct_dyn import Continuous_T_Dynamics
 from models.T_pushing.ct_ctl import T_controller
 from planning.planner import MPPIPlanner, CEMPlanner
 from planning.T_pushing.plan_utils import generate_test_cases, get_abs_states, make_rollout_and_reward_fns, plot_cost_stat, plot_plan_from_poses
-from utils.T_pushing import hole_to_walls_aabbs, box_corners_nd
+from utils.T_pushing import hole_to_walls_aabbs
+from utils.misc import box_corners_nd
 
 @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
 def main(config: DictConfig):
@@ -25,9 +26,6 @@ def main(config: DictConfig):
     planning_config = config["planning"]
     verbose = planning_config.get("verbose", False)
     seed = config["settings"]["seed"]
-    num_test = planning_config["num_test"]
-    test_id = planning_config.get("test_id", 0)
-    init_pusher_pos_list, init_pose_list, target_pose_list = generate_test_cases(seed, num_test, test_id=test_id)
 
     dt_dyn_dir = config["test_models"]["dt_dyn_dir"]
     dt_dyn: T_Dynamics = load_model(model_dir=dt_dyn_dir, model_type="dt_dyn", mode="best")
@@ -97,6 +95,21 @@ def main(config: DictConfig):
     else:
         raise ValueError(f"Unknown planner type: {planner_type}")
 
+    def trans_fn(env_dict):
+        pusher_pos = jnp.array(env_dict["pusher_pos"]) / scale
+        if pred_mode == "pose":
+            state_cur = jnp.array(np.concatenate([env_dict["com_pos"] / scale, env_dict["angle"]], axis=0))
+            env_state = np.concatenate([np.array(env_dict["com_pos"]), np.array(env_dict["angle"]), env_dict["pusher_pos"]], axis=0)
+        else:
+            state_cur = jnp.array(env_dict["state"][:state_dim]) / scale
+            env_state = np.concatenate([env_dict["state"][:state_dim], env_dict["pusher_pos"]], axis=0)
+        state_cur = jnp.concatenate([state_cur, pusher_pos], axis=0)
+        return state_cur, env_state, pusher_pos
+
+    num_test = planning_config["num_test"]
+    test_id = planning_config.get("test_id", 0)
+    init_pusher_pos_list, init_pose_list, target_pose_list = generate_test_cases(seed, num_test, test_id=test_id)
+
     key = jax.random.PRNGKey(seed)
     cost_stat = []
     for i in range(num_test):
@@ -122,10 +135,7 @@ def main(config: DictConfig):
         env = T_Sim(param_dict=param_dict, init_poses=[init_pose], target_poses=[target_pose], pusher_pos=init_pusher_pos)
         for _ in range(2):
             env_dict = env.update((init_pusher_pos[0], init_pusher_pos[1]), rel=False)
-            if pred_mode == "pose":
-                env_state = np.concatenate([np.array(env_dict["com_pos"]), np.array(env_dict["angle"]), env_dict["pusher_pos"]], axis=0)
-            else:
-                env_state = np.concatenate([env_dict["state"][:state_dim], env_dict["pusher_pos"]], axis=0)
+            _, env_state, _ = trans_fn(env_dict)
 
         # executtion loop
         planning_res_list = []
@@ -136,23 +146,17 @@ def main(config: DictConfig):
         init_follow = True
         while t < max_steps:
             env_dict = env.get_env_state(not abs_pose)
-            pusher_pos = jnp.array(env_dict["pusher_pos"]) / scale
-            if pred_mode == "pose":
-                state_cur = jnp.array(np.concatenate([env_dict["com_pos"] / scale, env_dict["angle"]], axis=0))
-            else:
-                state_cur = jnp.array(env_dict["state"][:state_dim]) / scale
-            if abs_pose:
-                state_cur = jnp.concatenate([state_cur, pusher_pos], axis=0)
+            state_cur, _, pusher_pos = trans_fn(env_dict)
             key = jax.random.PRNGKey(seed + t)
 
-            key, subkey = jax.random.split(key)
             noise_param = noise_init
-            if noise_type == "normal":
-                noise = jax.random.normal(subkey, shape=(T_dim,)) * noise_param
-            elif noise_type == "uniform":
-                noise = jax.random.uniform(subkey, shape=(T_dim,), minval=-1.0, maxval=1.0) * noise_param
-            else:
-                noise = jnp.zeros((T_dim,))
+            noise = jnp.zeros((T_dim,))
+            if not succeed:
+                key, subkey = jax.random.split(key)
+                if noise_type == "normal":
+                    noise = jax.random.normal(subkey, shape=(T_dim,)) * noise_param
+                elif noise_type == "uniform":
+                    noise = jax.random.uniform(subkey, shape=(T_dim,), minval=-1.0, maxval=1.0) * noise_param
             state_cur = state_cur.at[0:T_dim].add(noise)
             # env.force_update([[noise[0] * scale, noise[1] * scale, noise[2]]])  # apply disturbance
 
@@ -204,26 +208,18 @@ def main(config: DictConfig):
                         next_action = ref_action
                     next_pusher_pos = (pusher_pos + next_action) * scale
                     env_dict = env.update((next_pusher_pos[0], next_pusher_pos[1]), rel=False, n_sim_time=1/ctl_frequency)
+                    state_cur, env_state, pusher_pos = trans_fn(env_dict)
 
-                    pusher_pos = jnp.array(env_dict["pusher_pos"]) / scale
-                    if pred_mode == "pose":
-                        state_cur = jnp.array(np.concatenate([env_dict["com_pos"] / scale, env_dict["angle"]], axis=0))
-                        env_state = np.concatenate([np.array(env_dict["com_pos"]), np.array(env_dict["angle"]), env_dict["pusher_pos"]], axis=0)
-                    else:
-                        state_cur = jnp.array(env_dict["state"][:state_dim]) / scale
-                        env_state = np.concatenate([env_dict["state"][:state_dim], env_dict["pusher_pos"]], axis=0)
-                    state_cur = jnp.concatenate([state_cur, pusher_pos], axis=0)
-                    
-                    key, subkey = jax.random.split(key)
                     noise_param = noise_inter
-                    if noise_type == "normal":
-                        noise = jax.random.normal(subkey, shape=(T_dim,)) * noise_param
-                    elif noise_type == "uniform":
-                        noise = jax.random.uniform(subkey, shape=(T_dim,), minval=-1.0, maxval=1.0) * noise_param
-                    else:
-                        noise = jnp.zeros((T_dim,))
-                    # state_cur = state_cur.at[0:T_dim].add(noise)
+                    noise = jnp.zeros((T_dim,))
+                    if not succeed:
+                        key, subkey = jax.random.split(key)
+                        if noise_type == "normal":
+                            noise = jax.random.normal(subkey, shape=(T_dim,)) * noise_param
+                        elif noise_type == "uniform":
+                            noise = jax.random.uniform(subkey, shape=(T_dim,), minval=-1.0, maxval=1.0) * noise_param
 
+                    # state_cur = state_cur.at[0:T_dim].add(noise)
                     env.force_update([[noise[0] * scale, noise[1] * scale, noise[2]]])  # apply disturbance
 
                     sub_env_states.append(env_state)
@@ -243,7 +239,7 @@ def main(config: DictConfig):
                 if verbose:
                     print(f"   step {t} cost: {step_cost}, action: {env_dict['action']}")
                 step_cost_list.append(step_cost)
-                if step_cost < 30:
+                if step_cost < 20:
                     succeed = True
                 if t >= max_steps:
                     break
@@ -309,7 +305,7 @@ def main(config: DictConfig):
     cost_stat = np.array(cost_stat)  # (num_test, max_steps)
     avg_step_cost = np.mean(cost_stat, axis=0)
     print(f"Average step cost over time over {num_test} test cases: {avg_step_cost}")
-    plot_cost_stat(cost_stat, out_dir)
+    plot_cost_stat(cost_stat, os.path.join(out_dir, "step_costs.png"))
     return
 
 if __name__ == "__main__":

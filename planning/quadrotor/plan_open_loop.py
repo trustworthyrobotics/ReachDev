@@ -3,6 +3,8 @@ import numpy as np
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import jax
+
+from utils.misc import box_corners_nd, random_sample_nd
 jax.config.update('jax_platforms', 'cpu')
 jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
@@ -27,9 +29,6 @@ def main(config: DictConfig):
     planning_config = config["planning"]
     verbose = planning_config.get("verbose", False)
     seed = config["settings"]["seed"]
-    num_test = planning_config["num_test"]
-    test_id = planning_config.get("test_id", 0)
-    init_pose_list, target_pose_list = generate_test_cases(seed, num_test, test_id=test_id)
 
     dt_dyn_dir = config["test_models"]["dt_dyn_dir"]
     dt_dyn: Quad_Dynamics = load_model(model_dir=dt_dyn_dir, model_type="dt_dyn", mode="best", task_name=task_name)
@@ -90,20 +89,47 @@ def main(config: DictConfig):
     else:
         raise ValueError(f"Unknown planner type: {planner_type}")
 
-    # num_test = planning_config["num_test"]
-    # test_id = planning_config.get("test_id", 0)
-    # init_pose_list, target_pose_list = generate_test_cases(seed, num_test, test_id=test_id)
+    num_test = planning_config["num_test"]
+    test_id = planning_config.get("test_id", 0)
+    init_pose_list, target_pose_list = generate_test_cases(seed, num_test, test_id=test_id)
+
+    open_loop = True
+    if open_loop:
+        max_steps = horizon
+        n_act_step = horizon
+        noise_init = 0.3
+        noise_inter = 0.0
+
+        test_id = 2
+        init_pose_list, target_pose_list = generate_test_cases(seed, num_test, test_id=test_id)
+
+        sample_init_pose_list = []
+        num_sample_per_case = 16
+        for i in range(num_test):
+            init_pose = init_pose_list[i]
+            init_bound = np.ones_like(init_pose) * scale * noise_init
+            init_pose_lo = init_pose - init_bound
+            init_pose_up = init_pose + init_bound
+            sample_init_pose = random_sample_nd(init_pose_lo, init_pose_up, num_samples=num_sample_per_case, seed=seed)
+            sample_init_pose_list.append(sample_init_pose)
+
+        sample_init_pose_list = np.concatenate(sample_init_pose_list, axis=0)
+        
+        num_sample_per_case = sample_init_pose_list.shape[0] // num_test
+        num_test = sample_init_pose_list.shape[0]
+        open_loop_cost_stat = []
+        summary_dict = {}
 
     key = jax.random.PRNGKey(seed)
     cost_stat = []
     for i in range(num_test):
-        init_pose = init_pose_list[i]
-        target_pose = target_pose_list[i]
+        if open_loop:
+            sample_init_pose = sample_init_pose_list[i]
+            target_pose = target_pose_list[i // num_sample_per_case]
+        else:
+            init_pose = init_pose_list[i]
+            target_pose = target_pose_list[i]
         print(f"Test case {i}:")
-        # print(f"  Init pusher pos: {init_pusher_pos}")
-        # print(f"  Init pose: {init_pose}")
-        # print(f"  Target pusher pos: {target_pusher_pos}")
-        # print(f"  Target pose: {target_pose}")
 
         target_state = target_pose[:dt_state_dim]
         scaled_target_state = target_state / scale
@@ -111,6 +137,12 @@ def main(config: DictConfig):
         env = Quad_Sim_Ctl(data_config, num_quads=1, init_poses=init_pose[None], target_poses=target_pose[None], controller=ct_ctl)
         env_dict = env.get_env_states()
         env_state = np.concatenate([env_dict["state"], jnp.zeros((1, dt_action_dim,)), env_dict["action"]], axis=-1).squeeze()
+
+        if open_loop:
+            # sample env with disturbance, evaluate execution performance
+            sample_env = Quad_Sim_Ctl(data_config, num_quads=1, init_poses=sample_init_pose[None], target_poses=target_pose[None], controller=ct_ctl)
+            env_dict = sample_env.get_env_states()
+            env_state = np.concatenate([env_dict["state"], jnp.zeros((1, dt_action_dim,)), env_dict["action"]], axis=-1).squeeze()            
 
         # executtion loop
         planning_res_list = []
@@ -121,27 +153,35 @@ def main(config: DictConfig):
         while t < max_steps:
             env_dict = env.get_env_states()
             state_cur = jnp.array(env_dict["state"]).squeeze()[:dt_state_dim] / scale
+            if open_loop:
+                sample_env_dict = sample_env.get_env_states()
+                state_cur_sample = jnp.array(sample_env_dict["state"]).squeeze()[:dt_state_dim] / scale
+            
             key = jax.random.PRNGKey(seed + t)
 
-            key, subkey = jax.random.split(key)
-            noise_param = noise_init
-            if noise_type == "normal":
-                noise = jax.random.normal(subkey, shape=(dt_state_dim,)) * noise_param
-            elif noise_type == "uniform":
-                noise = jax.random.uniform(subkey, shape=(dt_state_dim,), minval=-1.0, maxval=1.0) * noise_param
-            else:
-                noise = jnp.zeros((dt_state_dim,))
-            state_cur = state_cur.at[0:dt_state_dim].add(noise)
-            # env.force_update([[noise[0] * scale, noise[1] * scale, noise[2]]])  # apply disturbance
+            # key, subkey = jax.random.split(key)
+            # noise_param = noise_init
+            # if noise_type == "normal":
+            #     noise = jax.random.normal(subkey, shape=(dt_state_dim,)) * noise_param
+            # elif noise_type == "uniform":
+            #     noise = jax.random.uniform(subkey, shape=(dt_state_dim,), minval=-1.0, maxval=1.0) * noise_param
+            # else:
+            #     noise = jnp.zeros((dt_state_dim,))
+            # state_cur = state_cur.at[0:dt_state_dim].add(noise)
+            # # env.force_update([[noise[0] * scale, noise[1] * scale, noise[2]]])  # apply disturbance
 
-            key, subkey = jax.random.split(key)
-            init_act_seq = 0 * jax.random.uniform(subkey,(horizon, dt_action_dim),minval=action_lower_lim,maxval=action_upper_lim,)
-            # init_act_seq = eqx.filter_jit(sample_vel_cmd_sequence)(subkey, amax=acc_limits, num_quads=1, dt=1/dyn_frequency, n_steps=horizon, v0=state_cur[-dt_action_dim:][None], v_bounds=action_bounds).squeeze(axis=1)[1:]
-            key, subkey = jax.random.split(key)
-            # with jax.disable_jit():
-            #     planning_res = eqx.filter_jit(planner.trajectory_optimization)(key, state_cur, init_act_seq, skip=succeed, target_state=scaled_target_state)
-            planning_res = eqx.filter_jit(planner.trajectory_optimization)(subkey, state_cur, init_act_seq, skip=succeed, target_state=scaled_target_state)
-            scaled_act_seq = planning_res["act_seq"]
+            if open_loop and i % num_sample_per_case == 0:
+                key, subkey = jax.random.split(key)
+                init_act_seq = 0 * jax.random.uniform(subkey,(horizon, dt_action_dim),minval=action_lower_lim,maxval=action_upper_lim,)
+                # init_act_seq = eqx.filter_jit(sample_vel_cmd_sequence)(subkey, amax=acc_limits, num_quads=1, dt=1/dyn_frequency, n_steps=horizon, v0=state_cur[-dt_action_dim:][None], v_bounds=action_bounds).squeeze(axis=1)[1:]
+                key, subkey = jax.random.split(key)
+                # with jax.disable_jit():
+                #     planning_res = eqx.filter_jit(planner.trajectory_optimization)(key, state_cur, init_act_seq, skip=succeed, target_state=scaled_target_state)
+                planning_res = eqx.filter_jit(planner.trajectory_optimization)(subkey, state_cur, init_act_seq, skip=succeed, target_state=scaled_target_state)
+                scaled_act_seq = planning_res["act_seq"]
+            if open_loop:
+                sample_planning_res = eqx.filter_jit(planner.trajectory_optimization)(subkey, state_cur_sample, scaled_act_seq, skip=True, target_state=scaled_target_state)
+
             scaled_state_seq = planning_res["state_seq"]
             act_seq = scaled_act_seq * scale  # (horizon, action_dim)
             scaled_state_seq = jnp.concatenate([state_cur[None, :], scaled_state_seq], axis=0)
@@ -171,6 +211,8 @@ def main(config: DictConfig):
                         noise = jnp.zeros((ct_state_dim,))
 
                     env.force_update(noise[:ct_state_dim][None])  # apply disturbance
+                    if open_loop:
+                        sample_env.force_update(noise[:ct_state_dim][None])  # apply disturbance
 
                 for ctl_step in range(n_ctl_per_dyn):
                     if not per_act:
@@ -184,6 +226,8 @@ def main(config: DictConfig):
                             noise = jnp.zeros((ct_state_dim,))
 
                         env.force_update(noise[:dt_state_dim][None] * scale)  # apply disturbance
+                        if open_loop:
+                            sample_env.force_update(noise[:dt_state_dim][None] * scale)  # apply disturbance
 
                     next_action = v_cmd[None]
                     if verbose:
@@ -192,6 +236,8 @@ def main(config: DictConfig):
                     # with jax.disable_jit():
                     #     env_dict = env.update(next_action, n_sim_time=1/ctl_frequency)
                     env_dict = env.update(next_action, n_sim_time=1/ctl_frequency)
+                    if open_loop:
+                        env_dict = sample_env.update(next_action, n_sim_time=1/ctl_frequency)
 
                     # state_cur = jnp.array(env_dict["state"]).squeeze()[:dt_state_dim] / scale
                     env_state = np.concatenate([env_dict["state"], next_action, env_dict["action"]], axis=-1).squeeze()
@@ -235,23 +281,79 @@ def main(config: DictConfig):
         plot_quad_states_actions(X_gt[:, 0, :ct_state_dim], U_gt[:, 0], dt=ct_ctl.dt, out_path=os.path.join(out_dir, f"gt_states_actions_{i}.png"))
         env.close()
 
-        # act_seqs = np.array([d["act_seq"] for d in planning_res_list])
-        # state_seqs = np.array([d["state_seq"] for d in planning_res_list])[..., :dt_state_dim]
-        # plot_planning_animation(state_seqs[None, :, :, :3], dt_dyn.dt, "output/plan_reach.gif", targets=target_pose[None, :3], obs_config=planning_config.get("obstacle", None))
-        # enable_reach = planning_config.get("reach_in_obj", {}).get("enable", False) or (planning_config.get("refinement", {}).get('enable', False) and planning_config.get("refinement", {}).get("reach_in_obj", False))
-        # if enable_reach:
-        #     # r_lo_seqs, r_up_seqs: (n_sim_steps+1, horizon+1, 3)
-        #     r_lo_seqs = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['r_lo'] for d in planning_res_list]).reshape((*state_seqs.shape[:2], -1))[..., :dt_state_dim]
-        #     r_up_seqs = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['r_up'] for d in planning_res_list]).reshape((*state_seqs.shape[:2], -1))[..., :dt_state_dim]
-        #     reach_vols = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['reach_vol'] for d in planning_res_list])
+        act_seqs = np.array([d["act_seq"] for d in planning_res_list])
+        state_seqs = np.array([d["state_seq"] for d in planning_res_list])[..., :dt_state_dim]
 
-        #     plot_planning_animation(state_seqs[None, :, :, :3], dt_dyn.dt, "output/plan_reach.gif", targets=target_pose[None, :3], r_lo_seqs=r_lo_seqs[None, :, :, :3], r_up_seqs=r_up_seqs[None, :, :, :3], obs_config=planning_config.get("obstacle", None))
+        if open_loop:
+            # state_seqs: predicted state seqs starting from unnoisy initial state
+            # GT state of noisy execution
+            gt_states = np.concatenate([gt[-1:, :dt_state_dim] for gt in gt_states], axis=0)
+            # predicted state seqs starting from noisy initial state
+            pred_state_seqs = np.concatenate([state_cur_sample[None], sample_planning_res["state_seq"]], axis=0)[..., :dt_state_dim]
+            open_loop_cost_stat.append([step_cost_fn_np(s, target_pose[:dt_state_dim]) for s in pred_state_seqs])
 
+            summary_dict[i] = {"state_seqs": state_seqs, "pred_state_seqs": pred_state_seqs, "gt_states": gt_states, "act_seqs": act_seqs, "target_pose": target_pose}
+        
+        plot_planning_animation(state_seqs[None, :, :, :3], dt_dyn.dt, os.path.join(out_dir, f"plan_vis_{i:04d}.gif"), targets=target_pose[None, :3], obs_config=planning_config.get("obstacle", None))
+        enable_reach = planning_config.get("reach_in_obj", {}).get("enable", False) or (planning_config.get("refinement", {}).get('enable', False) and planning_config.get("refinement", {}).get("reach_in_obj", False))
+        if enable_reach:
+            # r_lo_seqs, r_up_seqs: (n_sim_steps+1, horizon+1, 3)
+            r_lo_seqs = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['r_lo'] for d in planning_res_list]).reshape((*state_seqs.shape[:2], -1))[..., :dt_state_dim]
+            r_up_seqs = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['r_up'] for d in planning_res_list]).reshape((*state_seqs.shape[:2], -1))[..., :dt_state_dim]
+            reach_vols = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['reach_vol'] for d in planning_res_list])
+
+            # sample from r_lo_seqs and r_up_seqs: choose corners for each dimension, 2^6 = 64 samples
+            sample_state_seqs = box_corners_nd(r_lo_seqs, r_up_seqs)  # (64, n_sim_steps+1, horizon+1, 3)
+
+            plot_planning_animation(state_seqs[None, :, :, :3], dt_dyn.dt, os.path.join(out_dir, f"plan_reach_vis_{i:04d}.gif"), targets=target_pose[None, :3], r_lo_seqs=r_lo_seqs[None, :, :, :3], r_up_seqs=r_up_seqs[None, :, :, :3], obs_config=planning_config.get("obstacle", None))
+
+            if open_loop:
+                summary_dict[i]["r_lo_seqs"] = r_lo_seqs
+                summary_dict[i]["r_up_seqs"] = r_up_seqs
+                summary_dict[i]["sample_state_seqs"] = sample_state_seqs
+                summary_dict[i]["reach_vols"] = reach_vols
 
     cost_stat = np.array(cost_stat)  # (num_test, max_steps)
+    cost_stat_file = os.path.join(out_dir, "step_costs.npy")
+    np.save(cost_stat_file, cost_stat)
     avg_step_cost = np.mean(cost_stat, axis=0)
+    std_step_cost = np.std(cost_stat, axis=0)
     print(f"Average step cost over time over {num_test} test cases: {avg_step_cost}")
+    print(f"Std of step cost over time over {num_test} test cases: {std_step_cost}")
     plot_cost_stat(cost_stat, os.path.join(out_dir, "step_costs.png"))
+
+    if open_loop:
+        open_loop_cost_stat = np.array(open_loop_cost_stat)
+        cost_stat_file = os.path.join(out_dir, "open_loop_step_costs.npy")
+        np.save(cost_stat_file, open_loop_cost_stat)
+        avg_step_cost = np.mean(open_loop_cost_stat, axis=0)
+        std_step_cost = np.std(open_loop_cost_stat, axis=0)
+        print(f"Open-loop Average step cost over time over {num_test} test cases: {avg_step_cost}")
+        print(f"Open-loop Std of step cost over time over {num_test} test cases: {std_step_cost}")
+        plot_cost_stat(open_loop_cost_stat, os.path.join(out_dir, "open_loop_step_costs.png"))
+
+        summary_path = os.path.join(out_dir, "open_loop_summary.pkl")
+        with open(summary_path, "wb") as f:
+            pickle.dump(summary_dict, f)
+
+        for i in range(num_test // num_sample_per_case):
+            act_seqs = summary_dict[i * num_sample_per_case]["act_seqs"]
+            print(act_seqs)
+            state_seqs = summary_dict[i * num_sample_per_case]["state_seqs"][..., :3]
+            agg_gt_states = np.array([summary_dict[i * num_sample_per_case + j]["gt_states"] for j in range(num_sample_per_case)])[..., :3]
+            agg_pred_state_seqs = np.array([summary_dict[i * num_sample_per_case + j]["pred_state_seqs"] for j in range(num_sample_per_case)])[..., :3]
+            target_pose = summary_dict[i * num_sample_per_case]["target_pose"]
+
+            plot_planning_animation(state_seqs[None], dt_dyn.dt, os.path.join(out_dir, f"open_loop_agg_plan_vis_{i:04d}.gif"), targets=target_pose[None, :3], gt_state_seqs=agg_gt_states[:, None], obs_config=planning_config.get("obstacle", None))
+            plot_planning_animation(state_seqs[None], dt_dyn.dt, os.path.join(out_dir, f"open_loop_agg_plan_vis_pred_{i:04d}.gif"), targets=target_pose[None, :3], gt_state_seqs=agg_pred_state_seqs[:, None], obs_config=planning_config.get("obstacle", None))
+            if enable_reach:
+                # r_lo_seqs = summary_dict[i * num_sample_per_case]["r_lo_seqs"]
+                # r_up_seqs = summary_dict[i * num_sample_per_case]["r_up_seqs"]
+                print(f"reach vols: {summary_dict[i * num_sample_per_case]['reach_vols']}")
+                sample_state_seqs = summary_dict[i * num_sample_per_case]["sample_state_seqs"]
+
+                plot_planning_animation(state_seqs[None], dt_dyn.dt, os.path.join(out_dir, f"open_loop_agg_plan_reach_vis_{i:04d}.gif"), targets=target_pose[None, :3], gt_state_seqs=agg_gt_states[:, None], r_lo_seqs=r_lo_seqs[None, :, :, :3], r_up_seqs=r_up_seqs[None, :, :, :3], obs_config=planning_config.get("obstacle", None))
+
 
     # copy config file to out_dir
     with open(os.path.join(out_dir, "planning_config.yaml"), "w") as f:

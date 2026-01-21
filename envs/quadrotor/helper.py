@@ -165,15 +165,9 @@ def plot_3d_trajectories(pose_seqs, num_quads, dt, out_path, targets=None, obs_c
                 z = obs_size * np.cos(v) + obs_pos[2]
                 ax.plot_surface(x, y, z, color='gray', alpha=0.3)
 
-    # # Auto-scale limits (Collections don't trigger auto-scale)
-    # all_traj = pose_seqs.reshape(-1, 3)
-    # ax.set_xlim(all_traj[..., 0].min(), all_traj[..., 0].max())
-    # ax.set_ylim(all_traj[..., 1].min(), all_traj[..., 1].max())
-    # ax.set_zlim(all_traj[..., 2].min(), all_traj[..., 2].max())
-
-    ax.set_xlabel('North (x1)')
-    ax.set_ylabel('East (x2)')
-    ax.set_zlabel('Altitude (x3)')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
     
     # Add a colorbar to show time progression
     cbar = fig.colorbar(line, ax=ax, fraction=0.02, pad=0.1)

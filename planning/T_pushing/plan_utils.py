@@ -8,7 +8,8 @@ import jax
 import jax.numpy as jnp
 import sys
 
-from utils.T_pushing import hole_to_walls_aabbs, detect_T_hole_interaction, box_corners_nd
+from utils.T_pushing import hole_to_walls_aabbs, detect_T_hole_interaction
+from utils.misc import box_corners_nd
 from envs.T_pushing.t_sim import get_t_comp_centers_w_com, gen_vertices_from_poses
 sys.path.append('CROWN_Reach')
 from CROWN_Reach.src.reachability import DT_Plan_Reach
@@ -312,8 +313,8 @@ def plot_planning_animation(polys_seqs, pusher_pos_seqs, target_polys=None, gt_p
                                     facecolor='darkred', alpha=0.9,
                                     edgecolor='darkred' if add_edge else 'none', linewidth=2, zorder=horizon + 1)
         
-        for j in range(gt_polys_seqs.shape[0]):
-            if gt_polys_seqs is not None:
+        if gt_polys_seqs is not None:
+            for j in range(gt_polys_seqs.shape[0]):
                 curr_gt_vertices = gt_polys_seqs[j, frame, 0]
                 curr_gt_poly = plt.Polygon(curr_gt_vertices, 
                                         facecolor='darkred', alpha=0.9,
