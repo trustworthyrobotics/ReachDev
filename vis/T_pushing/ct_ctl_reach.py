@@ -190,7 +190,7 @@ def plot_v2(trajs, pxy, scale, window_size, file_name, abs_pose):
         trajs = trajs * scale
     else:
         trajs = (trajs + pxy_rep) * scale
-    pxy_scaled = pxy[0] * scale # [T+1, 2]
+    pxy_scaled = pxy * scale # [n, T+1, 2]
 
     # 1. Setup Plot
     fig, ax = plt.subplots(figsize=(8, 8))
@@ -214,8 +214,9 @@ def plot_v2(trajs, pxy, scale, window_size, file_name, abs_pose):
                     color=color, alpha=0.5, linewidth=2)
 
     # Plot Pusher Path in black
-    ax.plot(pxy_scaled[:, 0], pxy_scaled[:, 1], color='black', 
-            marker='o', markersize=4, label='Pusher', linewidth=2, zorder=10)
+    for b in range(pxy_scaled.shape[0]):
+        ax.plot(pxy_scaled[b, :, 0], pxy_scaled[b, :, 1], color='black', 
+                marker='o', markersize=4, label='Pusher' if b == 0 else "", linewidth=2, zorder=10)
 
     # Formatting
     ax.set_aspect('equal')
@@ -317,7 +318,7 @@ def main(config: DictConfig):
     eps_denorm = eps_arr.astype(np.float32)[:, start_time_step:start_time_step+T_reach+1, :]               # [B,T,15], unnormalized
     eps_norm = eps_denorm / scale                    # [B,T,15], normalized
 
-    selected_eps_idx = 40
+    selected_eps_idx = 43
     if pred_mode == "state":
         state_init = jnp.array(eps_norm[selected_eps_idx, 0, :state_dim])[None]      # [1, Dx]
         tgt_seq = jnp.array(eps_norm[selected_eps_idx, T_per_tgt:T_reach+1:T_per_tgt, :state_dim])  # [T+1, state_dim]
@@ -485,9 +486,11 @@ def main(config: DictConfig):
 
         plot(r_lo_agg, r_up_agg, X_preds, pusher_pos_seq, scale, window_size, outfile)
     elif pred_mode == "pose":
+        assert abs_pose == True, "only support rel pose reach viz for now"
         sample_r = r_lo_agg + (r_up_agg - r_lo_agg) * np.random.uniform(size=(n_samples, *r_lo_agg.shape[1:]))
         outfile = os.path.join(out_dir, f"reach.png")
-        plot_v2(np.array(transform_fn(jnp.array(sample_r))), pusher_pos_seq, scale, window_size, outfile, abs_pose=abs_pose)
+        pusher_pos_reach = sample_r[:, :, -4:-2]  # [n_samples, T+1, 2]
+        plot_v2(np.array(transform_fn(jnp.array(sample_r))), pusher_pos_reach, scale, window_size, outfile, abs_pose=abs_pose)
         
         outfile = os.path.join(out_dir, f"sample.png")
         plot_v2(np.array(transform_fn(jnp.array(X_preds_norm))), pusher_pos_preds, scale, window_size, outfile, abs_pose=abs_pose)
@@ -535,13 +538,25 @@ def main(config: DictConfig):
         # outfile = os.path.join(out_dir, f"reach_sample.png")
         # plot_v2(np.array(transform_fn((taylor_lo+taylor_up)/2)), pusher_pos_seq, scale, window_size, outfile, abs_pose=abs_pose)
 
+    trajs = np.concatenate([X_preds, U_preds], axis=-1)  # [B, T+1, Dx+Du]
+
+    agg_L = np.max(r_lo_agg, axis=0)[None]  # [1, T+1, Dx+Du]
+    agg_U = np.min(r_up_agg, axis=0)[None]  # [1, T+1, Dx+Du]
+    tol = 1e-5
+    violations = jnp.logical_or(trajs < agg_L - tol, trajs > agg_U + tol)  # [B,T,D]
+    violations = violations[:, 1:, :]  # ignore t=0
+    for i in range(act_state_dim + action_dim):
+        n_viol = int(jnp.sum(violations[:, :, i]))
+        if n_viol > 0:
+            print(f"[warning] x{i}: {n_viol} violations from sampled trajectories.")
+
     for idx in range(act_state_dim + action_dim):
         outfile = os.path.join(out_dir, f"reach_{idx}.png")
         visualize_flowpipe_time(
             times=ts,
             lowers=r_lo,
             uppers=r_up,
-            trajs=np.concatenate([X_preds, U_preds], axis=-1),
+            trajs=trajs,
             state_idx=idx,
             file_name=outfile,
             print_boxes=False,
