@@ -20,8 +20,8 @@ data:
     num_workers: 48
     frequency: 1 # DT dynamics frequency
   ct_dyn:
-    out_path: "output/data/${settings.task_name}_freq${data.ct_dyn.frequency}_${data.abs_pose}"
-    # out_path: "output/data/${settings.task_name}_freq${data.ct_dyn.frequency}_${data.abs_pose}_shift"
+    # out_path: "output/data/${settings.task_name}_freq${data.ct_dyn.frequency}_${data.abs_pose}"
+    out_path: "output/data/${settings.task_name}_freq${data.ct_dyn.frequency}_${data.abs_pose}_shift"
     num_episodes: 16000
     episode_length: 50
     episode_shift: 3
@@ -31,7 +31,7 @@ data:
     # out_path: "output/data/${settings.task_name}_freq${data.ct_ctl.frequency}_ctl_${data.abs_pose}_063851"
     out_path: "output/data/${settings.task_name}_freq${data.ct_ctl.frequency}_ctl_${data.abs_pose}_${data.ct_ctl.use_nn}_shift_063851"
     use_nn: False
-    model_dir: "output/runs/${settings.task_name}_ct_dyn/lr0.003_mid_0.08_0.05_0.002_True_20260119_222059"
+    model_dir: "output/runs/${settings.task_name}_ct_dyn/lr0.003_mid_0.08_0.05_0.002_True_20260125_031328"
     num_episodes: 16000
     episode_length: 30
     episode_shift: 3
@@ -74,8 +74,8 @@ train_dt_dyn:
     mode: "mid" # {"none","mid","after"}
     every: 1 # only for "mid" and "after" mode, every N batches
     after: 0.6 # only for "after" mode, after N*n_epoch epochs
-    eps_init: 0.03
-    eps_final: 0.01
+    eps_init: 0.08
+    eps_final: 0.05
     # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
     weight: 0.0015
     # batch_size: 8
@@ -202,9 +202,10 @@ reachability:
   sr_window_size: 100
 
 test_models:
-  dt_dyn_dir: "${train_dt_dyn.out_dir}/nt_log_cos_128_mid_1_0.6_eps0.08_0.05_w0.0015_j0.0_True_True_20260111_001407"
-  # dt_dyn_dir: "${train_dt_dyn.out_dir}/nt_log_cos_128_none_1_0.6_eps0.08_0.05_w0.001_j0.0_True_True_20260109_214410"
-  ct_dyn_dir: "${train_ct_dyn.out_dir}/lr0.003_mid_0.08_0.05_0.002_True_20260119_200627"
+  dt_dyn_dir: "${train_dt_dyn.out_dir}/[96,_96,_96]_log_cos_128_mid_1_0.6_eps0.03_0.01_w0.0015_j0.0_True_True_20260125_024752"
+  # dt_dyn_dir: "${train_dt_dyn.out_dir}/[96,_96,_96]_log_cos_128_none_1_0.6_eps0.03_0.01_w0.0015_j0.0_True_True_20260125_054810"
+  ct_dyn_dir: "${train_ct_dyn.out_dir}/lr0.003_mid_0.08_0.05_0.002_True_20260125_031328"
+  # ct_dyn_dir: "${train_ct_dyn.out_dir}/lr0.003_mid_0.08_0.05_0.002_True_20260125_031328"
   # ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_u_False_True_mid_0.08_0.05_0.001_True_20260111_214610"
   ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_u_False_True_mid_0.03_0.01_0.001_True_20260119_231719"
 

@@ -444,8 +444,7 @@ def main(config: DictConfig):
         _, (X_preds, U_preds) = jax.lax.scan(one_step_ctl_dyn, (X_curr, X_tgt, U_ref), None, length=T_per_tgt)
         return X_preds[-1], (X_preds, U_preds)
 
-    with jax.disable_jit():
-        _, (X_preds, U_preds) = jax.lax.scan(track, X_curr, reference_seq.repeat(n_samples, axis=0).transpose(1,0,2), length=n_track)
+    _, (X_preds, U_preds) = jax.lax.scan(track, X_curr, reference_seq.repeat(n_samples, axis=0).transpose(1,0,2), length=n_track)
 
     X_preds = X_preds.reshape(-1, n_samples, X_preds.shape[-1]).transpose(1,0,2)  # [B, T, Dx]
     U_preds = U_preds.reshape(-1, n_samples, U_preds.shape[-1]).transpose(1,0,2)  # [B, T, Du]
