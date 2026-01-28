@@ -204,16 +204,19 @@ reachability:
   sr_window_size: 100
 
 test_models:
-  dt_dyn_dir: "${train_dt_dyn.out_dir}/[96,_96,_96]_log_cos_128_mid_1_0.6_eps0.08_0.05_w0.003_j0.0_True_True_20260127_221448"
-  # dt_dyn_dir: "${train_dt_dyn.out_dir}/[96,_96,_96]_log_cos_128_none_1_0.6_eps0.08_0.05_w0.0025_j0.0_True_True_20260127_225748"
+  # certified test models
   ct_dyn_dir: "${train_ct_dyn.out_dir}/lr0.003_mid_0.08_0.05_0.003_True_20260127_051024"
+  # dt_dyn_dir: "${train_dt_dyn.out_dir}/[96,_96,_96]_log_cos_128_mid_1_0.6_eps0.08_0.05_w0.003_j0.0_True_True_20260127_221448"
+  # ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_tu_False_True_mid_0.03_0.01_0.001_True_20260128_034342"
+
+  # regular test models
   # ct_dyn_dir: "${train_ct_dyn.out_dir}/lr0.003_none_0.08_0.05_0.002_True_20260127_221601"
-  ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_u_False_True_mid_0.05_0.03_0.0012_True_20260128_012818"
-  # ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_u_False_True_none_0.05_0.03_0.001_True_20260128_040715"
+  dt_dyn_dir: "${train_dt_dyn.out_dir}/[96,_96,_96]_log_cos_128_none_1_0.6_eps0.08_0.05_w0.0025_j0.0_True_True_20260127_225748"
+  ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_tu_False_True_none_0.05_0.03_0.001_True_20260128_045222"
 
 planning:
   out_path: "output/planning/${settings.task_name}/${planning.test_id}_${planning.disturbance.type}_${planning.disturbance.init}_${planning.disturbance.inter}_${planning.planner}_${planning.n_sample}_${planning.enable_ctl}_${planning.refinement.enable}"
-  horizon: 10
+  horizon: 8
   max_steps: 25
   n_act_step: 1
   num_test: 5
@@ -225,7 +228,7 @@ planning:
   disturbance:
     type: "uniform" # {"none","normal","uniform"}
     init: 0.05
-    inter: 0.01
+    inter: 0.015
 
   hole:
     enable: true
@@ -233,7 +236,8 @@ planning:
     size: [60, 80] # width, height
     penalty: 100.0
 
-  enable_ctl: false
+  enable_ctl: true
+  init_follow_steps: 3
   reach_in_obj:
     enable: false
     weight: 0.1
@@ -241,7 +245,7 @@ planning:
     clip: true
     splits: {}
   refinement:
-    enable: true
+    enable: false
     lr: 0.02
     n_iter: 10
     reach_in_obj:

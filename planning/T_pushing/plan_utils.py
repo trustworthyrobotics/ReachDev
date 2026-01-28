@@ -152,11 +152,6 @@ def make_rollout_and_reward_fns(
     enable_hole = hole_config.get("enable", False)
     if enable_hole:
         assert pred_mode == "pose", "Hole interaction only implemented for pose prediction mode."
-        hole_center = jnp.array(hole_config["center"])  # [2,]
-        hole_size = jnp.array(hole_config["size"])  # [2,]
-        c_wall, h_wall = hole_to_walls_aabbs(hole_center, hole_size, window_size=data_config["window_size"])
-        c_wall = jnp.array(c_wall)
-        h_wall = jnp.array(h_wall)
         stem_size = data_config["stem_size"]
         bar_size = data_config["bar_size"]
         scale = data_config.get("scale", 1.0)
@@ -164,6 +159,12 @@ def make_rollout_and_reward_fns(
                          [bar_size[0] / 2, bar_size[1] / 2]]) / scale  # [2,2]
         c_s, c_b = get_t_comp_centers_w_com(stem_size, bar_size)
         c_T_ori = jnp.array([c_s, c_b])[None, :] / scale  # [1,2,2]
+
+        hole_center = jnp.array(hole_config["center"])  # [2,]
+        hole_size = jnp.array(hole_config["size"])  # [2,]
+        c_wall, h_wall = hole_to_walls_aabbs(hole_center, hole_size, window_size=data_config["window_size"])
+        c_wall = jnp.array(c_wall) / scale
+        h_wall = jnp.array(h_wall) / scale
 
         def _detect_interaction(state_seq):
             # state_seq: [horizon, 3]
@@ -317,6 +318,8 @@ def plot_planning_animation(polys_seqs, pusher_pos_seqs, target_polys=None, gt_p
                                     facecolor='darkred', alpha=0.9,
                                     edgecolor='darkred' if add_edge else 'none', linewidth=2, zorder=horizon + 1)
         
+            ax.add_patch(curr_poly)
+
         if gt_polys_seqs is not None:
             for j in range(gt_polys_seqs.shape[0]):
                 curr_gt_vertices = gt_polys_seqs[j, frame, 0]
@@ -324,7 +327,6 @@ def plot_planning_animation(polys_seqs, pusher_pos_seqs, target_polys=None, gt_p
                                         facecolor='darkred', alpha=0.9,
                                         edgecolor='black', linewidth=2, zorder=horizon + 1)
                 ax.add_patch(curr_gt_poly)
-            ax.add_patch(curr_poly)
         # 3. Plot Current Pusher Position
         curr_pusher_pos = pusher_pos_seqs[frame, 0]
         ax.add_patch(plt.Circle((curr_pusher_pos[0], curr_pusher_pos[1]), pusher_size, color='black', fill=True, zorder=horizon + 1))
@@ -382,8 +384,8 @@ if __name__ == "__main__":
     # obs_dict = {}
     obs_dict = {
         "obs_norm": 1,
-        "obs_pos_list": [[110., 455.], [390., 455.]],
-        "obs_size_list": [[110.,  45.], [110.,  45.]],
+        "obs_pos_list": [[110., 460.], [390., 460.]],
+        "obs_size_list": [[110.,  40.], [110.,  40.]],
     }
 
     act_seqs = np.array([d["act_seq"] for d in data])
@@ -431,11 +433,11 @@ if __name__ == "__main__":
     bar_size = data_config["bar_size"]
     scale = data_config.get("scale", 1.0)
     h_T = jnp.array([[stem_size[0] / 2, stem_size[1] / 2],
-                        [bar_size[0] / 2, bar_size[1] / 2]]) / scale  # [2,2]
+                        [bar_size[0] / 2, bar_size[1] / 2]])  # [2,2]
     c_s, c_b = get_t_comp_centers_w_com(stem_size, bar_size)
-    c_T_ori = jnp.array([c_s, c_b])[None, :] / scale  # [1,2,2]
+    c_T_ori = jnp.array([c_s, c_b])[None, :]  # [1,2,2]
 
-    def _detect_interaction(r_lo, r_up):
+    def _detect_interaction_set(r_lo, r_up):
         # state_seq: [horizon, 3]
         c_T_lo = c_T_ori + r_lo[..., None, 0:2] # [horizon, 2, 2]
         c_T_up = c_T_ori + r_up[..., None, 0:2] # [horizon, 2, 2]
@@ -444,5 +446,22 @@ if __name__ == "__main__":
         interact, _ = detect_T_hole_interaction_set(c_wall, h_wall, c_T_lo, c_T_up, h_T, angle_T_lo, angle_T_up) # [horizon]
         return interact
 
-    interact_seqs = jax.vmap(jax.vmap(_detect_interaction))(r_lo_seqs[0:1, 0:1], r_up_seqs[0:1, 0:1])  # (n_sim_steps+1, horizon+1, horizon)
+    interact_seqs = jax.vmap(jax.vmap(_detect_interaction_set))(r_lo_seqs[0:1, 0:1], r_up_seqs[0:1, 0:1])  # (n_sim_steps+1, horizon+1, horizon)
     pass
+
+    # def _detect_interaction(state_seq):
+    #     # state_seq: [horizon, 3]
+    #     c_T = c_T_ori + state_seq[..., None, 0:2] # [horizon, 2, 2]
+    #     angle_T = jnp.concatenate([state_seq[..., 2:3], state_seq[..., 2:3]+jnp.pi/2], axis=-1) # [horizon, 2]
+    #     interact, _ = detect_T_hole_interaction(c_wall, h_wall, c_T, h_T, angle_T) # [horizon]
+    #     return interact
+    
+    # # interact_seqs = jax.vmap(_detect_interaction)(state_seqs[-2:-1])  # (n_sim_steps+1, horizon+1, horizon)
+
+    # test_state = jnp.array([236, 420, jnp.pi*1.001])[None, None]
+    # interact_seqs = jax.vmap(_detect_interaction)(test_state)
+    # save_path = pkl_file.replace(".pkl", "_test.gif")
+    # plot_plan_from_poses(test_state[None], pusher_pos_seqs[0:1, 0:1], target_pose=target_pose, stem_size=stem_size, bar_size=bar_size, window_size=window_size, obs_dict=obs_dict, fps=fps, save_path=save_path)
+    # if interact_seqs.sum() > 0:
+    #     print(interact_seqs)
+    #     print("Interaction detected!")

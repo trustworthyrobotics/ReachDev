@@ -144,6 +144,7 @@ def main(config: DictConfig):
         t = 0
         succeed = False
         init_follow = True
+        init_follow_steps = planning_config.get("init_follow_steps", 1)
         while t < max_steps:
             env_dict = env.get_env_state(not abs_pose)
             state_cur, _, pusher_pos = trans_fn(env_dict)
@@ -160,12 +161,17 @@ def main(config: DictConfig):
             state_cur = state_cur.at[0:T_dim].add(noise)
             # env.force_update([[noise[0] * scale, noise[1] * scale, noise[2]]])  # apply disturbance
 
-            key, subkey = jax.random.split(key)
-            init_act_seq = jax.random.uniform(subkey,(horizon, action_dim),minval=action_lower_lim,maxval=action_upper_lim,)
-            key, subkey = jax.random.split(key)
+            # key, subkey = jax.random.split(key)
+            # init_act_seq = jax.random.uniform(subkey,(horizon, action_dim),minval=action_lower_lim,maxval=action_upper_lim,)
+            # key, subkey = jax.random.split(key)
+            init_act_seq = jnp.zeros((horizon, action_dim))
             # with jax.disable_jit():
             #     planning_res = eqx.filter_jit(planner.trajectory_optimization)(key, state_cur, init_act_seq, skip=False, target_state=scaled_target_state, pusher_pos=pusher_pos)
-            planning_res = eqx.filter_jit(planner.trajectory_optimization)(subkey, state_cur, init_act_seq, skip=False, target_state=scaled_target_state, pusher_pos=pusher_pos)
+            planning_res = eqx.filter_jit(planner.trajectory_optimization)(subkey, state_cur, init_act_seq, skip=succeed, target_state=scaled_target_state, pusher_pos=pusher_pos)
+            if verbose and 'collision_loss' in planning_res['aux']['eval_out'] and planning_res['aux']['eval_out']['collision_loss'] > 0:
+                print(f"Step {t} planning result:")
+                print(f"   collision loss: {planning_res['aux']['eval_out']['collision_loss']}")
+
             scaled_act_seq = planning_res["act_seq"]
             scaled_state_seq = planning_res["state_seq"]
             act_seq = scaled_act_seq * scale  # (horizon, action_dim)
@@ -193,18 +199,22 @@ def main(config: DictConfig):
                 sub_target = abs_scaled_state_seq[step + 1, :-action_dim]
                 ref_action = scaled_act_seq[step, :]
                 sub_env_states = []
+
+                if (step_cost_fn(sub_target, state_cur[:-action_dim]) < 0.15) or (init_follow):
+                    use_ctl = False
+                else:
+                    use_ctl = enable_ctl
+
                 for ctl_step in range(ctl_frequency):
-                    if enable_ctl:
-                        if (step_cost_fn(sub_target, state_cur[:-action_dim]) < 4e-1) and (init_follow):
-                            next_action = ref_action
-                            if verbose:
-                                print("   skip controller")
-                        else:
-                            next_action = eqx.filter_jit(ct_ctl.forward_batchless)(state_cur, sub_target, ref_action)
-                            init_follow = False
-                            if verbose:
-                                print(f"   controller action: {next_action}")
+                    if use_ctl:
+                        # if verbose:
+                        #     print(f"   step_cost: {step_cost_fn(sub_target, state_cur[:-action_dim])}, init_follow: {init_follow}")
+                        next_action = eqx.filter_jit(ct_ctl.forward_batchless)(state_cur, sub_target, ref_action)
+                        if verbose:
+                            print(f"   controller action: {next_action}")
                     else:
+                        if verbose:
+                            print("   skip controller")
                         next_action = ref_action
                     next_pusher_pos = (pusher_pos + next_action) * scale
                     env_dict = env.update((next_pusher_pos[0], next_pusher_pos[1]), rel=False, n_sim_time=1/ctl_frequency)
@@ -235,11 +245,13 @@ def main(config: DictConfig):
                 # step_cost = step_cost_fn_np(env_state[:-action_dim], target_state)
 
                 t += 1
+                if t > init_follow_steps:
+                    init_follow = False
                 gt_states.append(env_state)
                 if verbose:
                     print(f"   step {t} cost: {step_cost}, action: {env_dict['action']}")
                 step_cost_list.append(step_cost)
-                if step_cost < 20:
+                if step_cost < 10:
                     succeed = True
                 if t >= max_steps:
                     break
