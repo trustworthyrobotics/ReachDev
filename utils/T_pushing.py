@@ -228,3 +228,127 @@ def hole_to_walls_aabbs(c_hole, s_hole, window_size, tol=1e-6):
         h_wall[i] = np.array([(xmax - xmin) * 0.5, (ymax - ymin) * 0.5], dtype=float)
 
     return c_wall, h_wall
+
+
+import jax.numpy as jnp
+from typing import Tuple
+
+_PI = jnp.pi
+_TWOPI = 2.0 * jnp.pi
+
+def _interval_contains_k(a: jnp.ndarray, b: jnp.ndarray, shift: float, period: float) -> jnp.ndarray:
+    """
+    Returns True if there exists integer k such that (shift + k*period) in [a,b].
+    Works elementwise for arrays.
+    Assumes b >= a.
+    """
+    k_min = jnp.ceil((a - shift) / period)
+    k_max = jnp.floor((b - shift) / period)
+    return k_min <= k_max
+
+def _max_abs_sin_cos(theta_lo: jnp.ndarray, theta_hi: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """
+    Compute exact maxima of |sin(theta)| and |cos(theta)| over theta in [lo, hi],
+    for elementwise lo/hi. Assumes theta_hi >= theta_lo.
+
+    If interval length >= 2pi, both maxima are 1.
+    Otherwise:
+      max |sin| = 1 if interval contains (pi/2 + k*pi), else max(|sin(lo)|,|sin(hi)|)
+      max |cos| = 1 if interval contains (0 + k*pi),    else max(|cos(lo)|,|cos(hi)|)
+    """
+    lo = theta_lo
+    hi = theta_hi
+    length = hi - lo
+
+    # If spans full period, maxima are 1
+    full = length >= _TWOPI
+
+    # sin hits ±1 at pi/2 + k*pi
+    sin_hits_1 = _interval_contains_k(lo, hi, shift=float(_PI / 2.0), period=float(_PI))
+    max_abs_sin_end = jnp.maximum(jnp.abs(jnp.sin(lo)), jnp.abs(jnp.sin(hi)))
+    max_abs_sin = jnp.where(full | sin_hits_1, 1.0, max_abs_sin_end)
+
+    # cos hits ±1 at k*pi
+    cos_hits_1 = _interval_contains_k(lo, hi, shift=0.0, period=float(_PI))
+    max_abs_cos_end = jnp.maximum(jnp.abs(jnp.cos(lo)), jnp.abs(jnp.cos(hi)))
+    max_abs_cos = jnp.where(full | cos_hits_1, 1.0, max_abs_cos_end)
+
+    return max_abs_sin, max_abs_cos
+
+def _aabb_intersect(
+    cA: jnp.ndarray, hA: jnp.ndarray,
+    cB: jnp.ndarray, hB: jnp.ndarray,
+    eps: float = 0.0
+) -> jnp.ndarray:
+    """
+    AABB-AABB intersection test in 2D.
+    Touching counts as intersection; eps>0 makes it more conservative.
+    Shapes broadcast.
+    """
+    d = jnp.abs(cB - cA)  # (...,2)
+    return (d[..., 0] <= (hA[..., 0] + hB[..., 0] + eps)) & (d[..., 1] <= (hA[..., 1] + hB[..., 1] + eps))
+
+def detect_T_hole_interaction_set(
+    c_wall: jnp.ndarray,      # (2,2)
+    h_wall: jnp.ndarray,      # (2,2)
+    c_T_lo: jnp.ndarray,      # (n,2,2)
+    c_T_hi: jnp.ndarray,      # (n,2,2)
+    h_T: jnp.ndarray,         # (2,2)  per-part half extents (shared)
+    angle_T_lo: jnp.ndarray,  # (n,2)
+    angle_T_hi: jnp.ndarray,  # (n,2)
+    eps: float = 0.0,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """
+    Guaranteed-safe set-based check.
+
+    Returns:
+      safe: (n,) bool
+        True iff BOTH parts (stem+bar) are guaranteed NOT to intersect EITHER wall
+        for ANY pose in the provided intervals.
+
+      safe_part_wall: (n,2,2) bool
+        safe_part_wall[n, part, wall] is True iff that part's pose-set is
+        guaranteed NOT to intersect that wall.
+    """
+    # Basic sanity (JAX-friendly: these are runtime asserts only if you enable them)
+    # Expect lo <= hi elementwise for the interval meaning used here.
+    # If you have wrap-around angle intervals, you need to pre-normalize/split them.
+    # (Keeping it simple + sound for the typical small-angle-uncertainty case.)
+    # You can remove these in production.
+    # Note: jnp.all(...) is traced under jit; keep outside jit or use chex if needed.
+    # assert bool(jnp.all(c_T_hi >= c_T_lo)), "Expect c_T_lo <= c_T_hi"
+    # assert bool(jnp.all(angle_T_hi >= angle_T_lo)), "Expect angle_T_lo <= angle_T_hi"
+
+    n = c_T_lo.shape[0]
+
+    # Over-approx each uncertain OBB part (n,2) -> an AABB (center+half)
+    c_mid = 0.5 * (c_T_lo + c_T_hi)          # (n,2,2)
+    c_rad = 0.5 * (c_T_hi - c_T_lo)          # (n,2,2) center uncertainty radius
+
+    # Angle-dependent max axis-aligned half extents for rotated rectangle:
+    # ex(theta)=|cos|*hBx + |sin|*hBy, ey(theta)=|sin|*hBx + |cos|*hBy
+    max_abs_sin, max_abs_cos = _max_abs_sin_cos(angle_T_lo, angle_T_hi)  # (n,2), (n,2)
+
+    hBx = h_T[None, :, 0]  # (1,2)
+    hBy = h_T[None, :, 1]  # (1,2)
+
+    ex_max = hBx * max_abs_cos + hBy * max_abs_sin   # (n,2)
+    ey_max = hBx * max_abs_sin + hBy * max_abs_cos   # (n,2)
+
+    # Total AABB half extents = center-uncertainty radius + rotation envelope
+    h_set = jnp.stack([c_rad[..., 0] + ex_max, c_rad[..., 1] + ey_max], axis=-1)  # (n,2,2)
+
+    # Now test AABB(set) vs wall AABB for each wall, n, part.
+    cA = c_wall[:, None, None, :]   # (2,1,1,2)
+    hA = h_wall[:, None, None, :]   # (2,1,1,2)
+    cB = c_mid[None, :, :, :]       # (1,n,2,2)
+    hB = h_set[None, :, :, :]       # (1,n,2,2)
+
+    inter_w_n_p = _aabb_intersect(cA, hA, cB, hB, eps=eps)  # (2,n,2)
+
+    # interact_part_wall: (n,2,2) with axis order (n, part, wall), possibly interacted
+    interact_part_wall = jnp.transpose(inter_w_n_p, (1, 2, 0))
+
+    # interact: (n,) True if ANY wall & ANY part possibly intersects
+    interact = jnp.any(inter_w_n_p, axis=(0, 2))  # (n,)
+    return interact, interact_part_wall

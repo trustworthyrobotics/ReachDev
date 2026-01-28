@@ -275,7 +275,10 @@ def main(config: DictConfig):
                 fps=5,
                 save_path=os.path.join(out_dir, f"plan_vis_{i:04d}.gif"),
             )
-            enable_reach = planning_config.get("reach_in_obj", {}).get("enable", False) or (planning_config.get("refinement", {}).get('enable', False) and planning_config.get("refinement", {}).get("reach_in_obj", False))
+            reach_config = planning_config.get("reach_in_obj", {})
+            refine_config = planning_config.get("refinement", {})
+            reach_refine_config = refine_config.get("reach_in_obj", {})
+            enable_reach = reach_config.get("enable", False) or (refine_config.get('enable', False) and reach_refine_config.get("enable", False))
             if enable_reach:
                 # r_lo_seqs, r_up_seqs: (n_sim_steps+1, horizon+1, 3)
                 r_lo_seqs = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['r_lo'] for d in planning_res_list]).reshape((*state_seqs.shape[:2], -1))[..., :pose_dim]

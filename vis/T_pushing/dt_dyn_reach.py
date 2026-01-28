@@ -277,7 +277,7 @@ def main(config: DictConfig):
     eps_arr = np.array(eval_data)  # [B, T, 15]
 
     T_reach = train_config["n_rollout_valid"]
-    T_reach = 15
+    # T_reach = 15
     start_time_step = 0
 
     # Everything inside file is normalized by /scale → denormalize for visualization

@@ -61,7 +61,7 @@ train_dt_dyn:
   horizon_scheduler:
     type: "log" # log, linear, const
     T_init: 1
-    T_final: 10
+    T_final: 15
     log_alpha: 1.0
   step_weight_ub: 2
   noise: 0.005 # std of the Gaussian noise to training data
@@ -77,7 +77,7 @@ train_dt_dyn:
     eps_init: 0.08
     eps_final: 0.05
     # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
-    weight: 0.0015
+    weight: 0.003
     # batch_size: 8
   batch_size: 128
   lam_jac_reg: 0.0e-3 # jacobian regularization weight
@@ -193,8 +193,8 @@ train_ct_ctl:
 
 reachability:
   eps: 0.05
-  init_splits: {}
-  refine_splits: {0: 2, 1: 2, 2: 2}
+  # init_splits: {}
+  # refine_splits: {0: 2, 1: 2, 2: 2}
   # below for CT reachability settings
   init_remainder: 5e-2
   frr_rounds: 3
@@ -202,8 +202,8 @@ reachability:
   sr_window_size: 100
 
 test_models:
-  dt_dyn_dir: "${train_dt_dyn.out_dir}/[96,_96,_96]_log_cos_128_mid_1_0.6_eps0.03_0.01_w0.0015_j0.0_True_True_20260125_024752"
-  # dt_dyn_dir: "${train_dt_dyn.out_dir}/[96,_96,_96]_log_cos_128_none_1_0.6_eps0.03_0.01_w0.0015_j0.0_True_True_20260125_054810"
+  # dt_dyn_dir: "${train_dt_dyn.out_dir}/[96,_96,_96]_log_cos_128_mid_1_0.6_eps0.08_0.05_w0.003_j0.0_True_True_20260127_221448"
+  dt_dyn_dir: "${train_dt_dyn.out_dir}/[96,_96,_96]_log_cos_128_none_1_0.6_eps0.08_0.05_w0.0025_j0.0_True_True_20260127_225748"
   ct_dyn_dir: "${train_ct_dyn.out_dir}/lr0.003_mid_0.08_0.05_0.002_True_20260125_031328"
   # ct_dyn_dir: "${train_ct_dyn.out_dir}/lr0.003_mid_0.08_0.05_0.002_True_20260125_031328"
   # ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_u_False_True_mid_0.08_0.05_0.001_True_20260111_214610"
@@ -212,9 +212,9 @@ test_models:
 planning:
   out_path: "output/planning/${settings.task_name}/${planning.test_id}_${planning.disturbance.type}_${planning.disturbance.init}_${planning.disturbance.inter}_${planning.planner}_${planning.n_sample}_${planning.enable_ctl}_${planning.refinement.enable}"
   horizon: 10
-  max_steps: 25
+  max_steps: 20
   n_act_step: 1
-  num_test: 10
+  num_test: 5
   test_id: 1
   action_dim: ${data.action_dim}
   action_bound: ${data.action_bound}
@@ -231,16 +231,23 @@ planning:
     size: [60, 80] # width, height
     penalty: 100.0
 
-  enable_ctl: true
+  enable_ctl: false
   reach_in_obj:
     enable: false
-    reach_weight: 0.1
-    reach_loss_max: 10
+    weight: 0.1
+    loss_max: 10
+    clip: true
+    splits: {}
   refinement:
-    enable: false
-    lr: 0.1
+    enable: true
+    lr: 0.02
     n_iter: 10
-    reach_in_obj: true
+    reach_in_obj:
+      enable: true
+      weight: 8
+      loss_max: 10
+      clip: false
+      splits: {0: 2, 1: 2, 2: 2}
 
   cost_norm: 1
   only_final_cost: False

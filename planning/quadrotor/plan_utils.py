@@ -80,9 +80,10 @@ def make_rollout_and_reward_fns(
     horizon = planning_config["horizon"]
     cost_norm = planning_config["cost_norm"]
     only_final_cost = planning_config["only_final_cost"]
-    reach_in_obj_config = planning_config.get("reach_in_obj", {})
-
-    enable_reach = reach_in_obj_config.get("enable", False) or planning_config.get("refinement", {}).get("reach_in_obj", False)
+    reach_config = planning_config.get("reach_in_obj", {})
+    refine_config = planning_config.get("refinement", {})
+    reach_refine_config = refine_config.get("reach_in_obj", {})
+    enable_reach = reach_config.get("enable", False) or (refine_config.get('enable', False) and reach_refine_config.get("enable", False))
 
     if enable_reach:
         # reachability part
@@ -95,8 +96,6 @@ def make_rollout_and_reward_fns(
         reach_analyzer = DT_Plan_Reach(f_wrapper, state_dim=dt_dyn.Dx, action_dim=dt_dyn.Du, nn_dyn=True, n_steps_per_plan=1, step_size=1)
         eps = reach_config.get("eps", 0.05)
         splits_cfg = reach_config.get("refine_splits", {})
-        reach_weight = reach_in_obj_config.get("reach_weight", 0.1)
-        reach_loss_max = reach_in_obj_config.get("reach_loss_max", 10.0)
 
         _calculate_volume = lambda lo, up: calculate_volume(lo, up, union_init=False, mode='sum')
 
@@ -122,12 +121,13 @@ def make_rollout_and_reward_fns(
             return total_penalty
 
     # [state_dim], [n_sample, horizon, action_dim] -> [n_sample, horizon, state_dim]
-    def rollout_fn(state_cur: jnp.ndarray, act_seqs: jnp.ndarray, use_reach: bool) -> jnp.ndarray:
+    def rollout_fn(state_cur: jnp.ndarray, act_seqs: jnp.ndarray, reach_config: dict) -> jnp.ndarray:
         state_cur = state_cur[None].repeat(act_seqs.shape[0], axis=0) # [B, Dx]
         state_seqs = dt_dyn.rollout(state_cur, act_seqs)
-        if use_reach:
+        enable_reach = reach_config.get("enable", False)
+        if enable_reach:
             reach_info = cal_reach(state_cur, act_seqs)
-        return state_seqs, reach_info if use_reach else {}
+        return state_seqs, reach_info if enable_reach else {}
 
     def cal_reach(state_cur: jnp.ndarray, act_seqs: jnp.ndarray) -> jnp.ndarray:
         B = act_seqs.shape[0]
@@ -151,7 +151,7 @@ def make_rollout_and_reward_fns(
         return {"reach_vol": reach_vol, "r_lo": r_lo_agg, "r_up": r_up_agg}
 
     # assume all are scaled
-    def reward_fn(state_seqs: jnp.ndarray, act_seqs: jnp.ndarray, use_reach: bool, reach_aux: Dict, target_state: jnp.ndarray) -> Dict:
+    def reward_fn(state_seqs: jnp.ndarray, act_seqs: jnp.ndarray, reach_config: dict, reach_aux: Dict, target_state: jnp.ndarray) -> Dict:
         cost_seqs = jnp.linalg.norm(state_seqs - target_state[None, None, :], axis=-1, ord=cost_norm) ** cost_norm
         if only_final_cost:
             costs = cost_seqs[:, -1]
@@ -159,8 +159,12 @@ def make_rollout_and_reward_fns(
             step_weight = jnp.linspace(1, horizon + 1, horizon) / horizon
             costs = jnp.sum(cost_seqs * step_weight[None, :], axis=-1)
         reach_loss = 0.0
-        if use_reach:
-            reach_loss = jnp.clip(reach_weight * jnp.log1p(reach_aux["reach_vol"]), a_max=reach_loss_max)
+        enable_reach = reach_config.get("enable", False)
+        if enable_reach:
+            reach_loss = reach_config.get("weight", 1.0) * jnp.log1p(reach_aux["reach_vol"])
+            if reach_config.get("clip", True):
+                reach_loss = jnp.clip(reach_loss, a_max=reach_config.get("loss_max", 10.0))
+
             costs = costs + reach_loss  # penalize large reachable set
         if enable_obstacle:
             obs_costs = obstacle_cost_fn(state_seqs)

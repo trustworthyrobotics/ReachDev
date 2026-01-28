@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 import sys
 
-from utils.T_pushing import hole_to_walls_aabbs, detect_T_hole_interaction
+from utils.T_pushing import hole_to_walls_aabbs, detect_T_hole_interaction, detect_T_hole_interaction_set
 from utils.misc import box_corners_nd
 from envs.T_pushing.t_sim import get_t_comp_centers_w_com, gen_vertices_from_poses
 sys.path.append('CROWN_Reach')
@@ -131,8 +131,10 @@ def make_rollout_and_reward_fns(
     horizon = planning_config["horizon"]
     cost_norm = planning_config["cost_norm"]
     only_final_cost = planning_config["only_final_cost"]
-    reach_in_obj_config = planning_config.get("reach_in_obj", {})
-    enable_reach = reach_in_obj_config.get("enable", False) or planning_config.get("refinement", {}).get("reach_in_obj", False)
+    reach_config = planning_config.get("reach_in_obj", {})
+    refine_config = planning_config.get("refinement", {})
+    reach_refine_config = refine_config.get("reach_in_obj", {})
+    enable_reach = reach_config.get("enable", False) or (refine_config.get('enable', False) and reach_refine_config.get("enable", False))
 
     if enable_reach:
         # reachability part
@@ -143,9 +145,6 @@ def make_rollout_and_reward_fns(
 
         reach_analyzer = DT_Plan_Reach(f_wrapper, state_dim=dt_dyn.Dx, action_dim=dt_dyn.Du, nn_dyn=True, n_steps_per_plan=1, step_size=1)
         eps = reach_config.get("eps", 0.05)
-        splits_cfg = reach_config.get("refine_splits", {})
-        reach_weight = reach_in_obj_config.get("reach_weight", 0.1)
-        reach_loss_max = reach_in_obj_config.get("reach_loss_max", 10.0)
 
         _calculate_volume = lambda lo, up: calculate_volume(lo, up, union_init=False, mode='sum')
 
@@ -176,14 +175,15 @@ def make_rollout_and_reward_fns(
         pass
 
     # [state_dim], [n_sample, horizon, action_dim] -> [n_sample, horizon, state_dim]
-    def rollout_fn(state_cur: jnp.ndarray, act_seqs: jnp.ndarray, use_reach: bool) -> jnp.ndarray:
+    def rollout_fn(state_cur: jnp.ndarray, act_seqs: jnp.ndarray, reach_config: dict) -> jnp.ndarray:
         state_cur = state_cur[None].repeat(act_seqs.shape[0], axis=0) # [B, Dx]
         state_seqs = dt_dyn.rollout(state_cur, act_seqs)
-        if use_reach:
-            reach_info = cal_reach(state_cur, act_seqs)
-        return state_seqs, reach_info if use_reach else {}
+        enable_reach = reach_config.get("enable", False)
+        if enable_reach:
+            reach_info = cal_reach(state_cur, act_seqs, splits_cfg = reach_config.get("splits", {}))
+        return state_seqs, reach_info if enable_reach else {}
 
-    def cal_reach(state_cur: jnp.ndarray, act_seqs: jnp.ndarray) -> jnp.ndarray:
+    def cal_reach(state_cur: jnp.ndarray, act_seqs: jnp.ndarray, splits_cfg: dict) -> jnp.ndarray:
         B = act_seqs.shape[0]
         Da = dt_dyn.Du
         T = act_seqs.shape[1]
@@ -209,7 +209,7 @@ def make_rollout_and_reward_fns(
         return {"reach_vol": reach_vol, "r_lo": r_lo_agg, "r_up": r_up_agg}
 
     # assume all are scaled
-    def reward_fn(state_seqs: jnp.ndarray, act_seqs: jnp.ndarray, use_reach: bool, reach_aux: Dict, target_state: jnp.ndarray, pusher_pos: jnp.ndarray) -> Dict:
+    def reward_fn(state_seqs: jnp.ndarray, act_seqs: jnp.ndarray, reach_config: dict, reach_aux: Dict, target_state: jnp.ndarray, pusher_pos: jnp.ndarray) -> Dict:
         # state_seqs: [n_sample, horizon, state_dim]
         if abs_pose:
             abs_state_seqs = state_seqs[..., :-act_seqs.shape[-1]]
@@ -223,8 +223,12 @@ def make_rollout_and_reward_fns(
             step_weight = jnp.linspace(1, horizon + 1, horizon) / horizon
             costs = jnp.sum(cost_seqs * step_weight[None, :], axis=-1)
         reach_loss = 0.0
-        if use_reach:
-            reach_loss = jnp.clip(reach_weight * jnp.log1p(reach_aux["reach_vol"]), a_max=reach_loss_max)
+        enable_reach = reach_config.get("enable", False)
+        if enable_reach:
+            reach_loss = reach_config.get("weight", 1.0) * jnp.log1p(reach_aux["reach_vol"])
+            if reach_config.get("clip", True):
+                reach_loss = jnp.clip(reach_loss, a_max=reach_config.get("loss_max", 10.0))
+
             costs = costs + reach_loss  # penalize large reachable set
         collision_loss = 0.0
         if enable_hole:
@@ -365,7 +369,7 @@ def plot_plan_from_poses(state_seqs, pusher_pos_seqs, target_pose=None, gt_state
 
 if __name__ == "__main__":
     import pickle
-    pkl_file = "output/planning/T_pushing/1_none_0.05_0.01_mppi_1000_False/001407_053141/planning_res_0000.pkl"
+    pkl_file = "output/planning/T_pushing/1_uniform_0.05_0.01_mppi_1000_False_True/221448_231719/planning_res_0000.pkl"
     with open(pkl_file, "rb") as f:
         data = pickle.load(f)
 
@@ -393,19 +397,52 @@ if __name__ == "__main__":
     r_lo_seqs[..., :2] = r_lo_seqs[..., :2] * scale
     r_up_seqs[..., :2] = r_up_seqs[..., :2] * scale
 
-    # sample from r_lo_seqs and r_up_seqs
-    # n_samples = 8
-    # sample_states = np.random.uniform(size=(n_samples, *state_seqs.shape))
-    # sample_state_seqs = r_lo_seqs[None] + sample_states * (r_up_seqs - r_lo_seqs)[None]
+    # # sample from r_lo_seqs and r_up_seqs
+    # # n_samples = 8
+    # # sample_states = np.random.uniform(size=(n_samples, *state_seqs.shape))
+    # # sample_state_seqs = r_lo_seqs[None] + sample_states * (r_up_seqs - r_lo_seqs)[None]
 
-    sample_state_seqs = box_corners_nd(r_lo_seqs, r_up_seqs)  # (8, n_sim_steps+1, horizon+1, 3)
-    n_samples = sample_state_seqs.shape[0]
+    # sample_state_seqs = box_corners_nd(r_lo_seqs, r_up_seqs)  # (8, n_sim_steps+1, horizon+1, 3)
+    # n_samples = sample_state_seqs.shape[0]
 
-    target_pose = [250, 420, math.radians(180)]
+    # target_pose = [250, 420, math.radians(180)]
 
-    fps = 2
-    save_path = pkl_file.replace(".pkl", ".gif")
-    plot_plan_from_poses(state_seqs[None], pusher_pos_seqs, target_pose=target_pose, stem_size=stem_size, bar_size=bar_size, window_size=window_size, obs_dict=obs_dict, fps=fps, save_path=save_path)
-    save_path = pkl_file.replace(".pkl", "_sample.gif")
-    plot_plan_from_poses(sample_state_seqs, pusher_pos_seqs, target_pose=target_pose, stem_size=stem_size, bar_size=bar_size, window_size=window_size, obs_dict=obs_dict, fps=fps, save_path=save_path)
+    # fps = 2
+    # save_path = pkl_file.replace(".pkl", ".gif")
+    # plot_plan_from_poses(state_seqs[None], pusher_pos_seqs, target_pose=target_pose, stem_size=stem_size, bar_size=bar_size, window_size=window_size, obs_dict=obs_dict, fps=fps, save_path=save_path)
+    # save_path = pkl_file.replace(".pkl", "_sample.gif")
+    # plot_plan_from_poses(sample_state_seqs, pusher_pos_seqs, target_pose=target_pose, stem_size=stem_size, bar_size=bar_size, window_size=window_size, obs_dict=obs_dict, fps=fps, save_path=save_path)
+    # pass
+
+
+    config_path = "configs/T_pushing.yaml"
+    from omegaconf import OmegaConf
+    config = OmegaConf.load(config_path)
+    data_config = config["data"]
+    planning_config = config["planning"]
+    hole_config = planning_config.get("hole", {})
+
+    hole_center = jnp.array(hole_config["center"])  # [2,]
+    hole_size = jnp.array(hole_config["size"])  # [2,]
+    c_wall, h_wall = hole_to_walls_aabbs(hole_center, hole_size, window_size=data_config["window_size"])
+    c_wall = jnp.array(c_wall)
+    h_wall = jnp.array(h_wall)
+    stem_size = data_config["stem_size"]
+    bar_size = data_config["bar_size"]
+    scale = data_config.get("scale", 1.0)
+    h_T = jnp.array([[stem_size[0] / 2, stem_size[1] / 2],
+                        [bar_size[0] / 2, bar_size[1] / 2]]) / scale  # [2,2]
+    c_s, c_b = get_t_comp_centers_w_com(stem_size, bar_size)
+    c_T_ori = jnp.array([c_s, c_b])[None, :] / scale  # [1,2,2]
+
+    def _detect_interaction(r_lo, r_up):
+        # state_seq: [horizon, 3]
+        c_T_lo = c_T_ori + r_lo[..., None, 0:2] # [horizon, 2, 2]
+        c_T_up = c_T_ori + r_up[..., None, 0:2] # [horizon, 2, 2]
+        angle_T_lo = jnp.concatenate([r_lo[..., 2:3], r_lo[..., 2:3]+jnp.pi/2], axis=-1) # [horizon, 2]
+        angle_T_up = jnp.concatenate([r_up[..., 2:3], r_up[..., 2:3]+jnp.pi/2], axis=-1) # [horizon, 2]
+        interact, _ = detect_T_hole_interaction_set(c_wall, h_wall, c_T_lo, c_T_up, h_T, angle_T_lo, angle_T_up) # [horizon]
+        return interact
+
+    interact_seqs = jax.vmap(jax.vmap(_detect_interaction))(r_lo_seqs[0:1, 0:1], r_up_seqs[0:1, 0:1])  # (n_sim_steps+1, horizon+1, horizon)
     pass

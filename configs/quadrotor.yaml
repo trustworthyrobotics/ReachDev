@@ -188,13 +188,18 @@ planning:
   use_pid: false
   reach_in_obj:
     enable: false
-    reach_weight: 0.3
-    reach_loss_max: 10
+    weight: 0.3
+    loss_max: 10
+    clip: true
   refinement:
     enable: false
     lr: 0.01
     n_iter: 10
-    reach_in_obj: true
+    reach_in_obj:
+      enable: false
+      weight: 0.3
+      loss_max: 10
+      clip: false
 
   cost_norm: 1
   only_final_cost: False
