@@ -309,16 +309,16 @@ def main(config: DictConfig):
     eps_arr = np.array(eval_data)  # [B, T, 15]
 
     T_reach = train_config["n_rollout_valid"]
-    n_track = 3
+    n_track = 2
     T_per_tgt = round(train_config["ctl_frequency"] / train_config["target_frequency"])
     T_reach = n_track * T_per_tgt
-    start_time_step = 100
+    start_time_step = 50
 
     # Everything inside file is normalized by /scale → denormalize for visualization
     eps_denorm = eps_arr.astype(np.float32)[:, start_time_step:start_time_step+T_reach+1, :]               # [B,T,15], unnormalized
     eps_norm = eps_denorm / scale                    # [B,T,15], normalized
 
-    selected_eps_idx = 43
+    selected_eps_idx = 1
     if pred_mode == "state":
         state_init = jnp.array(eps_norm[selected_eps_idx, 0, :state_dim])[None]      # [1, Dx]
         tgt_seq = jnp.array(eps_norm[selected_eps_idx, T_per_tgt:T_reach+1:T_per_tgt, :state_dim])  # [T+1, state_dim]

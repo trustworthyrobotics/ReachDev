@@ -126,7 +126,7 @@ def main(config: DictConfig):
     eps_arr = np.array(eval_data)  # [B, T, 15]
 
     B, T, _ = eps_arr.shape
-    horizon = min(100, T-1)
+    horizon = min(50, T-1)
     T = horizon + 1
     # Everything inside file is normalized by /scale → denormalize for visualization
     eps_denorm = eps_arr.astype(np.float32)[:, :T, :]               # [B,T,15], unnormalized
@@ -165,7 +165,7 @@ def main(config: DictConfig):
     pred_diff = jnp.abs(X_pred_full_norm - x_gt_norm)[:, :, :T_dim]
     mean_diff = jnp.mean(pred_diff, axis=(0)) # mean over B
     print(f"Mean absolute error per dim over time: {mean_diff[horizon//10-1::horizon//10]}")
-
+    exit()
     if pred_mode == "pose":
         # renormalize angle in predicted poses
         X_pred_full_denorm = X_pred_full_denorm.at[:, :, pose_dim-1].set(X_pred_full_denorm[:, :, pose_dim-1] / scale)
@@ -183,7 +183,7 @@ def main(config: DictConfig):
     out_dir = model_dir
     window_size = data_cfg["window_size"] * data_cfg.get("enlarge_factor_for_gen", 1)
     os.makedirs(out_dir, exist_ok=True)
-    B = min(B, 10)
+    B = min(B, 5)
     for b in range(B):
         out_path = os.path.join(out_dir, f"ep{'_eval' if use_eval else ''}_{b:04d}.gif")
         plot_frame(

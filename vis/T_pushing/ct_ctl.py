@@ -132,7 +132,7 @@ def main(config: DictConfig):
 
     B, T, _ = eps_arr.shape
     horizon = min(10, T-1)
-    n_track = 10
+    n_track = 2
     T = horizon * n_track + 1
     start_time_step = 50
     # Everything inside file is normalized by /scale → denormalize for visualization
@@ -201,8 +201,10 @@ def main(config: DictConfig):
     U_diff = np.abs(U_preds - U_gts)
     X_tgt_diff = X_diff[:, horizon::horizon]
     # print(f"kp state error mean: {X_diff.mean(axis=(0,2))}, max: {X_diff.max(axis=(0,2))}, action error mean: {U_diff.mean(axis=(0,2))}, max: {U_diff.max(axis=(0,2))}")
-    print(f"tagret kp state error mean: {X_tgt_diff.mean(axis=(0,2))}, max: {X_tgt_diff.max(axis=(0,2))}")
-    exit()
+    # print(f"tagret kp state error mean: {X_tgt_diff.mean(axis=(0,2))}, max: {X_tgt_diff.max(axis=(0,2))}")
+    print(f"tagret kp state error q25: {np.percentile(X_tgt_diff, 25, axis=(0,2))}, q50: {np.percentile(X_tgt_diff, 50, axis=(0,2))}, q75: {np.percentile(X_tgt_diff, 75, axis=(0,2))}")
+    print(f"action error q25: {np.percentile(U_diff, 25, axis=(0,2))}, q50: {np.percentile(U_diff, 50, axis=(0,2))}, q75: {np.percentile(U_diff, 75, axis=(0,2))}")
+    # exit()
     if abs_pose:
         gt_vis = np.concatenate([eps_denorm[..., :state_dim], eps_denorm[..., state_dim+pose_dim:-action_dim]], axis=-1)         # [B,T,10]
         pred_vis = np.concatenate([X_preds, pusher_pos_preds], axis=-1)  # [B,T,10]
