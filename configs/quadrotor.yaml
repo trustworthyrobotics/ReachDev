@@ -151,13 +151,18 @@ reachability:
   frr_stop_ratio: 0.95
   sr_window_size: 100
 
-test_models:
-  dt_dyn_dir: "${train_dt_dyn.out_dir}/log_cos_128_False_mid_eps0.08_0.05_w0.0015_20260116_214411"
-  # dt_dyn_dir: "${train_dt_dyn.out_dir}/log_cos_128_False_none_eps0.08_0.05_w0.0015_20260116_235110"
-  # ct_ctl_dir: "${train_ct_ctl.out_dir}/relu_[64,_64]_log_10_lr0.001_su_False_False_False_none_0.02_0.01_0.0011_20260118_000309"
-  ct_ctl_dir: "${train_ct_ctl.out_dir}/relu_[64,_64]_log_10_lr0.001_su_False_False_False_mid_0.02_0.01_0.00085_20260118_152209"
+testing:
+  mode: "certified" # {"certified","regular"}
+  # certified test models
+  certified:
+    dt_dyn_dir: "${train_dt_dyn.out_dir}/log_cos_128_False_mid_eps0.5_0.3_w0.0015_20260128_080733"
+    ct_ctl_dir: "${train_ct_ctl.out_dir}/relu_[64,_64]_log_10_lr0.001_su_False_False_False_mid_0.02_0.01_0.0008_20260128_131552"
 
-  # ct_ctl_dir: "${train_ct_ctl.out_dir}/relu_[64,_64]_log_10_lr0.001_su_False_False_False_none_0.05_0.03_0.0011_20260117_205814"
+  # regular test models
+  regular:
+    dt_dyn_dir: "${train_dt_dyn.out_dir}/log_cos_128_False_none_eps0.2_0.1_w0.0015_20260128_082835"
+    ct_ctl_dir: "${train_ct_ctl.out_dir}/relu_[64,_64]_log_10_lr0.001_su_False_False_False_none_0.03_0.02_0.0006_20260128_083615"
+
 planning:
   out_path: "output/planning/${settings.task_name}/${planning.test_id}_${planning.disturbance.type}_${planning.disturbance.init}_${planning.disturbance.inter}_${planning.planner}_${planning.n_sample}"
   horizon: 20

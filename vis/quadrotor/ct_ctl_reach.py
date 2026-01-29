@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import equinox as eqx
 import jax.random as jrandom
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, open_dict
 import yaml
 
 sys.path.append('CROWN_Reach')
@@ -25,6 +25,13 @@ from envs.quadrotor.helper import plot_quad_states_actions, plot_3d_trajectories
 
 @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="quadrotor.yaml")
 def main(config: DictConfig):
+    if "testing" in config:
+        testing_config = config["testing"]
+        mode = testing_config.get("mode", "certified")
+        assert mode in {"certified", "regular"}, f"Unknown testing mode: {mode}"
+        model_config = testing_config[mode]
+        with open_dict(config):
+            config["test_models"] = model_config
     task_name = config["settings"]["task_name"]
     mode = "ct_ctl"
     model_dir = config["test_models"][f"{mode}_dir"]
@@ -93,7 +100,7 @@ def main(config: DictConfig):
     # frr_rounds = reach_cfg.get("frr_rounds", 5)
     # frr_stop_ratio = reach_cfg.get("frr_stop_ratio", 0.95)
     # sr_window_size = reach_cfg.get("sr_window_size", 100)
-    init_remainder = eps * 5
+    init_remainder = eps * 2
     frr_rounds = 5
     frr_stop_ratio = 0.95
     sr_window_size = 100

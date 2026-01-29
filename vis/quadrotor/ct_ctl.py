@@ -7,7 +7,7 @@ jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 import equinox as eqx
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, open_dict
 import yaml
 
 from models.load import load_model
@@ -17,6 +17,13 @@ from envs.quadrotor.helper import plot_quad_states_actions, plot_3d_trajectories
 
 @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="quadrotor.yaml")
 def main(config: DictConfig):
+    if "testing" in config:
+        testing_config = config["testing"]
+        mode = testing_config.get("mode", "certified")
+        assert mode in {"certified", "regular"}, f"Unknown testing mode: {mode}"
+        model_config = testing_config[mode]
+        with open_dict(config):
+            config["test_models"] = model_config
     task_name = config["settings"]["task_name"]
     mode = "ct_ctl"
     model_dir = config["test_models"][f"{mode}_dir"]

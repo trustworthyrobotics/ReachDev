@@ -14,7 +14,7 @@ from jax import random as jrandom
 import equinox as eqx
 import time
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, open_dict
 import sys
 
 import matplotlib.pyplot as plt
@@ -248,6 +248,13 @@ class micic_controller:
 
 @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
 def main(config: DictConfig):
+    if "testing" in config:
+        testing_config = config["testing"]
+        mode = testing_config.get("mode", "certified")
+        assert mode in {"certified", "regular"}, f"Unknown testing mode: {mode}"
+        model_config = testing_config[mode]
+        with open_dict(config):
+            config["test_models"] = model_config
     model_dir = config["test_models"]["ct_ctl_dir"]
     config_path = os.path.join(model_dir, "config.yaml")
     # override config

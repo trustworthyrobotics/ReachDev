@@ -1,13 +1,15 @@
+import datetime
 import os
 import numpy as np
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 import jax
-jax.config.update('jax_platforms', 'cpu')
+# jax.config.update('jax_platforms', 'cpu')
 jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 import equinox as eqx
 import pickle
+import time
 
 from envs.quadrotor.quad_sim import Quad_Sim_Ctl
 from models.load import load_model
@@ -21,6 +23,13 @@ from envs.quadrotor.helper import plot_quad_states_actions, plot_3d_trajectories
 
 @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="quadrotor.yaml")
 def main(config: DictConfig):
+    if "testing" in config:
+        testing_config = config["testing"]
+        mode = testing_config.get("mode", "certified")
+        assert mode in {"certified", "regular"}, f"Unknown testing mode: {mode}"
+        model_config = testing_config[mode]
+        with open_dict(config):
+            config["test_models"] = model_config
     task_name = config["settings"]["task_name"]
     data_config = config["data"]
     train_config = config["train_dt_dyn"]
@@ -30,6 +39,7 @@ def main(config: DictConfig):
     num_test = planning_config["num_test"]
     test_id = planning_config.get("test_id", 0)
     init_pose_list, target_pose_list = generate_test_cases(seed, num_test, test_id=test_id)
+    key = jax.random.PRNGKey(seed)
 
     dt_dyn_dir = config["test_models"]["dt_dyn_dir"]
     dt_dyn: Quad_Dynamics = load_model(model_dir=dt_dyn_dir, model_type="dt_dyn", mode="best", task_name=task_name)
@@ -57,6 +67,9 @@ def main(config: DictConfig):
 
     use_pid = planning_config.get("use_pid", False)
     out_dir = os.path.join(planning_config["out_path"], f"{'pid' if use_pid else 'mlp'}_{dt_dyn_dir[-6:]}_{ct_ctl_dir[-6:]}")
+    if planning_config.get("add_timestamp", False):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_dir = os.path.join(out_dir, timestamp)
     os.makedirs(out_dir, exist_ok=True)
 
     if use_pid:
@@ -90,12 +103,20 @@ def main(config: DictConfig):
     else:
         raise ValueError(f"Unknown planner type: {planner_type}")
 
+    # JIT compile
+    compile_start = time.time()
+    jit_trajopt = eqx.filter_jit(planner.trajectory_optimization)
+    jit_trajopt(key, jnp.zeros((dt_state_dim,)), init_act_seq, skip=succeed, target_state=jnp.zeros((dt_state_dim,)))
+    jit_trajopt(key, state_cur, init_act_seq, skip=succeed, target_state=jnp.zeros((dt_state_dim,)))
+    compile_time = time.time() - compile_start
+    print(f"JIT compilation time: {compile_time} seconds")
+
     # num_test = planning_config["num_test"]
     # test_id = planning_config.get("test_id", 0)
     # init_pose_list, target_pose_list = generate_test_cases(seed, num_test, test_id=test_id)
 
-    key = jax.random.PRNGKey(seed)
     cost_stat = []
+    plan_time_stat = []
     for i in range(num_test):
         init_pose = init_pose_list[i]
         target_pose = target_pose_list[i]
@@ -134,13 +155,18 @@ def main(config: DictConfig):
             state_cur = state_cur.at[0:dt_state_dim].add(noise)
             # env.force_update([[noise[0] * scale, noise[1] * scale, noise[2]]])  # apply disturbance
 
-            key, subkey = jax.random.split(key)
-            init_act_seq = 0 * jax.random.uniform(subkey,(horizon, dt_action_dim),minval=action_lower_lim,maxval=action_upper_lim,)
-            # init_act_seq = eqx.filter_jit(sample_vel_cmd_sequence)(subkey, amax=acc_limits, num_quads=1, dt=1/dyn_frequency, n_steps=horizon, v0=state_cur[-dt_action_dim:][None], v_bounds=action_bounds).squeeze(axis=1)[1:]
+            # key, subkey = jax.random.split(key)
+            # init_act_seq = 0 * jax.random.uniform(subkey,(horizon, dt_action_dim),minval=action_lower_lim,maxval=action_upper_lim,)
+            # # init_act_seq = eqx.filter_jit(sample_vel_cmd_sequence)(subkey, amax=acc_limits, num_quads=1, dt=1/dyn_frequency, n_steps=horizon, v0=state_cur[-dt_action_dim:][None], v_bounds=action_bounds).squeeze(axis=1)[1:]
+
+
+            init_act_seq = jnp.zeros((horizon, dt_action_dim))
             key, subkey = jax.random.split(key)
             # with jax.disable_jit():
             #     planning_res = eqx.filter_jit(planner.trajectory_optimization)(key, state_cur, init_act_seq, skip=succeed, target_state=scaled_target_state)
-            planning_res = eqx.filter_jit(planner.trajectory_optimization)(subkey, state_cur, init_act_seq, skip=succeed, target_state=scaled_target_state)
+            start_plan_time = time.time()
+            planning_res = jit_trajopt(subkey, state_cur, init_act_seq, skip=succeed, target_state=scaled_target_state)
+            plan_time_stat.append(time.time() - start_plan_time)
             scaled_act_seq = planning_res["act_seq"]
             scaled_state_seq = planning_res["state_seq"]
             act_seq = scaled_act_seq * scale  # (horizon, action_dim)
@@ -255,6 +281,17 @@ def main(config: DictConfig):
     avg_step_cost = np.mean(cost_stat, axis=0)
     print(f"Average step cost over time over {num_test} test cases: {avg_step_cost}")
     plot_cost_stat(cost_stat, os.path.join(out_dir, "step_costs.png"))
+
+    # save overall stats
+    stats = {
+        "cost_stat": cost_stat,
+        "plan_time_stat": plan_time_stat,
+        "jit_compile_time": compile_time,
+    }
+
+    stats_path = os.path.join(out_dir, "planning_stats.pkl")
+    with open(stats_path, "wb") as f:
+        pickle.dump(stats, f)
 
     # copy config file to out_dir
     with open(os.path.join(out_dir, "planning_config.yaml"), "w") as f:

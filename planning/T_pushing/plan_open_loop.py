@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 import jax
 # jax.config.update('jax_platforms', 'cpu')
 jax.config.update("jax_default_matmul_precision", "highest")
@@ -21,6 +21,13 @@ from utils.misc import box_corners_nd
 
 @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
 def main(config: DictConfig):
+    if "testing" in config:
+        testing_config = config["testing"]
+        mode = testing_config.get("mode", "certified")
+        assert mode in {"certified", "regular"}, f"Unknown testing mode: {mode}"
+        model_config = testing_config[mode]
+        with open_dict(config):
+            config["test_models"] = model_config
     data_config = config["data"]
     train_config = config["train_dt_dyn"]
     planning_config = config["planning"]

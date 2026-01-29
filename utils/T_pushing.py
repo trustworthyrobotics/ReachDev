@@ -59,81 +59,95 @@ def _obb_axes(angle: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
     v = jnp.stack([-s, c], axis=-1)     # (...,2)  (u rotated by +90deg)
     return u, v
 
-def aabb_vs_obb_sat_2d(
+def aabb_vs_obb_sat_margin_2d(
     c_aabb: jnp.ndarray,  # (...,2)
     h_aabb: jnp.ndarray,  # (...,2)
-    c_obb: jnp.ndarray,   # (...,2) broadcastable with c_aabb
-    h_obb: jnp.ndarray,   # (...,2) broadcastable with c_aabb
-    angle: jnp.ndarray,   # (...)   broadcastable with c_aabb
-    eps: float = 0.0,     # optional tolerance
+    c_obb: jnp.ndarray,   # (...,2) broadcastable
+    h_obb: jnp.ndarray,   # (...,2) broadcastable
+    angle: jnp.ndarray,   # (...)   broadcastable
+    eps: float = 0.0,
 ) -> jnp.ndarray:
     """
-    2D SAT test: AABB vs OBB. Returns bool array (...) for intersection.
-    Touching counts as intersection unless you set eps<0 or change comparisons.
+    Returns signed SAT margin m_min with shape (...).
+
+    For each candidate axis L in {ex, ey, u, v}:
+        m(L) = (rA(L) + rB(L) + eps) - |dot(d, L)|
+
+    Then m_min = min_L m(L).
+
+    Interpretation:
+      - m_min >= 0  => intersection (touching included if eps>=0)
+      - m_min < 0   => separated; separation distance along best axis is -m_min
     """
-    u, v = _obb_axes(angle)             # (...,2), (...,2)
-    d = c_obb - c_aabb                  # (...,2)
+    u, v = _obb_axes(angle)
+    d = c_obb - c_aabb
     dx, dy = d[..., 0], d[..., 1]
 
     hAx, hAy = h_aabb[..., 0], h_aabb[..., 1]
     hBx, hBy = h_obb[..., 0], h_obb[..., 1]
 
-    # Axis L = ex = (1,0)
-    # d = |dx|
-    # rA = hAx
-    # rB = hBx*|u_x| + hBy*|v_x|
-    sep_ex = jnp.abs(dx) > (hAx + hBx * jnp.abs(u[..., 0]) + hBy * jnp.abs(v[..., 0]) + eps)
+    # Axis ex
+    R_ex = hAx + hBx * jnp.abs(u[..., 0]) + hBy * jnp.abs(v[..., 0]) + eps
+    d_ex = jnp.abs(dx)
+    m_ex = R_ex - d_ex
 
-    # Axis L = ey = (0,1)
-    sep_ey = jnp.abs(dy) > (hAy + hBx * jnp.abs(u[..., 1]) + hBy * jnp.abs(v[..., 1]) + eps)
+    # Axis ey
+    R_ey = hAy + hBx * jnp.abs(u[..., 1]) + hBy * jnp.abs(v[..., 1]) + eps
+    d_ey = jnp.abs(dy)
+    m_ey = R_ey - d_ey
 
-    # Axis L = u
-    du = jnp.abs(dx * u[..., 0] + dy * u[..., 1])
+    # Axis u
+    d_u = jnp.abs(dx * u[..., 0] + dy * u[..., 1])
     rA_u = hAx * jnp.abs(u[..., 0]) + hAy * jnp.abs(u[..., 1])
-    # since u,v are orthonormal from trig:
-    rB_u = hBx
-    sep_u = du > (rA_u + rB_u + eps)
+    R_u = rA_u + hBx + eps
+    m_u = R_u - d_u
 
-    # Axis L = v
-    dv = jnp.abs(dx * v[..., 0] + dy * v[..., 1])
+    # Axis v
+    d_v = jnp.abs(dx * v[..., 0] + dy * v[..., 1])
     rA_v = hAx * jnp.abs(v[..., 0]) + hAy * jnp.abs(v[..., 1])
-    rB_v = hBy
-    sep_v = dv > (rA_v + rB_v + eps)
+    R_v = rA_v + hBy + eps
+    m_v = R_v - d_v
 
-    separated = sep_ex | sep_ey | sep_u | sep_v
-    return ~separated
+    m_stack = jnp.stack([m_ex, m_ey, m_u, m_v], axis=-1)  # (...,4)
+    m_min = jnp.min(m_stack, axis=-1)                     # (...)
+    return m_min
+
 
 def detect_T_hole_interaction(
     c_wall: jnp.ndarray,   # (2,2)
     h_wall: jnp.ndarray,   # (2,2)
-    c_T: jnp.ndarray,      # (n,2,2)  parts: 0=stem, 1=bar (your convention)
-    h_T: jnp.ndarray,      # (2,2)    per-part half extents (shared across all n)
-    angle_T: jnp.ndarray,  # (n,2)    per-part angles
+    c_T: jnp.ndarray,      # (n,2,2)
+    h_T: jnp.ndarray,      # (2,2)
+    angle_T: jnp.ndarray,  # (n,2)
     eps: float = 0.0,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """
     Returns:
       interact: (n,) bool
-        True if ANY (part in {stem,bar}) intersects ANY wall AABB.
+      margin:   (n,) float, clipped margin values
 
-      interact_part_wall: (n,2,2) bool
-        interact_part_wall[n, part, wall] is True if that part intersects that wall.
+    margin(T) = max_{wall in 2, part in 2} m_min(wall, part)
+
+    So:
+      - if interact=True: margin is >=0, and is the MAX positive penetration margin across pairs
+      - if interact=False: margin is <0, and is the MAX negative (closest to 0) across pairs.
     """
-    # Broadcast to (wall, n, part, ...)
-    cA = c_wall[:, None, None, :]         # (2,1,1,2)
-    hA = h_wall[:, None, None, :]         # (2,1,1,2)
-    cB = c_T[None, :, :, :]               # (1,n,2,2)
-    hB = h_T[None, None, :, :]            # (1,1,2,2)
-    ang = angle_T[None, :, :]             # (1,n,2)
+    # Broadcast to (wall, n, part, 2)
+    cA = c_wall[:, None, None, :]        # (2,1,1,2)
+    hA = h_wall[:, None, None, :]        # (2,1,1,2)
+    cB = c_T[None, :, :, :]              # (1,n,2,2)
+    hB = h_T[None, None, :, :]           # (1,1,2,2)
+    ang = angle_T[None, :, :]            # (1,n,2)
 
-    inter_w_n_p = aabb_vs_obb_sat_2d(cA, hA, cB, hB, ang, eps=eps)  # (2,n,2)
+    m_min = aabb_vs_obb_sat_margin_2d(cA, hA, cB, hB, ang, eps=eps)  # (2,n,2)
 
-    # (n,2,2): part-wall
-    interact_part_wall = jnp.transpose(inter_w_n_p, (1, 2, 0))
-
-    # (n,): any wall & any part
-    interact = jnp.any(inter_w_n_p, axis=(0, 2))
-    return interact, interact_part_wall
+    # aggregate over wall & part
+    margin = jnp.max(m_min, axis=(0, 2))      # (n,)
+    interact = margin >= 0.0                  # (n,)  touching counts if eps>=0
+    
+    # Clip margin to 0 when no interaction
+    margin = margin.clip(min=0.0)
+    return interact, margin
 
 def hole_to_walls_aabbs(c_hole, s_hole, window_size, tol=1e-6):
     """

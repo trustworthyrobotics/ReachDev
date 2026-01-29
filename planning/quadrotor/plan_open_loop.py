@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 import jax
 
 from utils.misc import box_corners_nd, random_sample_nd
@@ -23,6 +23,13 @@ from envs.quadrotor.helper import plot_quad_states_actions, plot_3d_trajectories
 
 @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="quadrotor.yaml")
 def main(config: DictConfig):
+    if "testing" in config:
+        testing_config = config["testing"]
+        mode = testing_config.get("mode", "certified")
+        assert mode in {"certified", "regular"}, f"Unknown testing mode: {mode}"
+        model_config = testing_config[mode]
+        with open_dict(config):
+            config["test_models"] = model_config
     task_name = config["settings"]["task_name"]
     data_config = config["data"]
     train_config = config["train_dt_dyn"]

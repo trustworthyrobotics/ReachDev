@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import equinox as eqx
 import jax.random as jrandom
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, open_dict
 import yaml
 
 sys.path.append('CROWN_Reach')
@@ -24,6 +24,13 @@ from envs.quadrotor.helper import plot_quad_states_actions, plot_3d_trajectories
 
 @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="quadrotor.yaml")
 def main(config: DictConfig):
+    if "testing" in config:
+        testing_config = config["testing"]
+        mode = testing_config.get("mode", "certified")
+        assert mode in {"certified", "regular"}, f"Unknown testing mode: {mode}"
+        model_config = testing_config[mode]
+        with open_dict(config):
+            config["test_models"] = model_config
     task_name = config["settings"]["task_name"]
     mode = "dt_dyn"
     model_dir = config["test_models"][f"{mode}_dir"]
@@ -80,7 +87,7 @@ def main(config: DictConfig):
 
     reach_cfg = train_cfg["reach"]
     eps = float(train_cfg["reach"]["eps_final"])
-    eps = 0.01
+    eps = 0.3
 
     CONFIG["TRUNCATE_TO_AFFINE"] = reach_cfg.get("linear", False)
     reach_analyzer = DT_Plan_Reach(None, state_dim=state_dim, action_dim=action_dim, nn_dyn=True, n_steps_per_plan=1, step_size=1, config=CONFIG)

@@ -1,13 +1,15 @@
 import os
 import numpy as np
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf, open_dict
 import jax
-jax.config.update('jax_platforms', 'cpu')
+# jax.config.update('jax_platforms', 'cpu')
 jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 import equinox as eqx
 import pickle
+import time
+import datetime
 
 from envs.T_pushing.t_sim import generate_init_target_states, T_Sim
 from models.load import load_model
@@ -21,11 +23,19 @@ from utils.misc import box_corners_nd
 
 @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
 def main(config: DictConfig):
+    if "testing" in config:
+        testing_config = config["testing"]
+        mode = testing_config.get("mode", "certified")
+        assert mode in {"certified", "regular"}, f"Unknown testing mode: {mode}"
+        model_config = testing_config[mode]
+        with open_dict(config):
+            config["test_models"] = model_config
     data_config = config["data"]
     train_config = config["train_dt_dyn"]
     planning_config = config["planning"]
     verbose = planning_config.get("verbose", False)
     seed = config["settings"]["seed"]
+    key = jax.random.PRNGKey(seed)
 
     dt_dyn_dir = config["test_models"]["dt_dyn_dir"]
     dt_dyn: T_Dynamics = load_model(model_dir=dt_dyn_dir, model_type="dt_dyn", mode="best")
@@ -70,6 +80,9 @@ def main(config: DictConfig):
     ctl_frequency = ct_ctl.ctl_frequency
 
     out_dir = os.path.join(planning_config["out_path"], f"{dt_dyn_dir[-6:]}_{ct_ctl_dir[-6:]}")
+    if planning_config.get("add_timestamp", False):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_dir = os.path.join(out_dir, timestamp)
     os.makedirs(out_dir, exist_ok=True)
 
     noise_type = planning_config.get("disturbance", {}).get("type", "none")
@@ -95,6 +108,17 @@ def main(config: DictConfig):
     else:
         raise ValueError(f"Unknown planner type: {planner_type}")
 
+    # JIT compile
+    compile_start = time.time()
+    jit_trajopt = eqx.filter_jit(planner.trajectory_optimization)
+    jit_trajopt(key, jnp.zeros((T_dim + action_dim,)), jnp.zeros((horizon, action_dim)), skip=True, target_state=jnp.zeros((T_dim,)), pusher_pos=jnp.zeros((action_dim,)))
+    jit_trajopt(key, jnp.zeros((T_dim + action_dim,)), jnp.zeros((horizon, action_dim)), skip=False, target_state=jnp.zeros((T_dim,)), pusher_pos=jnp.zeros((action_dim,)))
+
+    jit_ctl = eqx.filter_jit(ct_ctl.forward_batchless)
+    jit_ctl(jnp.zeros((T_dim + action_dim,)), jnp.zeros((T_dim,)), jnp.zeros((action_dim,)))
+    compile_time = time.time() - compile_start
+    print(f"JIT compilation time: {compile_time} seconds")
+
     def trans_fn(env_dict):
         pusher_pos = jnp.array(env_dict["pusher_pos"]) / scale
         if pred_mode == "pose":
@@ -110,8 +134,8 @@ def main(config: DictConfig):
     test_id = planning_config.get("test_id", 0)
     init_pusher_pos_list, init_pose_list, target_pose_list = generate_test_cases(seed, num_test, test_id=test_id)
 
-    key = jax.random.PRNGKey(seed)
     cost_stat = []
+    plan_time_stat = []
     for i in range(num_test):
         init_pusher_pos = init_pusher_pos_list[i]
         init_pose = init_pose_list[i]
@@ -163,11 +187,14 @@ def main(config: DictConfig):
 
             # key, subkey = jax.random.split(key)
             # init_act_seq = jax.random.uniform(subkey,(horizon, action_dim),minval=action_lower_lim,maxval=action_upper_lim,)
-            # key, subkey = jax.random.split(key)
+
             init_act_seq = jnp.zeros((horizon, action_dim))
+            key, subkey = jax.random.split(key)
             # with jax.disable_jit():
             #     planning_res = eqx.filter_jit(planner.trajectory_optimization)(key, state_cur, init_act_seq, skip=False, target_state=scaled_target_state, pusher_pos=pusher_pos)
-            planning_res = eqx.filter_jit(planner.trajectory_optimization)(subkey, state_cur, init_act_seq, skip=succeed, target_state=scaled_target_state, pusher_pos=pusher_pos)
+            start_plan_time = time.time()
+            planning_res = jit_trajopt(subkey, state_cur, init_act_seq, skip=succeed, target_state=scaled_target_state, pusher_pos=pusher_pos)
+            plan_time_stat.append(time.time() - start_plan_time)
             if verbose and 'collision_loss' in planning_res['aux']['eval_out'] and planning_res['aux']['eval_out']['collision_loss'] > 0:
                 print(f"Step {t} planning result:")
                 print(f"   collision loss: {planning_res['aux']['eval_out']['collision_loss']}")
@@ -200,7 +227,7 @@ def main(config: DictConfig):
                 ref_action = scaled_act_seq[step, :]
                 sub_env_states = []
 
-                if (step_cost_fn(sub_target, state_cur[:-action_dim]) < 0.15) or (init_follow):
+                if (step_cost_fn(sub_target, state_cur[:-action_dim]) < 0.15) or (init_follow) or succeed:
                     use_ctl = False
                 else:
                     use_ctl = enable_ctl
@@ -209,7 +236,7 @@ def main(config: DictConfig):
                     if use_ctl:
                         # if verbose:
                         #     print(f"   step_cost: {step_cost_fn(sub_target, state_cur[:-action_dim])}, init_follow: {init_follow}")
-                        next_action = eqx.filter_jit(ct_ctl.forward_batchless)(state_cur, sub_target, ref_action)
+                        next_action = jit_ctl(state_cur, sub_target, ref_action)
                         if verbose:
                             print(f"   controller action: {next_action}")
                     else:
@@ -229,8 +256,8 @@ def main(config: DictConfig):
                         elif noise_type == "uniform":
                             noise = jax.random.uniform(subkey, shape=(T_dim,), minval=-1.0, maxval=1.0) * noise_param
 
-                    # state_cur = state_cur.at[0:T_dim].add(noise)
-                    env.force_update([[noise[0] * scale, noise[1] * scale, noise[2]]])  # apply disturbance
+                    state_cur = state_cur.at[0:T_dim].add(noise)
+                    # env.force_update([[noise[0] * scale, noise[1] * scale, noise[2]]])  # apply disturbance
 
                     sub_env_states.append(env_state)
                 env_state = np.array(sub_env_states)
@@ -251,7 +278,8 @@ def main(config: DictConfig):
                 if verbose:
                     print(f"   step {t} cost: {step_cost}, action: {env_dict['action']}")
                 step_cost_list.append(step_cost)
-                if step_cost < 10:
+                if (not succeed) and step_cost < 0.25:
+                    print(f"Task succeeded at step {t} with step cost {step_cost}")
                     succeed = True
                 if t >= max_steps:
                     break
@@ -295,6 +323,14 @@ def main(config: DictConfig):
                 # r_lo_seqs, r_up_seqs: (n_sim_steps+1, horizon+1, 3)
                 r_lo_seqs = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['r_lo'] for d in planning_res_list]).reshape((*state_seqs.shape[:2], -1))[..., :pose_dim]
                 r_up_seqs = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['r_up'] for d in planning_res_list]).reshape((*state_seqs.shape[:2], -1))[..., :pose_dim]
+                reach_vols = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['reach_vol'] for d in planning_res_list]).reshape((state_seqs.shape[0], -1))
+                print(f"Average reach volume over time: {np.mean(reach_vols, axis=0)}")
+
+                vis_reach_steps = planning_config.get("vis_reach_steps", horizon)
+                r_lo_seqs = r_lo_seqs[:, :vis_reach_steps + 1, :]
+                r_up_seqs = r_up_seqs[:, :vis_reach_steps + 1, :]
+                state_seqs = state_seqs[:, :vis_reach_steps + 1, :]
+                pusher_pos_seqs = pusher_pos_seqs[:, :vis_reach_steps + 1, :]
 
                 r_lo_seqs[..., :2] = r_lo_seqs[..., :2] * scale
                 r_up_seqs[..., :2] = r_up_seqs[..., :2] * scale
@@ -321,6 +357,27 @@ def main(config: DictConfig):
     avg_step_cost = np.mean(cost_stat, axis=0)
     print(f"Average step cost over time over {num_test} test cases: {avg_step_cost}")
     plot_cost_stat(cost_stat, os.path.join(out_dir, "step_costs.png"))
+
+    plan_time_stat = np.array(plan_time_stat)
+    avg_plan_time = np.mean(plan_time_stat)
+    print(f"Average planning time per step over {num_test} test cases: {avg_plan_time} seconds")
+
+    # save overall stats
+    stats = {
+        "cost_stat": cost_stat,
+        "plan_time_stat": plan_time_stat,
+        "jit_compile_time": compile_time,
+    }
+
+    stats_path = os.path.join(out_dir, "planning_stats.pkl")
+    with open(stats_path, "wb") as f:
+        pickle.dump(stats, f)
+
+    # copy config file to out_dir
+    with open(os.path.join(out_dir, "planning_config.yaml"), "w") as f:
+        f.write(OmegaConf.to_yaml(config, resolve=True))
+
+
     return
 
 if __name__ == "__main__":

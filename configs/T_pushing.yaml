@@ -203,23 +203,27 @@ reachability:
   frr_stop_ratio: 0.95
   sr_window_size: 100
 
-test_models:
+testing:
+  mode: "certified" # {"certified","regular"}
   # certified test models
-  ct_dyn_dir: "${train_ct_dyn.out_dir}/lr0.003_mid_0.08_0.05_0.003_True_20260127_051024"
-  # dt_dyn_dir: "${train_dt_dyn.out_dir}/[96,_96,_96]_log_cos_128_mid_1_0.6_eps0.08_0.05_w0.003_j0.0_True_True_20260127_221448"
-  # ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_tu_False_True_mid_0.03_0.01_0.001_True_20260128_034342"
+  certified:
+    ct_dyn_dir: "${train_ct_dyn.out_dir}/lr0.003_mid_0.08_0.05_0.003_True_20260127_051024"
+    dt_dyn_dir: "${train_dt_dyn.out_dir}/[96,_96,_96]_log_cos_128_mid_1_0.6_eps0.08_0.05_w0.003_j0.0_True_True_20260127_221448"
+    ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_tu_False_True_mid_0.03_0.01_0.001_True_20260128_034342"
 
   # regular test models
-  # ct_dyn_dir: "${train_ct_dyn.out_dir}/lr0.003_none_0.08_0.05_0.002_True_20260127_221601"
-  dt_dyn_dir: "${train_dt_dyn.out_dir}/[96,_96,_96]_log_cos_128_none_1_0.6_eps0.08_0.05_w0.0025_j0.0_True_True_20260127_225748"
-  ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_tu_False_True_none_0.05_0.03_0.001_True_20260128_045222"
+  regular:
+    ct_dyn_dir: "${train_ct_dyn.out_dir}/lr0.003_none_0.08_0.05_0.002_True_20260127_221601"
+    dt_dyn_dir: "${train_dt_dyn.out_dir}/[96,_96,_96]_log_cos_128_none_1_0.6_eps0.08_0.05_w0.0025_j0.0_True_True_20260127_225748"
+    ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_tu_False_True_none_0.05_0.03_0.001_True_20260128_045222"
 
 planning:
-  out_path: "output/planning/${settings.task_name}/${planning.test_id}_${planning.disturbance.type}_${planning.disturbance.init}_${planning.disturbance.inter}_${planning.planner}_${planning.n_sample}_${planning.enable_ctl}_${planning.refinement.enable}"
+  out_path: "output/planning/${settings.task_name}/${planning.test_id}_${planning.disturbance.type}_${planning.disturbance.init}_${planning.disturbance.inter}_${planning.planner}_${planning.n_sample}_${planning.enable_ctl}_${planning.refinement.enable}_${planning.refinement.reach_in_obj.enable}_${planning.reach_in_obj.enable}"
+  add_timestamp: true
   horizon: 8
   max_steps: 25
   n_act_step: 1
-  num_test: 5
+  num_test: 20
   test_id: 1
   action_dim: ${data.action_dim}
   action_bound: ${data.action_bound}
@@ -234,12 +238,14 @@ planning:
     enable: true
     center: [250, 500]
     size: [60, 80] # width, height
-    penalty: 100.0
+    penalty: 2
+    enforce_reach_steps: 5
 
   enable_ctl: true
   init_follow_steps: 3
   reach_in_obj:
     enable: false
+    eps: ${planning.disturbance.init}
     weight: 0.1
     loss_max: 10
     clip: true
@@ -250,10 +256,12 @@ planning:
     n_iter: 10
     reach_in_obj:
       enable: true
-      weight: 8
+      weight: 20
       loss_max: 10
       clip: false
-      splits: {0: 2, 1: 2, 2: 2}
+      splits: {0: 4, 1: 4, 2: 4}
+
+  vis_reach_steps: ${planning.hole.enforce_reach_steps}
 
   cost_norm: 1
   only_final_cost: False

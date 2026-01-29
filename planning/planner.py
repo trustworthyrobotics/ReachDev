@@ -105,7 +105,8 @@ class SamplingPlannerBase(eqx.Module):
     def trajectory_optimization(self, key:PRNGKey, state_cur:Array, init_action_seq:Array, skip:bool=False, *args, **kwargs)->Dict:
         if skip:
             # evaluate the given init_action_seq (1,H,Du)
-            rewards, aux = self._evaluate(state_cur, init_action_seq[None,...], self.reach_config, *args, **kwargs)
+            reach_config = self.reach_refine_config if self.enable_refinement else self.reach_config
+            rewards, aux = self._evaluate(state_cur, init_action_seq[None,...], reach_config, *args, **kwargs)
             state_seq = aux["model_out"][0]  # (H,Ds)
             rewards = rewards[0]
             return {

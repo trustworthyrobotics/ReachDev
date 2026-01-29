@@ -10,7 +10,7 @@ jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 import equinox as eqx
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, open_dict
 import yaml
 
 from models.load import load_model
@@ -92,6 +92,13 @@ def rel_to_abs_kp_plus_pusher(eps_denorm: np.ndarray) -> np.ndarray:
 
 @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
 def main(config: DictConfig):
+    if "testing" in config:
+        testing_config = config["testing"]
+        mode = testing_config.get("mode", "certified")
+        assert mode in {"certified", "regular"}, f"Unknown testing mode: {mode}"
+        model_config = testing_config[mode]
+        with open_dict(config):
+            config["test_models"] = model_config
     model_dir = config["test_models"]["dt_dyn_dir"]
     config_path = os.path.join(model_dir, "config.yaml")
     # override config

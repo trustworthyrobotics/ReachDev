@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import sys
 
 from utils.T_pushing import hole_to_walls_aabbs, detect_T_hole_interaction, detect_T_hole_interaction_set
-from utils.misc import box_corners_nd
+from utils.misc import box_corners_nd, box_corners_nd_jax
 from envs.T_pushing.t_sim import get_t_comp_centers_w_com, gen_vertices_from_poses
 sys.path.append('CROWN_Reach')
 from CROWN_Reach.src.reachability import DT_Plan_Reach
@@ -166,12 +166,37 @@ def make_rollout_and_reward_fns(
         c_wall = jnp.array(c_wall) / scale
         h_wall = jnp.array(h_wall) / scale
 
+        enforce_reach_steps = hole_config.get("enforce_reach_steps", horizon) + 1
+        # def _detect_interaction_set(r_lo, r_up):
+        #     r_lo = r_lo[:enforce_reach_steps, :]  # [horizon, 3]
+        #     r_up = r_up[:enforce_reach_steps, :]  # [horizon, 3]
+        #     # r_lo, r_up: [horizon, 3]
+        #     c_T_lo = c_T_ori + r_lo[..., None, 0:2] # [horizon, 2, 2]
+        #     c_T_up = c_T_ori + r_up[..., None, 0:2] # [horizon, 2, 2]
+        #     angle_T_lo = jnp.concatenate([r_lo[..., 2:3], r_lo[..., 2:3]+jnp.pi/2], axis=-1) # [horizon, 2]
+        #     angle_T_up = jnp.concatenate([r_up[..., 2:3], r_up[..., 2:3]+jnp.pi/2], axis=-1) # [horizon, 2]
+        #     interact, _ = detect_T_hole_interaction_set(c_wall, h_wall, c_T_lo, c_T_up, h_T, angle_T_lo, angle_T_up) # [horizon]
+        #     return interact
+
+        def _detect_interaction_set(r_lo, r_up):
+            # r_lo, r_up: [horizon, 3]
+            r_lo = r_lo[:enforce_reach_steps, :3]  # [horizon, 3]
+            r_up = r_up[:enforce_reach_steps, :3]  # [horizon, 3]
+            sample_states = box_corners_nd_jax(r_lo, r_up).reshape(-1, *r_lo.shape[1:])  # [n * horizon, 3]
+
+            c_T = c_T_ori + sample_states[..., None, 0:2] # [n * horizon, 2, 2]
+            angle_T = jnp.concatenate([sample_states[..., 2:3], sample_states[..., 2:3]+jnp.pi/2], axis=-1) # [n * horizon, 2]
+            interact, margin = detect_T_hole_interaction(c_wall, h_wall, c_T, h_T, angle_T) # [n * horizon]
+            interact = jnp.any(interact.reshape(-1, enforce_reach_steps), axis=0)  # [horizon]
+            margin = margin.reshape(-1, enforce_reach_steps).max(axis=0)  # [horizon]
+            return margin
+
         def _detect_interaction(state_seq):
             # state_seq: [horizon, 3]
             c_T = c_T_ori + state_seq[..., None, 0:2] # [horizon, 2, 2]
             angle_T = jnp.concatenate([state_seq[..., 2:3], state_seq[..., 2:3]+jnp.pi/2], axis=-1) # [horizon, 2]
-            interact, _ = detect_T_hole_interaction(c_wall, h_wall, c_T, h_T, angle_T) # [horizon]
-            return interact
+            interact, margin = detect_T_hole_interaction(c_wall, h_wall, c_T, h_T, angle_T) # [horizon]
+            return margin
         penalty_factor = hole_config.get("penalty", 100.0)
         pass
 
@@ -233,18 +258,35 @@ def make_rollout_and_reward_fns(
             costs = costs + reach_loss  # penalize large reachable set
         collision_loss = 0.0
         if enable_hole:
-            interact = jax.vmap(_detect_interaction)(abs_state_seqs)  # [n_sample, horizon]
-            interact = interact.astype(jnp.float32)
-            collision_loss = jnp.sum(interact, axis=-1) * penalty_factor
-            costs = costs + collision_loss
-
+            if enable_reach:
+                margin = jax.vmap(_detect_interaction_set)(reach_aux["r_lo"], reach_aux["r_up"])  # [n_sample, horizon]
+                collision_loss = jnp.sum(margin, axis=-1) * penalty_factor
+                costs = costs + collision_loss
+            else:
+                margin = jax.vmap(_detect_interaction)(abs_state_seqs)  # [n_sample, horizon]
+                collision_loss = jnp.sum(margin, axis=-1) * penalty_factor
+                costs = costs + collision_loss
         return {"rewards": -costs, "reward_seqs": -cost_seqs, "reach_aux": reach_aux, "reach_loss": reach_loss, "collision_loss": collision_loss}
 
     def step_cost_fn_np(state, target_state):
-        return (np.linalg.norm(target_state - state, cost_norm)) ** cost_norm
+        # assume input are not scaled
+        diff = target_state - state
+        if pred_mode == "pose":
+            diff[:2] = diff[:2] / scale
+        else:
+            diff[::2] = diff[::2] / scale
+            diff[1::2] = diff[1::2] / scale
+        return (np.linalg.norm(diff, cost_norm)) ** cost_norm
 
     def step_cost_fn(state, target_state):
-        return (jnp.linalg.norm(target_state - state, cost_norm)) ** cost_norm
+        # assume input are not scaled
+        diff = target_state - state
+        if pred_mode == "pose":
+            diff = diff.at[..., :2].divide(scale)
+        else:
+            diff = diff.at[..., ::2].divide(scale)
+            diff = diff.at[..., 1::2].divide(scale)
+        return (jnp.linalg.norm(diff, cost_norm)) ** cost_norm
 
     return rollout_fn, reward_fn, step_cost_fn, step_cost_fn_np
 
@@ -371,7 +413,7 @@ def plot_plan_from_poses(state_seqs, pusher_pos_seqs, target_pose=None, gt_state
 
 if __name__ == "__main__":
     import pickle
-    pkl_file = "output/planning/T_pushing/1_uniform_0.05_0.01_mppi_1000_False_True/221448_231719/planning_res_0000.pkl"
+    pkl_file = "output/planning/T_pushing/1_uniform_0.05_0.015_mppi_1000_True_False_True_True/221448_034342/planning_res_0000.pkl"
     with open(pkl_file, "rb") as f:
         data = pickle.load(f)
 
@@ -446,8 +488,19 @@ if __name__ == "__main__":
         interact, _ = detect_T_hole_interaction_set(c_wall, h_wall, c_T_lo, c_T_up, h_T, angle_T_lo, angle_T_up) # [horizon]
         return interact
 
-    interact_seqs = jax.vmap(jax.vmap(_detect_interaction_set))(r_lo_seqs[0:1, 0:1], r_up_seqs[0:1, 0:1])  # (n_sim_steps+1, horizon+1, horizon)
-    pass
+    test_state = jnp.array([250, 410, jnp.pi])[None, None]
+    eps = jnp.array([scale * 0.05, scale * 0.05, 0.2])[None, None]
+    test_r_lo = test_state - eps
+    test_r_up = test_state + eps
+
+    interact_seqs = jax.vmap(_detect_interaction_set)(test_r_lo, test_r_up)  # (n_sim_steps+1, horizon+1, horizon)
+    if interact_seqs.sum() > 0:
+        print(interact_seqs)
+        print("Interaction detected!")
+
+    target_pose = [250, 420, math.radians(180)]
+    save_path = pkl_file.replace(".pkl", "_test.gif")
+    plot_plan_from_poses(jnp.stack([test_r_lo, test_r_up]), pusher_pos_seqs[0:1, 0:1], target_pose=target_pose, stem_size=stem_size, bar_size=bar_size, window_size=window_size, obs_dict=obs_dict, fps=1, save_path=save_path)
 
     # def _detect_interaction(state_seq):
     #     # state_seq: [horizon, 3]
