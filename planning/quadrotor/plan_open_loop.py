@@ -86,7 +86,6 @@ def main(config: DictConfig):
     rollout_fn, reward_fn, step_cost_fn, step_cost_fn_np = make_rollout_and_reward_fns(
         dt_dyn,
         planning_config,
-        reach_config=config.get("reachability", {}),
     )
     planner_type = planning_config.get("planner", "mppi").lower()
     if planner_type == "mppi":

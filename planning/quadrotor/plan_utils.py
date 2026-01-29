@@ -5,6 +5,8 @@ from typing import Dict
 import numpy as np
 import matplotlib.pyplot as plt
 import jax
+
+from utils.misc import box_corners_nd_jax
 jax.config.update('jax_platforms', 'cpu')
 import jax.numpy as jnp
 import jax.random as jrandom
@@ -25,6 +27,17 @@ def _gen_pose_list(num_test, seed, lo, hi):
 
 def generate_test_cases(seed, num_test, test_id=0):
     if test_id == 0:
+        mid = jnp.zeros((12,))
+        pos_eps = 1
+        other_eps = 0.05
+        lo = jnp.concatenate([mid[:3] - pos_eps, mid[3:] - other_eps])
+        hi = jnp.concatenate([mid[:3] + pos_eps, mid[3:] + other_eps])
+        init_pose_list = _gen_pose_list(num_test, seed, lo, hi)
+        target_mid = mid.at[:3].set(10)
+        target_lo = jnp.concatenate([target_mid[:3] - pos_eps, target_mid[3:] - other_eps])
+        target_hi = jnp.concatenate([target_mid[:3] + pos_eps, target_mid[3:] + other_eps])
+        target_pose_list = _gen_pose_list(num_test, seed, target_lo, target_hi)
+    elif test_id == 1:
         mid = jnp.zeros((12,))
         pos_eps = 1
         other_eps = 0.05
@@ -75,7 +88,6 @@ def plot_cost_stat(cost_stat, out_name):
 def make_rollout_and_reward_fns(
     dt_dyn,
     planning_config: Dict,
-    reach_config: Dict = {},
 ):
     horizon = planning_config["horizon"]
     cost_norm = planning_config["cost_norm"]
@@ -95,7 +107,6 @@ def make_rollout_and_reward_fns(
 
         reach_analyzer = DT_Plan_Reach(f_wrapper, state_dim=dt_dyn.Dx, action_dim=dt_dyn.Du, nn_dyn=True, n_steps_per_plan=1, step_size=1)
         eps = reach_config.get("eps", 0.05)
-        splits_cfg = reach_config.get("refine_splits", {})
 
         _calculate_volume = lambda lo, up: calculate_volume(lo, up, union_init=False, mode='sum')
 
@@ -105,7 +116,7 @@ def make_rollout_and_reward_fns(
         obstacle_pos_list = jnp.array(obstacle_config["pos_list"])  # [n_obstacle, 3]
         obstacle_size_list = jnp.array(obstacle_config["size_list"])  # [n_obstacle]
         norm = obstacle_config.get("norm", 2)
-        penalty = obstacle_config.get("penalty", 100.0)
+        penalty_factor = obstacle_config.get("penalty", 100.0)
         inflate = obstacle_config.get("inflate", 0.0)
 
         def obstacle_cost_fn(state_seqs: jnp.ndarray) -> jnp.ndarray:
@@ -117,7 +128,7 @@ def make_rollout_and_reward_fns(
             dists = jnp.linalg.norm(pos_seqs_exp - obstacle_pos_exp, axis=-1, ord=norm)  # [n_sample, horizon, n_obstacle]
             size_exp = obstacle_size_list[None, None, :] * (1 + inflate)  # [1, 1, n_obstacle]
             penalties = jnp.maximum(0.0, size_exp - dists)  # [n_sample, horizon, n_obstacle]
-            total_penalty = jnp.sum(penalties, axis=(1, 2)) * penalty # [n_sample]
+            total_penalty = jnp.sum(penalties, axis=(1, 2)) # [n_sample]
             return total_penalty
 
     # [state_dim], [n_sample, horizon, action_dim] -> [n_sample, horizon, state_dim]
@@ -126,10 +137,10 @@ def make_rollout_and_reward_fns(
         state_seqs = dt_dyn.rollout(state_cur, act_seqs)
         enable_reach = reach_config.get("enable", False)
         if enable_reach:
-            reach_info = cal_reach(state_cur, act_seqs)
+            reach_info = cal_reach(state_cur, act_seqs, splits_cfg=reach_config.get("splits_cfg", {}))
         return state_seqs, reach_info if enable_reach else {}
 
-    def cal_reach(state_cur: jnp.ndarray, act_seqs: jnp.ndarray) -> jnp.ndarray:
+    def cal_reach(state_cur: jnp.ndarray, act_seqs: jnp.ndarray, splits_cfg: dict) -> jnp.ndarray:
         B = act_seqs.shape[0]
         Da = dt_dyn.Du
         T = act_seqs.shape[1]
@@ -167,7 +178,16 @@ def make_rollout_and_reward_fns(
 
             costs = costs + reach_loss  # penalize large reachable set
         if enable_obstacle:
-            obs_costs = obstacle_cost_fn(state_seqs)
+            if enable_reach:
+                enforce_reach_steps = obstacle_config.get("enforce_reach_steps", horizon) + 1
+                dt_state_dim = dt_dyn.Ds
+                r_lo = reach_aux["r_lo"][:, :enforce_reach_steps, :dt_state_dim]  # [B,horizon, dt_state_dim]
+                r_up = reach_aux["r_up"][:, :enforce_reach_steps, :dt_state_dim]  # [B,horizon, dt_state_dim]
+                sample_states = box_corners_nd_jax(r_lo, r_up).reshape(-1, *r_lo.shape[1:])  # [n * B, horizon, dt_state_dim]
+                obs_costs = obstacle_cost_fn(sample_states).reshape(sample_states.shape[0], -1)  # [n, B]
+                obs_costs = jnp.max(obs_costs, axis=0) * reach_config.get("collision_penalty", 1.0)  # [B]
+            else:
+                obs_costs = obstacle_cost_fn(state_seqs) * penalty_factor
             costs = costs + obs_costs
         return {"rewards": -costs, "reward_seqs": -cost_seqs, "reach_aux": reach_aux, "reach_loss": reach_loss}
 
@@ -429,7 +449,7 @@ def draw_aabb_surfaces(ax, lo, hi, face_color, face_alpha):
 if __name__ == "__main__":
     import pickle
     # pkl_file = "output/planning/quadrotor/0_uniform_0.2_0.01_mppi_1000/mlp_214411_152209/planning_res_0000.pkl"
-    pkl_file = "output/planning/quadrotor/0_uniform_0.2_0.01_mppi_1000/mlp_235110_152209/planning_res_0000.pkl"
+    pkl_file = "output/planning/quadrotor/0_uniform_0.2_0.01_mppi_1000/mlp_080733_131552/planning_res_0000.pkl"
     with open(pkl_file, "rb") as f:
         data = pickle.load(f)
 

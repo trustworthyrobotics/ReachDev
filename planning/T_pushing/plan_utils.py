@@ -124,7 +124,6 @@ def make_rollout_and_reward_fns(
     config: Dict,
     abs_pose: bool = True,
     pred_mode: str = "pose",
-    reach_config: Dict = {},
 ):
     planning_config = config["planning"]
     data_config = config["data"]
@@ -197,7 +196,7 @@ def make_rollout_and_reward_fns(
             angle_T = jnp.concatenate([state_seq[..., 2:3], state_seq[..., 2:3]+jnp.pi/2], axis=-1) # [horizon, 2]
             interact, margin = detect_T_hole_interaction(c_wall, h_wall, c_T, h_T, angle_T) # [horizon]
             return margin
-        penalty_factor = hole_config.get("penalty", 100.0)
+        penalty_factor = hole_config.get("penalty", 2.0)
         pass
 
     # [state_dim], [n_sample, horizon, action_dim] -> [n_sample, horizon, state_dim]
@@ -260,7 +259,7 @@ def make_rollout_and_reward_fns(
         if enable_hole:
             if enable_reach:
                 margin = jax.vmap(_detect_interaction_set)(reach_aux["r_lo"], reach_aux["r_up"])  # [n_sample, horizon]
-                collision_loss = jnp.sum(margin, axis=-1) * penalty_factor
+                collision_loss = jnp.sum(margin, axis=-1) * reach_config.get("collision_penalty", 1.0)
                 costs = costs + collision_loss
             else:
                 margin = jax.vmap(_detect_interaction)(abs_state_seqs)  # [n_sample, horizon]

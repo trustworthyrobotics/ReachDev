@@ -93,7 +93,6 @@ def main(config: DictConfig):
     rollout_fn, reward_fn, step_cost_fn, step_cost_fn_np = make_rollout_and_reward_fns(
         dt_dyn,
         planning_config,
-        reach_config=config.get("reachability", {}),
     )
     planner_type = planning_config.get("planner", "mppi").lower()
     if planner_type == "mppi":
@@ -106,8 +105,8 @@ def main(config: DictConfig):
     # JIT compile
     compile_start = time.time()
     jit_trajopt = eqx.filter_jit(planner.trajectory_optimization)
-    jit_trajopt(key, jnp.zeros((dt_state_dim,)), init_act_seq, skip=succeed, target_state=jnp.zeros((dt_state_dim,)))
-    jit_trajopt(key, state_cur, init_act_seq, skip=succeed, target_state=jnp.zeros((dt_state_dim,)))
+    jit_trajopt(key, jnp.zeros((dt_state_dim,)), jnp.zeros((horizon, dt_action_dim)), skip=False, target_state=jnp.zeros((dt_state_dim,)))
+    jit_trajopt(key, jnp.zeros((dt_state_dim,)), jnp.zeros((horizon, dt_action_dim)), skip=True, target_state=jnp.zeros((dt_state_dim,)))
     compile_time = time.time() - compile_start
     print(f"JIT compilation time: {compile_time} seconds")
 
@@ -186,7 +185,7 @@ def main(config: DictConfig):
                 v_cmd = scaled_act_seq[step, :]
                 sub_env_states = []
 
-                if per_act:
+                if (not succeed) and per_act:
                     key, subkey = jax.random.split(key)
                     noise_param = noise_inter
                     if noise_type == "normal":
@@ -199,7 +198,7 @@ def main(config: DictConfig):
                     env.force_update(noise[:ct_state_dim][None])  # apply disturbance
 
                 for ctl_step in range(n_ctl_per_dyn):
-                    if not per_act:
+                    if (not succeed) and (not per_act):
                         key, subkey = jax.random.split(key)
                         noise_param = noise_inter
                         if noise_type == "normal":
@@ -232,7 +231,8 @@ def main(config: DictConfig):
                     print(env_state[-1][:dt_state_dim])
                     print(f"   step {t} cost: {step_cost}, action: {env_dict['action']}")
                 step_cost_list.append(step_cost)
-                if step_cost < 1:
+                if (not succeed) and step_cost < 1:
+                    print(f"Task succeeded at step {t} with step cost {step_cost}")
                     succeed = True
                 if t >= max_steps:
                     break
@@ -261,26 +261,30 @@ def main(config: DictConfig):
         plot_quad_states_actions(X_gt[:, 0, :ct_state_dim], U_gt[:, 0], dt=ct_ctl.dt, out_path=os.path.join(out_dir, f"gt_states_actions_{i}.png"))
         env.close()
 
-        # act_seqs = np.array([d["act_seq"] for d in planning_res_list])
-        # state_seqs = np.array([d["state_seq"] for d in planning_res_list])[..., :dt_state_dim]
-        # plot_planning_animation(state_seqs[None, :, :, :3], dt_dyn.dt, "output/plan_reach.gif", targets=target_pose[None, :3], obs_config=planning_config.get("obstacle", None))
-        # reach_config = planning_config.get("reach_in_obj", {})
-        # refine_config = planning_config.get("refinement", {})
-        # reach_refine_config = refine_config.get("reach_in_obj", {})
-        # enable_reach = reach_config.get("enable", False) or (refine_config.get('enable', False) and reach_refine_config.get("enable", False))
-        # if enable_reach:
-        #     # r_lo_seqs, r_up_seqs: (n_sim_steps+1, horizon+1, 3)
-        #     r_lo_seqs = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['r_lo'] for d in planning_res_list]).reshape((*state_seqs.shape[:2], -1))[..., :dt_state_dim]
-        #     r_up_seqs = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['r_up'] for d in planning_res_list]).reshape((*state_seqs.shape[:2], -1))[..., :dt_state_dim]
-        #     reach_vols = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['reach_vol'] for d in planning_res_list])
-
-        #     plot_planning_animation(state_seqs[None, :, :, :3], dt_dyn.dt, "output/plan_reach.gif", targets=target_pose[None, :3], r_lo_seqs=r_lo_seqs[None, :, :, :3], r_up_seqs=r_up_seqs[None, :, :, :3], obs_config=planning_config.get("obstacle", None))
+        act_seqs = np.array([d["act_seq"] for d in planning_res_list])
+        state_seqs = np.array([d["state_seq"] for d in planning_res_list])[..., :dt_state_dim]
+        plot_planning_animation(state_seqs[None, :, :, :3], dt_dyn.dt, "output/plan_vis.gif", targets=target_pose[None, :3], obs_config=planning_config.get("obstacle", None))
+        reach_config = planning_config.get("reach_in_obj", {})
+        refine_config = planning_config.get("refinement", {})
+        reach_refine_config = refine_config.get("reach_in_obj", {})
+        enable_reach = reach_config.get("enable", False) or (refine_config.get('enable', False) and reach_refine_config.get("enable", False))
+        if enable_reach:
+            # r_lo_seqs, r_up_seqs: (n_sim_steps+1, horizon+1, 3)
+            r_lo_seqs = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['r_lo'] for d in planning_res_list]).reshape((*state_seqs.shape[:2], -1))[..., :dt_state_dim]
+            r_up_seqs = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['r_up'] for d in planning_res_list]).reshape((*state_seqs.shape[:2], -1))[..., :dt_state_dim]
+            reach_vols = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['reach_vol'] for d in planning_res_list])
+            print(f"Avg reach vol: {reach_vols.mean()}, max reach vol: {reach_vols.max()}")
+            plot_planning_animation(state_seqs[None, :, :, :3], dt_dyn.dt, "output/plan_reach_vis.gif", targets=target_pose[None, :3], r_lo_seqs=r_lo_seqs[None, :, :, :3], r_up_seqs=r_up_seqs[None, :, :, :3], obs_config=planning_config.get("obstacle", None))
 
 
     cost_stat = np.array(cost_stat)  # (num_test, max_steps)
     avg_step_cost = np.mean(cost_stat, axis=0)
     print(f"Average step cost over time over {num_test} test cases: {avg_step_cost}")
     plot_cost_stat(cost_stat, os.path.join(out_dir, "step_costs.png"))
+
+    plan_time_stat = np.array(plan_time_stat)
+    avg_plan_time = np.mean(plan_time_stat)
+    print(f"Average planning time per step over {num_test} test cases: {avg_plan_time} seconds")
 
     # save overall stats
     stats = {

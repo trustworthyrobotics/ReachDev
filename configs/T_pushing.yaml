@@ -218,9 +218,9 @@ testing:
     ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_tu_False_True_none_0.05_0.03_0.001_True_20260128_045222"
 
 planning:
-  out_path: "output/planning/${settings.task_name}/${planning.test_id}_${planning.disturbance.type}_${planning.disturbance.init}_${planning.disturbance.inter}_${planning.planner}_${planning.n_sample}_${planning.enable_ctl}_${planning.refinement.enable}_${planning.refinement.reach_in_obj.enable}_${planning.reach_in_obj.enable}"
+  out_path: "output/rss/planning/${settings.task_name}/${planning.test_id}_${planning.disturbance.type}_${planning.disturbance.init}_${planning.disturbance.inter}_${planning.planner}_${planning.n_sample}_${planning.enable_ctl}_${planning.refinement.enable}_${planning.refinement.reach_in_obj.enable}_${planning.reach_in_obj.enable}"
   add_timestamp: true
-  horizon: 8
+  horizon: 10
   max_steps: 25
   n_act_step: 1
   num_test: 20
@@ -238,20 +238,21 @@ planning:
     enable: true
     center: [250, 500]
     size: [60, 80] # width, height
-    penalty: 2
+    penalty: 5
     enforce_reach_steps: 5
 
   enable_ctl: true
   init_follow_steps: 3
   reach_in_obj:
-    enable: false
+    enable: true
     eps: ${planning.disturbance.init}
     weight: 0.1
     loss_max: 10
     clip: true
     splits: {}
+    collision_penalty: 0.5
   refinement:
-    enable: false
+    enable: true
     lr: 0.02
     n_iter: 10
     reach_in_obj:
@@ -260,7 +261,7 @@ planning:
       loss_max: 10
       clip: false
       splits: {0: 4, 1: 4, 2: 4}
-
+      collision_penalty: 5
   vis_reach_steps: ${planning.hole.enforce_reach_steps}
 
   cost_norm: 1

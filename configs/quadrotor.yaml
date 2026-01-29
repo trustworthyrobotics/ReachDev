@@ -142,7 +142,7 @@ train_ct_ctl:
     save_checkpoints: true       # save model checkpoints to wandb  
 
 reachability:
-  eps: 0.2
+  eps: 0.3
   init_splits: {}
   refine_splits: {}
   # below for CT reachability settings
@@ -164,11 +164,12 @@ testing:
     ct_ctl_dir: "${train_ct_ctl.out_dir}/relu_[64,_64]_log_10_lr0.001_su_False_False_False_none_0.03_0.02_0.0006_20260128_083615"
 
 planning:
-  out_path: "output/planning/${settings.task_name}/${planning.test_id}_${planning.disturbance.type}_${planning.disturbance.init}_${planning.disturbance.inter}_${planning.planner}_${planning.n_sample}"
-  horizon: 20
+  out_path: "output/rss/planning/${settings.task_name}/${planning.test_id}_${planning.disturbance.type}_${planning.disturbance.init}_${planning.disturbance.inter}_${planning.planner}_${planning.n_sample}"
+  add_timestamp: true
+  horizon: 10
   max_steps: 100
-  n_act_step: 1
-  num_test: 10
+  n_act_step: 5
+  num_test: 20
   test_id: 0
   action_dim: ${data.dt_action_dim}
   action_bound: 1
@@ -177,9 +178,9 @@ planning:
   disturbance:
     type: "uniform" # {"none","normal","uniform"}
     # init: 0.05
-    init: ${reachability.eps}
+    init: 0.3
     inter: 0.01
-    per_act: true # whether to add disturbance per action step (true) or per control step (false)
+    per_act: false # whether to add disturbance per action step (true) or per control step (false)
 
   obstacle:
     enable: true
@@ -188,28 +189,32 @@ planning:
     inflate: 0.2
     norm: 2
     penalty: 100.0
+    enforce_reach_steps: 10
 
   enable_ctl: true
   use_pid: false
   reach_in_obj:
-    enable: false
+    enable: true
     weight: 0.3
     loss_max: 10
     clip: true
+    eps: ${planning.disturbance.init}
+    collision_penalty: 1.0
   refinement:
-    enable: false
+    enable: true
     lr: 0.01
-    n_iter: 10
+    n_iter: 5
     reach_in_obj:
-      enable: false
+      enable: true
       weight: 0.3
       loss_max: 10
       clip: false
+      collision_penalty: 100
 
   cost_norm: 1
   only_final_cost: False
   n_sample: 1000
-  n_update_iter: 20
+  n_update_iter: 10
   
   planner: "mppi" # {"mppi","cem"}
   use_last: False

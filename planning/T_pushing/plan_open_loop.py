@@ -92,7 +92,6 @@ def main(config: DictConfig):
         config,
         abs_pose,
         pred_mode,
-        reach_config=config.get("reachability", {}),
     )
     planner_type = planning_config.get("planner", "mppi").lower()
     if planner_type == "mppi":

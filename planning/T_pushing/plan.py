@@ -98,7 +98,6 @@ def main(config: DictConfig):
         config,
         abs_pose,
         pred_mode,
-        reach_config=config.get("reachability", {}),
     )
     planner_type = planning_config.get("planner", "mppi").lower()
     if planner_type == "mppi":
@@ -256,8 +255,8 @@ def main(config: DictConfig):
                         elif noise_type == "uniform":
                             noise = jax.random.uniform(subkey, shape=(T_dim,), minval=-1.0, maxval=1.0) * noise_param
 
-                    state_cur = state_cur.at[0:T_dim].add(noise)
-                    # env.force_update([[noise[0] * scale, noise[1] * scale, noise[2]]])  # apply disturbance
+                    # state_cur = state_cur.at[0:T_dim].add(noise)
+                    env.force_update([[noise[0] * scale, noise[1] * scale, noise[2]]])  # apply disturbance
 
                     sub_env_states.append(env_state)
                 env_state = np.array(sub_env_states)
