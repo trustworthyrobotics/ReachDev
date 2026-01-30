@@ -7,7 +7,7 @@ import yaml
 import os
 import pickle
 import jax
-jax.config.update('jax_platforms', 'cpu')
+# jax.config.update('jax_platforms', 'cpu')
 jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 from jax import random as jrandom
@@ -32,73 +32,6 @@ from envs.T_pushing.t_sim import T_Sim
 import numpy as np
 from scipy.spatial import ConvexHull
 import itertools
-
-def generate_zonotopes(c, L, R_lo, R_up):
-    """
-    Generates vertices for N/2 Zonotopes.
-    
-    Args:
-        c: [Batch, N] - Center/Constant offset
-        L: [Batch, N, M] - Linear coefficients
-        R_lo: [Batch, N] - Lower bound of remainder interval
-        R_up: [Batch, N] - Upper bound of remainder interval
-        M: int - Dimension of the input x (where x \in [-1, 1]^M)
-        
-    Returns:
-        List of lists: [Batch][Keypoint_Idx] -> ndarray of vertices defining the hull
-    """
-    batch_size, N = c.shape
-    num_keypoints = N // 2
-    
-    # 1. Generate all 2^M vertices of the unit hypercube
-    # For M=8, this is 256 vertices.
-    M = L.shape[-1]
-    hypercube_vertices = np.array(list(itertools.product([-1, 1], repeat=M))) # [2^M, M]
-    
-    # 2. Calculate the Remainder "Box" center and radius
-    # We treat the remainder R as an extra interval added to the zonotope
-    r_center = (R_up + R_lo) / 2
-    r_radius = (R_up - R_lo) / 2
-    
-    batch_zonotopes = []
-
-    for b in range(batch_size):
-        keypoint_hulls = []
-        for k in range(num_keypoints):
-            idx = k * 2
-            # Extract 2xM linear mapping for this keypoint
-            L_k = L[b, idx:idx+2, :] # [2, M]
-            c_k = c[b, idx:idx+2]    # [2]
-            
-            # Map hypercube vertices to 2D: (L * x)
-            # hypercube_vertices is [2^M, M], L_k.T is [M, 2]
-            z_vertices = hypercube_vertices @ L_k.T # [2^M, 2]
-            
-            # Add the constant offset and remainder center
-            offset = c_k + r_center[b, idx:idx+2]
-            z_vertices += offset
-            
-            # To account for the remainder interval box (R), we effectively 
-            # expand the zonotope by the Minkowski sum of the remainder box.
-            # A simple way: add the 4 corners of the remainder box to the segments
-            # or just expand the existing vertices by the radius.
-            rk_rad = r_radius[b, idx:idx+2]
-            expansion = np.array(list(itertools.product([-1, 1], repeat=2))) * rk_rad
-            
-            # Combine all possible points (Zonotope vertices + Remainder expansion)
-            # This is technically the Minkowski sum of two zonotopes
-            final_points = []
-            for exp_v in expansion:
-                final_points.append(z_vertices + exp_v)
-            final_points = np.vstack(final_points)
-            
-            # Compute Convex Hull to get the tightest 2D polygon
-            hull = ConvexHull(final_points)
-            keypoint_hulls.append(final_points[hull.vertices])
-            
-        batch_zonotopes.append(keypoint_hulls)
-        
-    return batch_zonotopes
 
 def plot(r_lo, r_up, trajs, pxy, scale, window_size, file_name, zonotopes=None):
     """
@@ -273,16 +206,6 @@ def main(config: DictConfig):
         return jnp.concatenate([dx, du], axis=-1)
     frequency = float(data_config["ct_dyn"]["frequency"])
     reach_cfg = train_config["reach"]
-    # init_remainder = reach_cfg.get("init_remainder", 1e-1)
-    # frr_rounds = reach_cfg.get("frr_rounds", 5)
-    # frr_stop_ratio = reach_cfg.get("frr_stop_ratio", 0.95)
-    # sr_window_size = reach_cfg.get("sr_window_size", 100)
-    init_remainder = 5e-2
-    frr_rounds = 5
-    frr_stop_ratio = 0.95
-    sr_window_size = 100
-    reach_analyzer = CT_Plan_Reach(f_wrapper, state_dim=model.Dx, action_dim=model.Du, nn_dyn=True, n_steps_per_plan=1, step_size=1/frequency, 
-                                  init_remainder=init_remainder, frr_rounds=frr_rounds, frr_stop_ratio=frr_stop_ratio, sr_window_size=sr_window_size)
 
     # -----------------------------
     # 2) Load eval data
@@ -294,119 +217,125 @@ def main(config: DictConfig):
     eps_arr = np.array(eval_data)  # [B, T, 15]
 
     T_reach = train_config["n_rollout_valid"]
-    T_reach = 30
+    T_reach = 20
     start_time_step = 50
 
     # Everything inside file is normalized by /scale → denormalize for visualization
-    eps_denorm = eps_arr.astype(np.float32)[:, start_time_step:start_time_step+T_reach+1, :]               # [B,T,15], unnormalized
+    eps_denorm = jnp.array(eps_arr.astype(np.float32)[:, start_time_step:start_time_step+T_reach+1, :])               # [B,T,15], unnormalized
     eps_norm = eps_denorm / scale                    # [B,T,15], normalized
 
-    selected_eps_idx = 200
     if pred_mode == "state":
-        state_init = jnp.array(eps_norm[selected_eps_idx, 0, :state_dim])[None]      # [1, Dx]
         act_state_dim = state_dim
-    if pred_mode == "pose":
-        state_init = jnp.array(eps_norm[selected_eps_idx, 0, state_dim:state_dim+pose_dim])[None]      # [1, Dx]
-        state_init = state_init.at[0, -1].set(state_init[0, -1] * scale)  # denormalize angle
+    else:
         act_state_dim = pose_dim
         def transform_fn(pose):
             B, T, D = pose.shape
             pose = pose.reshape(-1, D)
             kp = jax.vmap(pose_to_kp, in_axes=(0, None, None))(pose, stem_size/scale, bar_size/scale)
             return kp.reshape(B, T, -1)
+    if abs_pose:
+        act_state_dim = act_state_dim + action_dim
 
     reach_eps = float(train_config["reach"]["eps_final"])
+    reach_splits = train_config["reach"].get("splits", None)
+    n_split = 2 if pred_mode == "state" else 4
+    reach_splits = {i: n_split for i in range(state_dim if pred_mode == "state" else pose_dim)}
+    n_splits = n_split ** (state_dim if pred_mode == "state" else pose_dim)
+    n_samples = 64 if n_splits == 1 else n_splits
+    # init_remainder = reach_cfg.get("init_remainder", 1e-1)
+    # frr_rounds = reach_cfg.get("frr_rounds", 5)
+    # frr_stop_ratio = reach_cfg.get("frr_stop_ratio", 0.95)
+    # sr_window_size = reach_cfg.get("sr_window_size", 100)
+    init_remainder = reach_eps
+    frr_rounds = 5
+    frr_stop_ratio = 0.95
+    sr_window_size = 100
+    reach_analyzer = CT_Plan_Reach(f_wrapper, state_dim=model.Dx, action_dim=model.Du, nn_dyn=True, n_steps_per_plan=1, step_size=1/frequency, 
+                                  init_remainder=init_remainder, frr_rounds=frr_rounds, frr_stop_ratio=frr_stop_ratio, sr_window_size=sr_window_size)
+
+    selected_eps_ids = [43, 44]
+    n_reach_batch = len(selected_eps_ids)
+
+    n_reach_batch = eps_norm.shape[0]
+    # n_reach_batch = 64
+    # selected_eps_ids = np.random.choice(eps_norm.shape[0], n_reach_batch, replace=False).tolist()
+    selected_eps_ids = np.arange(n_reach_batch).tolist()
+    n_samples = n_samples * n_reach_batch
+
+    if pred_mode == "state":
+        state_init_all = eps_norm[:, 0, :state_dim]
+    if pred_mode == "pose":
+        state_init_all = eps_norm[:, 0, state_dim:state_dim+pose_dim]
+        state_init_all = state_init_all.at[:, -1].set(state_init_all[:, -1] * scale)  # denormalize angle
+    action_seq_all = eps_norm[:, :T_reach, -action_dim:]  # [B, T, 2]
+    pusher_pos_seq_all = eps_norm[:, :T_reach+1, state_dim+pose_dim:-action_dim]  # [B, T+1, 2]
+    pusher_pos_init_all = pusher_pos_seq_all[:, 0, :]  # [B, 2]
+
+    state_init = state_init_all[selected_eps_ids, :] # [N, Dx]
+    action_seq = action_seq_all[selected_eps_ids, :, :]  # [N, T, 2]
+    pusher_pos_seq = pusher_pos_seq_all[selected_eps_ids, :, :]  # [N, T+1, 2]
+    pusher_pos_init = pusher_pos_init_all[selected_eps_ids, :]  # [N, 2]
+
+
+    start_time = time.time()
     # reach_eps = 0.02
     state_init_lo = state_init - reach_eps
     state_init_up = state_init + reach_eps
     if abs_pose:
-        act_state_dim = act_state_dim + action_dim
-        state_init_lo = jnp.concatenate([state_init_lo, jnp.array(eps_norm[selected_eps_idx, 0, state_dim+pose_dim:-action_dim])[None]], axis=-1)  # [1, Dx+Du]
-        state_init_up = jnp.concatenate([state_init_up, jnp.array(eps_norm[selected_eps_idx, 0, state_dim+pose_dim:-action_dim])[None]], axis=-1)  # [1, Dx+Du]
-    action_seq = jnp.array(eps_norm[selected_eps_idx, :T_reach, -action_dim:])[None]      # [1, T, Du]
-    pusher_pos_seq = jnp.array(eps_norm[selected_eps_idx, :T_reach+1, state_dim+pose_dim:-action_dim])[None]  # [1, T+1, 2]
+        state_init_lo = jnp.concatenate([state_init_lo, pusher_pos_init], axis=-1)  # [N, Dx+Du]
+        state_init_up = jnp.concatenate([state_init_up, pusher_pos_init], axis=-1)  # [N, Dx+Du]
 
-    z_init_lo_agg = jnp.concatenate([state_init_lo, jnp.zeros((1, action_dim))], axis=-1) # [1, Dx+Du]
-    z_init_up_agg = jnp.concatenate([state_init_up, jnp.zeros((1, action_dim))], axis=-1) # [1, Dx+Du]
-    reach_splits = train_config["reach"].get("splits", None)
-    n_split = 2 if pred_mode == "state" else 4
-    reach_splits = {i: n_split for i in range(state_dim if pred_mode == "state" else pose_dim)}
-    z_init_lo, z_init_up = prepare_initial_set_v2(z_init_lo_agg, z_init_up_agg, splits_cfg=reach_splits)
+    z_init_lo = jnp.concatenate([state_init_lo, jnp.zeros((n_reach_batch, action_dim))], axis=-1) # [N, Dx+Du]
+    z_init_up = jnp.concatenate([state_init_up, jnp.zeros((n_reach_batch, action_dim))], axis=-1) # [N, Dx+Du]
+    z_init_lo, z_init_up = prepare_initial_set_v2(z_init_lo, z_init_up, splits_cfg=reach_splits) # [N * splits, Dx+Du]
 
-    # print(f"action seq: {action_seq.tolist()}")
-    # print(f"pusher pos seq: {pusher_pos_seq.tolist()}")
-    enable_action_opt = False
-    n_opt_steps = 100
-    if enable_action_opt:
-        # optimize the action sequence for tighter reachability
-        lr_schedule = optax.constant_schedule(0.001)
-        optim = optax.chain(
-            optax.clip_by_global_norm(1.0),
-            optax.adam(learning_rate=lr_schedule)
-        )
-        opt_state = optim.init(eqx.filter(action_seq, eqx.is_inexact_array))
-        @eqx.filter_jit
-        def reach_opt_step(act_seq, opt_state, key):
-            def loss_fn(_act_seq):
-                ts, r_lo, r_up, x_nexts_all, _ = reach_analyzer.verify_w_model(f_wrapper, z_init_lo, z_init_up, n_total_steps=T_reach, action_seq=_act_seq.repeat(z_init_up.shape[0]//_act_seq.shape[0], axis=0)[:, None])
-                r_lo = r_lo.reshape(-1, T_reach + 1, act_state_dim+action_dim)[..., :act_state_dim]  # [B, T+1, Dx]
-                r_up = r_up.reshape(-1, T_reach + 1, act_state_dim+action_dim)[..., :act_state_dim]  # [B, T+1, Dx]
-
-                _vol = calculate_volume(r_lo, r_up, union_init=False, mode="sum")
-                _loss = jnp.log(1 + _vol)
-                return _loss, _vol
-            (loss, vol), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(act_seq)
-            updates, opt_state = optim.update(grads, opt_state, params=eqx.filter(act_seq, eqx.is_inexact_array))
-            act_seq = eqx.apply_updates(act_seq, updates)
-            return act_seq, opt_state, loss, vol
-
-        start_time = time.time()
-        key, subkey = jrandom.split(key)
-        _, opt_state, loss, vol = reach_opt_step(action_seq, opt_state, subkey)
-        jax.block_until_ready(loss)
-        end_time = time.time()
-        print(f"compile time: {end_time - start_time:.4f} sec")
-
-        start_time = time.time()
-        for opt_i in range(n_opt_steps):
-            key, subkey = jrandom.split(key)
-            action_seq, opt_state, loss, vol = reach_opt_step(action_seq, opt_state, subkey)
-            if (opt_i + 1) % 10 == 0:
-                print(f"Action opt step {opt_i+1}/{n_opt_steps}, loss: {loss:.4f}, vol: {vol:.4f}")
-
-        jax.block_until_ready(loss)
-        end_time = time.time()
-        print(f"Optimization time for {n_opt_steps} steps: {end_time - start_time:.4f} sec")
-
-        init_pusher_pos = pusher_pos_seq[:, 0:1, :]
-        pusher_pos_seq = init_pusher_pos + jnp.cumsum(action_seq, axis=1)
-        pusher_pos_seq = jnp.concatenate([init_pusher_pos, pusher_pos_seq], axis=1)   # [1, T+1, 2]
-        print(f"action seq: {action_seq.tolist()}")
-        # print(f"pusher pos seq: {pusher_pos_seq.tolist()}")
     # perform reachability analysis
-    ts, r_lo, r_up, x_nexts_all, init_shrinked = reach_analyzer.verify_w_model(f_wrapper, z_init_lo, z_init_up, n_total_steps=T_reach, action_seq=action_seq.repeat(z_init_up.shape[0]//action_seq.shape[0], axis=0)[:, None])
-    r_lo = r_lo.reshape(-1, T_reach + 1, act_state_dim+action_dim)  # [B, T+1, Dx+Du]
-    r_up = r_up.reshape(-1, T_reach + 1, act_state_dim+action_dim)  # [B, T+1, Dx+Du]
+    ts, r_lo, r_up, x_nexts_all, init_shrinked = reach_analyzer.verify(z_init_lo, z_init_up, n_total_steps=T_reach, action_seq=action_seq.repeat(z_init_up.shape[0]//action_seq.shape[0], axis=0)[:, None])
+    r_lo = r_lo.reshape(n_reach_batch, -1, T_reach + 1, act_state_dim+action_dim)  # [N, splits, T+1, Dx+Du]
+    r_up = r_up.reshape(n_reach_batch, -1, T_reach + 1, act_state_dim+action_dim)  # [N, splits, T+1, Dx+Du]
 
     # aggregate volume over all partitions
-    r_lo_agg = jnp.min(r_lo, axis=0, keepdims=True)  # [1, T+1, Dx+Du]
-    r_up_agg = jnp.max(r_up, axis=0, keepdims=True)
-
-    vol = float(calculate_volume(r_lo, r_up, union_init=False, mode="sum"))
-    print(f"init_shrinked: {init_shrinked.sum(axis=(0,1,2))}")
-    print(f"Reachable set volume over {T_reach} steps: {vol}")
-
-    n_samples = 64 if z_init_lo.shape[0] == 1 else z_init_lo.shape[0]
+    r_lo_agg = jnp.min(r_lo, axis=1, keepdims=False)  # [N, T+1, Dx+Du]
+    r_up_agg = jnp.max(r_up, axis=1, keepdims=False)  # [N, T+1, Dx+Du]
 
     # sample_state_init = state_init_lo + (state_init_up - state_init_lo) * jrandom.uniform(key, shape=(n_samples, state_init_lo.shape[1])) # [n_samples, Dx]
-    raw_samples = jrandom.uniform(key, shape=(z_init_lo.shape[0], max(n_samples // z_init_lo.shape[0], 1), act_state_dim)) # [n_partitions, n_per_partition, Dx]
+    raw_samples = jrandom.uniform(key, shape=(z_init_lo.shape[0], max(n_samples // z_init_lo.shape[0], 1), act_state_dim)) # [N * splits, n_per_partition, Dx]
     sample_state_init = z_init_lo[:, jnp.newaxis, :act_state_dim] + (z_init_up - z_init_lo)[:, jnp.newaxis, :act_state_dim] * raw_samples
     sample_state_init = sample_state_init.reshape(-1, act_state_dim)  # [n_samples, Dx]
 
     sample_rollout = model.rollout(sample_state_init, action_seq.repeat(n_samples, axis=0))
-    sample_rollout = jnp.concatenate([sample_state_init[:, None, :], sample_rollout], axis=1)  # [n_samples, T+1, Dx+Du]
+    sample_rollout = jnp.concatenate([sample_state_init[:, None, :], sample_rollout], axis=1)  # [n_samples, T+1, Dx]
+    sample_rollout = sample_rollout.reshape(n_reach_batch, -1, T_reach + 1, act_state_dim)  # [N, n_per_partition, T+1, Dx]
 
-    out_dir = os.path.join(model_dir, f"{selected_eps_idx}_reach_eps{reach_eps}_steps{T_reach}_{n_split}_{pred_mode}_{enable_action_opt}_{n_opt_steps}_t")
+    sample_r_lo = sample_rollout.min(axis=1, keepdims=False)  # [N, T+1, Dx]
+    sample_r_up = sample_rollout.max(axis=1, keepdims=False)  # [N, T+1, Dx]
+
+    reach_vols = calculate_volume(r_lo_agg[..., :act_state_dim], r_up_agg[..., :act_state_dim], union_init=False, mode="sum", keep_time=True, keep_batch=True)  # [N, T+1]
+    sample_vols = calculate_volume(sample_r_lo[..., :act_state_dim], sample_r_up[..., :act_state_dim], union_init=False, mode='sum', keep_time=True, keep_batch=True)  # [N, T+1]
+
+    end_time = time.time()
+    print(f"Reachability analysis for {n_reach_batch} eps took {end_time - start_time:.2f} seconds.")
+    print(f"init_shrinked: {init_shrinked.sum()/init_shrinked.size}")
+
+    # save to npz for further analysis
+    npz_path = os.path.join(model_dir, f"reach_eval.npz")
+    np.savez_compressed(npz_path,
+        reach_vols=np.array(reach_vols),
+        sample_vols=np.array(sample_vols),
+        reach_r_lo=np.array(r_lo_agg),
+        reach_r_up=np.array(r_up_agg),
+        sample_r_lo=np.array(sample_r_lo),
+        sample_r_up=np.array(sample_r_up),
+    )
+    print(f"Saved reachability npz to {npz_path}")
+    print(f"Reachable set volume over {T_reach} steps: {reach_vols.mean(axis=0)}")
+    print(f"Sampled rollout volume over {T_reach} steps: {sample_vols.mean(axis=0)}")
+
+
+    if n_reach_batch > 1:
+        exit()
+
+    out_dir = os.path.join(model_dir, f"{selected_eps_ids[0]}_reach_eps{reach_eps}_steps{T_reach}_{n_split}_{pred_mode}")
     os.makedirs(out_dir, exist_ok=True)
 
     # # save r_lo, r_up, sample_rollout, pusher_pos_seq, scale, window_size
@@ -417,12 +346,6 @@ def main(config: DictConfig):
 
     if pred_mode == "state":
         outfile = os.path.join(out_dir, f"reach_pushing.png")
-        # zonotopes = generate_zonotopes(
-        #     c=xF.P.c[:,:state_dim],          # [B, Dx]
-        #     L=xF.P.L[:, :state_dim, 1:state_dim+1],          # [B, Dx, Dx]
-        #     R_lo=xF.R.lo[:, :state_dim],    # [B, Dx]
-        #     R_up=xF.R.hi[:, :state_dim]     # [B, Dx]
-        # )
 
         plot(r_lo_agg, r_up_agg, sample_rollout, pusher_pos_seq, scale, window_size, outfile)
     elif pred_mode == "pose":
@@ -485,8 +408,8 @@ def main(config: DictConfig):
         outfile = os.path.join(out_dir, f"reach_{idx}.png")
         visualize_flowpipe_time(
             times=ts,
-            lowers=r_lo,
-            uppers=r_up,
+            lowers=r_lo_agg,
+            uppers=r_up_agg,
             trajs=np.concatenate([sample_rollout, action_seq.repeat(sample_rollout.shape[0], axis=0)], axis=-1),
             state_idx=idx,
             file_name=outfile,

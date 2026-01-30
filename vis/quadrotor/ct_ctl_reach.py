@@ -3,7 +3,7 @@ import numpy as np
 import os
 import pickle
 import jax
-jax.config.update('jax_platforms', 'cpu')
+# jax.config.update('jax_platforms', 'cpu')
 jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 import equinox as eqx
@@ -11,6 +11,7 @@ import jax.random as jrandom
 import hydra
 from omegaconf import DictConfig, open_dict
 import yaml
+import time
 
 sys.path.append('CROWN_Reach')
 from CROWN_Reach.src.reachability import CT_Ctl_Reach
@@ -76,7 +77,13 @@ def main(config: DictConfig):
     else:
         raise ValueError(f"Unknown data dimension: {episodes.shape[2]}")
     
-    select_samples = [0]
+    select_samples = [0, 1]
+    n_reach_batch = len(select_samples)
+
+    n_reach_batch = episodes.shape[0]
+    # n_reach_batch = 64
+    select_samples = np.arange(n_reach_batch).tolist()
+
     start_time_step = 20
     horizon = 10
     episodes = episodes[select_samples, start_time_step:start_time_step + horizon + 1, :]  # [B, T+1, Dx+Du]
@@ -100,7 +107,7 @@ def main(config: DictConfig):
     # frr_rounds = reach_cfg.get("frr_rounds", 5)
     # frr_stop_ratio = reach_cfg.get("frr_stop_ratio", 0.95)
     # sr_window_size = reach_cfg.get("sr_window_size", 100)
-    init_remainder = eps * 2
+    init_remainder = eps
     frr_rounds = 5
     frr_stop_ratio = 0.95
     sr_window_size = 100
@@ -108,6 +115,8 @@ def main(config: DictConfig):
     reach_analyzer = CT_Ctl_Reach(f_wrapper, state_dim=model.Dx, action_dim=model.Du, nn_dyn=False, controller=model,
                                   n_steps_per_control=n_dyn_steps_per_ctl, step_size=1/dyn_frequency,
                                   init_remainder=init_remainder, frr_rounds=frr_rounds, frr_stop_ratio=frr_stop_ratio, sr_window_size=sr_window_size)
+
+    start_time = time.time()
 
     state_init = X_gt[:, 0, :] # [B, Dx]
     state_lo = state_init - eps
@@ -120,21 +129,24 @@ def main(config: DictConfig):
     
     reference_seq = v_cmds.repeat(max(X_lo.shape[0] // v_cmds.shape[0], 1), axis=0)  # [B, T, Dv]
     T_reach = horizon * reach_analyzer.n_steps_per_control
-    enable_reach = True
-    if use_pid:
-        enable_reach = False
-    if enable_reach:
-        ts, r_lo, r_up, _, init_shrinked_all = reach_analyzer.verify_w_model(f_wrapper, model, X_lo, X_up, n_total_steps=T_reach, reference_seq=reference_seq)
-        D = model.Dx + model.Du
-        r_lo = r_lo.reshape(-1, T_reach + 1, D)
-        r_up = r_up.reshape(-1, T_reach + 1, D)
-        # roll actions forward a step to match state dims
-        r_lo = r_lo.at[:, :-1, model.Dx:].set(r_lo[:, 1:, model.Dx:])
-        r_up = r_up.at[:, :-1, model.Dx:].set(r_up[:, 1:, model.Dx:])
-        reach_vol = calculate_volume(r_lo, r_up, union_init=False, mode='sum') / r_lo.shape[0]
-        print(f"Reachable set volume at time step {T_reach} over {r_lo.shape[0]} partitions: {reach_vol}")
-        print(f"init_shrinked_all: {init_shrinked_all.all()}")
-    n_samples = 64
+
+    ts, r_lo, r_up, _, init_shrinked_all = reach_analyzer.verify_w_model(f_wrapper, model, X_lo, X_up, n_total_steps=T_reach, reference_seq=reference_seq)
+    D = model.Dx + model.Du
+
+    r_lo = r_lo.reshape(n_reach_batch, -1, T_reach + 1, D)
+    r_up = r_up.reshape(n_reach_batch, -1, T_reach + 1, D)
+
+    # roll actions forward a step to match state dims
+    r_lo = r_lo.at[..., :-1, model.Dx:].set(r_lo[..., 1:, model.Dx:])
+    r_up = r_up.at[..., :-1, model.Dx:].set(r_up[..., 1:, model.Dx:])
+    
+    r_lo_agg = jnp.min(r_lo, axis=1, keepdims=False)
+    r_up_agg = jnp.max(r_up, axis=1, keepdims=False)
+
+    reach_vols = calculate_volume(r_lo_agg[..., :state_dim], r_up_agg[..., :state_dim], union_init=False, mode="sum", keep_time=True, keep_batch=True)
+
+    n_samples = 32
+    n_samples = n_samples * n_reach_batch
     key = jrandom.PRNGKey(42)
 
     # sample_state_init = state_init_lo + (state_init_up - state_init_lo) * jrandom.uniform(key, shape=(n_samples, state_init_lo.shape[1])) # [n_samples, Dx]
@@ -167,30 +179,61 @@ def main(config: DictConfig):
     U_gt = U_gt.at[:, -1, :].set(U_gt[:, -2, :])  # for plotting
     v_cmds = jnp.concatenate([v_cmds, v_cmds[:, -1:, :]], axis=1)  # [B, T+1, Dv] for plotting
 
-    print(f"X error: {jnp.abs(X_gt - X_preds).mean()}")
-    print(f"U error: {jnp.abs(U_gt - U_preds).mean()}")
-    print(f"v_cmd error: {jnp.abs(v_cmds - v_cmds_preds).mean()}")
+
+    sample_rollout = X_preds_full.reshape(n_reach_batch, -1, T_reach + 1, state_dim)  # [N, n_per_partition, T+1, Dx]
+    sample_r_lo = sample_rollout.min(axis=1, keepdims=False)  # [N, T+1, Dx]
+    sample_r_up = sample_rollout.max(axis=1, keepdims=False)  # [N, T+1, Dx]
+
+    sample_vols = calculate_volume(sample_r_lo[..., :state_dim], sample_r_up[..., :state_dim], union_init=False, mode='sum', keep_time=True, keep_batch=True)  # [N, T+1]
+
+    end_time = time.time()
+    print(f"Reachability analysis for {n_reach_batch} eps took {end_time - start_time:.2f} seconds.")
+    print(f"init_shrinked: {init_shrinked_all.sum()/init_shrinked_all.size}")
+
+    # save to npz for further analysis
+    npz_path = os.path.join(model_dir, f"reach_eval.npz")
+    np.savez_compressed(npz_path,
+        reach_vols=np.array(reach_vols),
+        sample_vols=np.array(sample_vols),
+        reach_r_lo=np.array(r_lo_agg),
+        reach_r_up=np.array(r_up_agg),
+        sample_r_lo=np.array(sample_r_lo),
+        sample_r_up=np.array(sample_r_up),
+    )
+    print(f"Saved reachability npz to {npz_path}")
+    print(f"Reachable set volume over {T_reach} steps: {reach_vols.mean(axis=0)}")
+    print(f"Sampled rollout volume over {T_reach} steps: {sample_vols.mean(axis=0)}")
+
+    # print(f"X error: {jnp.abs(X_gt - X_preds).mean()}")
     # exit()
+
+    if n_reach_batch > 1:
+        exit()
+
+
+    # print(f"X error: {jnp.abs(X_gt - X_preds).mean()}")
+    # print(f"U error: {jnp.abs(U_gt - U_preds).mean()}")
+    # print(f"v_cmd error: {jnp.abs(v_cmds - v_cmds_preds).mean()}")
+    # # exit()
 
     out_dir = os.path.join(model_dir, f"vis_reach_T{horizon}_eps{eps}_split{X_lo.shape[0]}")
     os.makedirs(out_dir, exist_ok=True)
 
-    if enable_reach:
-        for idx in range(model.Dx + action_dim):
-            outfile = os.path.join(out_dir, f"reach_{idx}.png")
-            visualize_flowpipe_time(
-                times=ts,
-                lowers=r_lo,
-                uppers=r_up,
-                trajs=np.concatenate([X_preds_full, U_preds_full], axis=-1),
-                state_idx=idx,
-                file_name=outfile,
-                print_boxes=False,
-                draw_boxes=True,
-                aggregate_partitions=True,
-                stride=1,
-                draw_traj=True,
-            )
+    for idx in range(model.Dx + action_dim):
+        outfile = os.path.join(out_dir, f"reach_{idx}.png")
+        visualize_flowpipe_time(
+            times=ts,
+            lowers=r_lo_agg,
+            uppers=r_up_agg,
+            trajs=np.concatenate([X_preds_full, U_preds_full], axis=-1),
+            state_idx=idx,
+            file_name=outfile,
+            print_boxes=False,
+            draw_boxes=True,
+            aggregate_partitions=True,
+            stride=1,
+            draw_traj=True,
+        )
 
     n_vis = min(1, len(select_samples))
     for i in range(n_vis):

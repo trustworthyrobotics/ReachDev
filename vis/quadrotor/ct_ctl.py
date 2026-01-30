@@ -69,15 +69,15 @@ def main(config: DictConfig):
     else:
         raise ValueError(f"Unknown data dimension: {episodes.shape[2]}")
     
-    start_time_step = 0
+    start_time_step = 20
     horizon = 100
     episodes = episodes[:, start_time_step:start_time_step + horizon + 1, :]  # [B, T+1, Dx+Du]
 
-    X_gt = episodes[..., :state_dim]
+    X_gts = episodes[..., :state_dim]
     v_cmds = episodes[:, :-1, state_dim:state_dim+v_cmd_dim]
     U_gt = episodes[..., -action_dim:]
 
-    X_curr = X_gt[:, 0, :] # [B, Dx]
+    X_curr = X_gts[:, 0, :] # [B, Dx]
 
     n_dyn_steps_per_ctl = round(ct_dyn.frequency / model.frequency)
 
@@ -103,7 +103,21 @@ def main(config: DictConfig):
     U_gt = U_gt.at[:, -1, :].set(U_gt[:, -2, :])  # for plotting
     v_cmds = jnp.concatenate([v_cmds, v_cmds[:, -1:, :]], axis=1)  # [B, T+1, Dv] for plotting
 
-    print(f"X error: {jnp.abs(X_gt - X_preds).mean()}")
+    pred_diff = v_cmds_preds - v_cmds
+    mean_diff = jnp.mean(pred_diff ** 2, axis=(0, 2)) # mean over B
+    print(f"MSE: {mean_diff}")
+
+    # save to npz for further analysis
+    npz_path = os.path.join(model_dir, f"pred_eval.npz")
+    np.savez_compressed(npz_path,
+        X_preds=np.array(v_cmds_preds),
+        X_gts=np.array(v_cmds),
+    )
+    print(f"Saved prediction npz to {npz_path}")
+
+    exit()
+
+    print(f"X error: {jnp.abs(X_gts - X_preds).mean()}")
     print(f"U error: {jnp.abs(U_gt - U_preds).mean()}")
     print(f"v_cmd error: {jnp.abs(v_cmds - v_cmds_preds).mean()}")
     exit()
@@ -112,11 +126,11 @@ def main(config: DictConfig):
     os.makedirs(out_dir, exist_ok=True)
     n_samples = 5
     for i in range(n_samples):
-        plot_3d_trajectories(X_gt[i, :, :3][:, None], num_quads=1, dt=model.dt, out_path=os.path.join(out_dir, f"gt_trajectories_{i}.png"))
+        plot_3d_trajectories(X_gts[i, :, :3][:, None], num_quads=1, dt=model.dt, out_path=os.path.join(out_dir, f"gt_trajectories_{i}.png"))
         plot_3d_trajectories(X_preds[i, :, :3][:, None], num_quads=1, dt=model.dt, out_path=os.path.join(out_dir, f"pred_trajectories_{i}.png"))
-        plot_quad_states_actions(X_gt[i, :, :6], v_cmds[i], dt=model.dt, out_path=os.path.join(out_dir, f"gt_states_vcmd_{i}.png"))
+        plot_quad_states_actions(X_gts[i, :, :6], v_cmds[i], dt=model.dt, out_path=os.path.join(out_dir, f"gt_states_vcmd_{i}.png"))
         plot_quad_states_actions(X_preds[i, :, :6], v_cmds[i], dt=model.dt, out_path=os.path.join(out_dir, f"pred_states_vcmd_{i}.png"))
-        plot_quad_states_actions(X_gt[i], U_gt[i], dt=model.dt, out_path=os.path.join(out_dir, f"gt_states_actions_{i}.png"))
+        plot_quad_states_actions(X_gts[i], U_gt[i], dt=model.dt, out_path=os.path.join(out_dir, f"gt_states_actions_{i}.png"))
         plot_quad_states_actions(X_preds[i], U_preds[i], dt=model.dt, out_path=os.path.join(out_dir, f"pred_states_actions_{i}.png"))
 
 

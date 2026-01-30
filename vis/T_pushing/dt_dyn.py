@@ -168,6 +168,28 @@ def main(config: DictConfig):
     X_pred_norm = model.rollout(jnp.asarray(x0_norm), jnp.asarray(U_norm))
     # prepend x0 to get [B,T,Dx]
     X_pred_full_norm = jnp.concatenate([x0_norm[:, None, :], X_pred_norm], axis=1)
+
+    X_preds_norm = X_pred_full_norm
+    if pred_mode == "pose":
+        X_gts_norm = jnp.array(eps_norm[:, :, state_dim:state_dim+pose_dim])
+    else:
+        X_gts_norm = jnp.array(eps_norm[:, :, :state_dim])
+    if abs_pose:
+        X_gts_norm = jnp.concatenate([X_gts_norm, eps_norm[:, :, state_dim+pose_dim:-action_dim]], axis=-1)  # [B,T,10]
+    pred_diff = X_preds_norm - X_gts_norm
+    mean_diff = jnp.mean(pred_diff ** 2, axis=(0, 2)) # mean over B
+    print(f"MSE: {mean_diff}")
+
+    # save to npz for further analysis
+    npz_path = os.path.join(model_dir, f"pred_eval.npz")
+    np.savez_compressed(npz_path,
+        X_preds=np.array(X_preds_norm),
+        X_gts=np.array(X_gts_norm),
+    )
+    print(f"Saved prediction npz to {npz_path}")
+
+    exit()
+
     X_pred_full_denorm = X_pred_full_norm * scale
     
     pred_diff = jnp.abs(X_pred_full_norm - x_gt_norm)[:, :, :T_dim]

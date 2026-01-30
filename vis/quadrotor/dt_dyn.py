@@ -65,25 +65,40 @@ def main(config: DictConfig):
     horizon = 10
     episodes = episodes[:, start_time_step:start_time_step + horizon + 1, :]  # [B, T+1, Dx+Du]
 
-    X_gt = episodes[..., :state_dim]
+    X_gts = episodes[..., :state_dim]
     U_gt = episodes[:, :-1, -action_dim:]
 
-    X_curr = X_gt[:, 0, :] # [B, Dx]
+    X_curr = X_gts[:, 0, :] # [B, Dx]
 
     X_preds = model.rollout(X_curr, U_gt)  # [B, T, Dx]
     X_preds = jnp.concatenate([X_curr[:, None, :], X_preds], axis=1)  # [B, T+1, Dx]
     U_gt = jnp.concatenate([U_gt, U_gt[:, -1:, :]], axis=1)  # [B, T+1, Du] for plotting
 
-    print(f"X error: {jnp.abs(X_gt - X_preds).mean()}")
+
+    pred_diff = X_preds - X_gts
+    mean_diff = jnp.mean(pred_diff ** 2, axis=(0, 2)) # mean over B
+    print(f"MSE: {mean_diff}")
+
+    # save to npz for further analysis
+    npz_path = os.path.join(model_dir, f"pred_eval.npz")
+    np.savez_compressed(npz_path,
+        X_preds=np.array(X_preds),
+        X_gts=np.array(X_gts),
+    )
+    print(f"Saved prediction npz to {npz_path}")
+
+    exit()
+
+    print(f"X error: {jnp.abs(pred_diff).mean()}")
     exit()
 
     out_dir = os.path.join(model_dir, "vis")
     os.makedirs(out_dir, exist_ok=True)
     n_samples = 5
     for i in range(n_samples):
-        plot_3d_trajectories(X_gt[i, :, :3][:, None], num_quads=1, dt=model.dt, out_path=os.path.join(out_dir, f"gt_trajectories_{i}.png"))
+        plot_3d_trajectories(X_gts[i, :, :3][:, None], num_quads=1, dt=model.dt, out_path=os.path.join(out_dir, f"gt_trajectories_{i}.png"))
         plot_3d_trajectories(X_preds[i, :, :3][:, None], num_quads=1, dt=model.dt, out_path=os.path.join(out_dir, f"pred_trajectories_{i}.png"))
-        plot_quad_states_actions(X_gt[i, :, :6], U_gt[i], dt=model.dt, out_path=os.path.join(out_dir, f"gt_states_vcmd_{i}.png"))
+        plot_quad_states_actions(X_gts[i, :, :6], U_gt[i], dt=model.dt, out_path=os.path.join(out_dir, f"gt_states_vcmd_{i}.png"))
         plot_quad_states_actions(X_preds[i, :, :6], U_gt[i], dt=model.dt, out_path=os.path.join(out_dir, f"pred_states_vcmd_{i}.png"))
 
 

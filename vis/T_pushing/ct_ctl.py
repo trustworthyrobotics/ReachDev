@@ -191,7 +191,28 @@ def main(config: DictConfig):
     # U_preds = U_gts_j
     # X_preds = X_preds_gt
 
-    X_preds = jnp.concatenate([X_curr[:, None, :], X_preds], axis=1) * scale  # [B,T, Dx]
+    X_preds_norm = jnp.concatenate([X_curr[:, None, :], X_preds], axis=1)
+    if pred_mode == "pose":
+        X_gts_norm = jnp.array(eps_norm[:, :, state_dim:state_dim+pose_dim])
+    else:
+        X_gts_norm = jnp.array(eps_norm[:, :, :state_dim])
+    if abs_pose:
+        X_gts_norm = jnp.concatenate([X_gts_norm, eps_norm[:, :, state_dim+pose_dim:-action_dim]], axis=-1)  # [B,T,10]
+    pred_diff = X_preds_norm - X_gts_norm
+    mean_diff = jnp.mean(pred_diff ** 2, axis=(0, 2)) # mean over B
+    print(f"MSE: {mean_diff}")
+
+    # save to npz for further analysis
+    npz_path = os.path.join(model_dir, f"pred_eval.npz")
+    np.savez_compressed(npz_path,
+        X_preds=np.array(X_preds_norm),
+        X_gts=np.array(X_gts_norm),
+    )
+    print(f"Saved prediction npz to {npz_path}")
+
+    exit()
+
+    X_preds = X_preds_norm * scale  # [B,T, Dx]
     if pred_mode == "pose":
         # renormalize angle in predicted poses
         X_preds = X_preds.at[:, :, pose_dim-1].set(X_preds[:, :, pose_dim-1] / scale)
