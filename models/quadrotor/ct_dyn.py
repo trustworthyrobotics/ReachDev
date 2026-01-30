@@ -29,7 +29,7 @@ class Continuous_Quad_Dynamics(eqx.Module):
         self.Du = data_cfg.get("ct_action_dim", 3)
         assert self.Dx == 12
         assert self.Du == 3 or self.Du == 4
-        self.frequency = float(data_cfg.get("ct_frequency", 60))
+        self.frequency = float(data_cfg.get("ct_frequency", 100))
         self.dt = 1 / self.frequency
         self.dt0 = self.dt / 5
         self.g = data_cfg.get("g", 9.81)
