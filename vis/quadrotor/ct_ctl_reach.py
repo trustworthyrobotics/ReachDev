@@ -84,7 +84,7 @@ def main(config: DictConfig):
     # n_reach_batch = 64
     select_samples = np.arange(n_reach_batch).tolist()
 
-    start_time_step = 20
+    start_time_step = 350
     horizon = 10
     episodes = episodes[select_samples, start_time_step:start_time_step + horizon + 1, :]  # [B, T+1, Dx+Du]
 
@@ -201,8 +201,8 @@ def main(config: DictConfig):
         sample_r_up=np.array(sample_r_up),
     )
     print(f"Saved reachability npz to {npz_path}")
-    print(f"Reachable set volume over {T_reach} steps: {reach_vols.mean(axis=0)}")
-    print(f"Sampled rollout volume over {T_reach} steps: {sample_vols.mean(axis=0)}")
+    print(f"Reachable set volume over {T_reach} steps: {jnp.quantile(reach_vols, 0.25, axis=0), jnp.quantile(reach_vols, 0.5, axis=0), jnp.quantile(reach_vols, 0.75, axis=0)}")
+    print(f"Sampled rollout volume over {T_reach} steps: {jnp.quantile(sample_vols, 0.25, axis=0), jnp.quantile(sample_vols, 0.5, axis=0), jnp.quantile(sample_vols, 0.75, axis=0)}")
 
     # print(f"X error: {jnp.abs(X_gt - X_preds).mean()}")
     # exit()

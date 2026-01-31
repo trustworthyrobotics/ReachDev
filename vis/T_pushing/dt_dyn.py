@@ -145,11 +145,11 @@ def main(config: DictConfig):
     U_norm = eps_norm[:, :-1, -action_dim:]                    # [B,T-1,2] normalized velocities
     if pred_mode == "state":
         T_dim = state_dim
-        x_gt_norm = jnp.array(eps_norm[:, :, :state_dim])                   # [B,T,8]    normalized state
+        X_gts_norm = jnp.array(eps_norm[:, :, :state_dim])                   # [B,T,8]    normalized state
     elif pred_mode == "pose":
         T_dim = pose_dim
-        x_gt_norm = jnp.array(eps_norm[:, :, state_dim:state_dim+pose_dim])                         # [B,T,3]     normalized state
-        x_gt_norm = x_gt_norm.at[:, :, -1].set(x_gt_norm[:, :, -1] * scale)  # denormalize angle
+        X_gts_norm = jnp.array(eps_norm[:, :, state_dim:state_dim+pose_dim])                         # [B,T,3]     normalized state
+        X_gts_norm = X_gts_norm.at[:, :, -1].set(X_gts_norm[:, :, -1] * scale)  # denormalize angle
         def transform_fn(pose):
             B, T, D = pose.shape
             pose = pose.reshape(-1, D)
@@ -159,9 +159,9 @@ def main(config: DictConfig):
         raise ValueError(f"Unknown pred_mode: {pred_mode}")
 
     if abs_pose:
-        x_gt_norm = jnp.concatenate([x_gt_norm, eps_norm[:, :, state_dim+pose_dim:-action_dim]], axis=-1)  # [B,T_dim+2]
+        X_gts_norm = jnp.concatenate([X_gts_norm, eps_norm[:, :, state_dim+pose_dim:-action_dim]], axis=-1)  # [B,T_dim+2]
 
-    x0_norm = x_gt_norm[:, 0, :]                         # [B,T_dim/T_dim+2]     normalized initial state
+    x0_norm = X_gts_norm[:, 0, :]                         # [B,T_dim/T_dim+2]     normalized initial state
 
     # ----------------- load model & rollout (batch) -----------------
     # rollout(x0: [B,Dx], U: [B,T-1,Du]) -> X_pred: [B,T-1,Dx]
@@ -170,12 +170,7 @@ def main(config: DictConfig):
     X_pred_full_norm = jnp.concatenate([x0_norm[:, None, :], X_pred_norm], axis=1)
 
     X_preds_norm = X_pred_full_norm
-    if pred_mode == "pose":
-        X_gts_norm = jnp.array(eps_norm[:, :, state_dim:state_dim+pose_dim])
-    else:
-        X_gts_norm = jnp.array(eps_norm[:, :, :state_dim])
-    if abs_pose:
-        X_gts_norm = jnp.concatenate([X_gts_norm, eps_norm[:, :, state_dim+pose_dim:-action_dim]], axis=-1)  # [B,T,10]
+
     pred_diff = X_preds_norm - X_gts_norm
     mean_diff = jnp.mean(pred_diff ** 2, axis=(0, 2)) # mean over B
     print(f"MSE: {mean_diff}")
@@ -192,7 +187,7 @@ def main(config: DictConfig):
 
     X_pred_full_denorm = X_pred_full_norm * scale
     
-    pred_diff = jnp.abs(X_pred_full_norm - x_gt_norm)[:, :, :T_dim]
+    pred_diff = jnp.abs(X_pred_full_norm - X_gts_norm)[:, :, :T_dim]
     mean_diff = jnp.mean(pred_diff, axis=(0)) # mean over B
     print(f"Mean absolute error per dim over time: {mean_diff}")
     exit()

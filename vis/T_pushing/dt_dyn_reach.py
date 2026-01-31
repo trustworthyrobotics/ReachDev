@@ -248,7 +248,7 @@ def main(config: DictConfig):
     n_reach_batch = eps_norm.shape[0]
     # selected_eps_ids = np.random.choice(eps_norm.shape[0], n_reach_batch, replace=False).tolist()
     selected_eps_ids = np.arange(n_reach_batch).tolist()
-    n_samples = n_samples * n_reach_batch
+    # n_samples = n_samples * n_reach_batch
 
 
     if pred_mode == "state":

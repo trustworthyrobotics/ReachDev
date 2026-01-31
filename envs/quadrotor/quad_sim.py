@@ -28,7 +28,9 @@ class Quad_Sim:
         self.num_quads = num_quads
         if init_poses is not None:
             assert self.num_quads == init_poses.shape[0]
-        self.curr_states = jnp.array(init_poses)  # (num_quads, Dx)
+            self.curr_states = jnp.array(init_poses)  # (num_quads, Dx)
+        else:
+            self.curr_states = jnp.zeros((self.num_quads, self.Dx))  # (num_quads, Dx)
         self.curr_actions = jnp.zeros((self.num_quads, self.Du))  # (num_quads, Du)
         self.SAVE_IMG = data_config.get("gif", False)
         self.reset(init_poses, target_poses)

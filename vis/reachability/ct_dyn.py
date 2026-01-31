@@ -48,14 +48,14 @@ ct_dyn = Continuous_Quad_Dynamics({})
 
 key = jrandom.PRNGKey(0)
 
-reach_eps = 0.001
+reach_eps = 0.5
 # n_reach_batch = 16
-n_reach_batch = 64
+n_reach_batch = 128
 print(f"reach_eps: {reach_eps}, n_reach_batch: {n_reach_batch}")
 
 # random input
 key, subkey = jrandom.split(key)
-z = jrandom.normal(subkey, (n_reach_batch, state_dim))
+z = jrandom.normal(subkey, (n_reach_batch, state_dim)) + 2
 
 z_base_lo = z - reach_eps
 z_base_up = z + reach_eps
@@ -74,7 +74,7 @@ frr_stop_ratio = 0.95
 sr_window_size = 100
 CONFIG["TRUNCATE_TO_AFFINE"] = True
 n_dyn_steps_per_ctl = 1
-dyn_frequency = 100
+dyn_frequency = 50
 
 methods = ['immrax', 'ours']
 T_reach_list = [2, 4, 6, 8, 10]
@@ -124,7 +124,7 @@ for method in methods:
 
         reach_vols = calculate_volume(r_lo_agg[..., :state_dim], r_up_agg[..., :state_dim], union_init=False, mode="sum", keep_time=True, keep_batch=True)
 
-        print("Reach vols:", reach_vols.mean(axis=0))  # [T+1,]
+        print("Reach vols:", jnp.median(reach_vols, axis=0))  # [T+1,]
 
         result_dict[method][T_reach] = {
             'compile_time': compile_time,

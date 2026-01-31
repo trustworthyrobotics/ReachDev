@@ -31,6 +31,7 @@ data:
   tau_phi: 0.0
   acc_limits: 1.0  # max acceleration for generating velocity commands
   vel_limits: 2.0  # max velocity for generating velocity commands
+  init_noise: 1
 
   dt_dyn:
     out_path: "output/data/${settings.task_name}_freq${data.dt_dyn.frequency}"

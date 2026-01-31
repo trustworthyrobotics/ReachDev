@@ -29,7 +29,7 @@ def main(config: DictConfig) -> None:
     num_episodes = data_config[data_mode]["num_episodes"]
     num_batches = int(np.ceil(num_episodes / batch_size))
 
-    training = config["data"].get("training", True) # generate training or testing data
+    training = data_config.get("training", True) # generate training or testing data
     key = jax.random.PRNGKey(config["settings"].get("seed", 0))
     out_path = hydra.utils.to_absolute_path(data_config[data_mode]["out_path"])
     os.makedirs(out_path, exist_ok=True)
@@ -49,8 +49,13 @@ def main(config: DictConfig) -> None:
     sample_fn_jit = jax.jit(sample_vel_cmd_sequence, static_argnames=("num_quads", "dt", "n_steps"))
 
     for batch_idx in tqdm(range(num_batches)):
+        if training:
+            env.reset()
+        else:
+            key, subkey = jax.random.split(key)
+            init_poses = jax.random.uniform(subkey, (env.num_quads, env.Dx), minval=-1.0, maxval=1.0) * data_config.get("init_noise", 0.5)
+            env.reset(init_poses=init_poses)
         key, subkey = jax.random.split(key)
-        env.reset()
         vel_cmd_seq = sample_fn_jit(subkey, env.num_quads, dt=env.dt, n_steps=episode_length, amax=acc_limits, v_bounds=vel_limits)
         eps_list = []
         for step in range(episode_length):
