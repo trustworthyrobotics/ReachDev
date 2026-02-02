@@ -7,7 +7,7 @@ import yaml
 import os
 import pickle
 import jax
-# jax.config.update('jax_platforms', 'cpu')
+jax.config.update('jax_platforms', 'cpu')
 jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 from jax import random as jrandom
@@ -277,10 +277,10 @@ def main(config: DictConfig):
                                   n_steps_per_control=round(dyn_frequency/train_config["ctl_frequency"]), step_size=1/dyn_frequency,
                                   init_remainder=init_remainder, frr_rounds=frr_rounds, frr_stop_ratio=frr_stop_ratio, sr_window_size=sr_window_size)
 
-    selected_eps_ids = [1,2]
+    selected_eps_ids = [1]
     n_reach_batch = len(selected_eps_ids)
 
-    n_reach_batch = eps_norm.shape[0]
+    n_reach_batch = 16
     # selected_eps_ids = np.random.choice(eps_norm.shape[0], n_reach_batch, replace=False).tolist()
     selected_eps_ids = np.arange(n_reach_batch).tolist()
     # n_samples = n_samples * n_reach_batch
@@ -312,7 +312,7 @@ def main(config: DictConfig):
     reference_seq_per_ctl = reference_seq.repeat(T_per_tgt, axis=1)  # [1, T, Dx(+Du)]
 
     start_time = time.time()
-    # reach_eps = 0.02
+    reach_eps = 0.03
     state_init_lo = state_init - reach_eps
     state_init_up = state_init + reach_eps
     if abs_pose:
@@ -360,6 +360,12 @@ def main(config: DictConfig):
     #     # renormalize angle in predicted poses
     #     X_preds = transform_fn(X_preds) * scale
 
+    U_preds = np.array(U_preds)
+    U_preds = np.concatenate([U_preds, action_seq[:, -1:, -action_dim:].repeat(n_samples, axis=0)], axis=1)  # [B,T, Du]
+    pusher_pos_curr = np.array(pusher_pos_init).repeat(n_samples, axis=0)  # [B, 2]
+    pusher_pos_preds = np.cumsum(np.concatenate([pusher_pos_curr[:, None, :], U_preds[:, :-1, :] * float(ct_dyn.dt)], axis=1), axis=1)  # [B,T,2]
+    
+
     # U_gts_j = action_seq.repeat(n_samples, axis=0)  # [B,T, Du]
     # X_preds_gt = jnp.concatenate([X_curr[:, None, :], ct_dyn.rollout(X_curr, U_gts_j)], axis=1)  # [B,T, Dx]
     # X_preds_tgt = X_preds[:, T_per_tgt:T_reach+1:T_per_tgt, :]  # [B, n_track, Dx]
@@ -394,121 +400,107 @@ def main(config: DictConfig):
     print(f"Sampled rollout volume over {T_reach} steps: {sample_vols.mean(axis=0)}")
 
 
-    if n_reach_batch > 1:
-        exit()
+    r_lo_agg_all = np.array(r_lo_agg)
+    r_up_agg_all = np.array(r_up_agg)
+    sample_rollout_all = np.array(sample_rollout)
+    pusher_pos_seq_all = np.array(pusher_pos_seq)
+    pusher_pos_preds_all = np.array(pusher_pos_preds)
+    
+    sample_state_init_all = np.array(sample_state_init)
 
-    X_preds = np.array(X_preds)
-    U_preds = np.array(U_preds)
-    U_preds = np.concatenate([jnp.zeros_like(U_preds[:, :1, :]), U_preds], axis=1)  # [B,T, Du], repeat last action for placeholder
-    pusher_pos_curr = pusher_pos_init.repeat(n_samples, axis=0)  # [B,2]
-    pusher_pos_preds = np.cumsum(np.concatenate([pusher_pos_curr[:, None, :], U_preds[:, :-1, :] * float(ct_dyn.dt)], axis=1), axis=1)  # [B,T,2]
+    # if n_reach_batch > 1:
+    #     exit()
+    for i in range(n_reach_batch):
+        r_lo_agg = r_lo_agg_all[i:i+1, :, :act_state_dim]  # [1, T+1, Dx]
+        r_up_agg = r_up_agg_all[i:i+1, :, :act_state_dim]  # [1, T+1, Dx]
+        sample_rollout = sample_rollout_all[i:i+1, :, :, :act_state_dim]  # [1, n_per_partition, T+1, Dx]
+        pusher_pos_seq = pusher_pos_seq_all[i:i+1, :, :]  # [1, T+1, 2]
+        pusher_pos_preds = pusher_pos_preds_all[i*n_samples:(i+1)*n_samples, :, :]  # [n_samples, T, 2]
+        sample_state_init = sample_state_init_all[i * (n_samples):(i + 1) * (n_samples), :]  # [n_samples//N, Dx]
+        out_dir = os.path.join(model_dir, f"{selected_eps_ids[i]}_reach_eps{reach_eps}_steps{T_reach}_{n_split}_{pred_mode}")
+        os.makedirs(out_dir, exist_ok=True)
 
-    out_dir = os.path.join(model_dir, f"{selected_eps_ids[0]}_reach_eps{reach_eps}_steps{T_reach}_{n_split}_{pred_mode}")
-    os.makedirs(out_dir, exist_ok=True)
+        # # save r_lo, r_up, sample_rollout, pusher_pos_seq, scale, window_size
+        # arch_file_name = os.path.join(out_dir, "reach_data.npz")
+        # np.savez(arch_file_name, r_lo=np.array(r_lo_agg), r_up=np.array(r_up_agg), sample_rollout=np.array(sample_rollout), pusher_pos_seq=np.array(pusher_pos_seq), scale=scale, window_size=window_size)
+        # # exit()
+        # r_lo_agg, r_up_agg, sample_rollout, pusher_pos_seq, scale, window_size = np.load(arch_file_name).values()
 
-    # # save r_lo, r_up, sample_rollout, pusher_pos_seq, scale, window_size
-    # arch_file_name = os.path.join(out_dir, "reach_data.npz")
-    # np.savez(arch_file_name, r_lo=np.array(r_lo_agg), r_up=np.array(r_up_agg), sample_rollout=np.array(sample_rollout), pusher_pos_seq=np.array(pusher_pos_seq), scale=scale, window_size=window_size)
-    # # exit()
-    # r_lo_agg, r_up_agg, sample_rollout, pusher_pos_seq, scale, window_size = np.load(arch_file_name).values()
+        if pred_mode == "state":
+            outfile = os.path.join(out_dir, f"reach_pushing.png")
 
-    if pred_mode == "state":
-        outfile = os.path.join(out_dir, f"reach_pushing.png")
+            plot(r_lo_agg, r_up_agg, sample_rollout, pusher_pos_seq, scale, window_size, outfile)
+        elif pred_mode == "pose":
+            sample_r = r_lo_agg + (r_up_agg - r_lo_agg) * np.random.uniform(size=(n_samples, *r_lo_agg.shape[1:]))
+            outfile = os.path.join(out_dir, f"reach.png")
+            plot_v2(np.array(transform_fn(jnp.array(sample_r))), pusher_pos_seq, scale, window_size, outfile, abs_pose)
+            outfile = os.path.join(out_dir, f"sample.png")
+            plot_v2(np.array(transform_fn(jnp.array(sample_rollout).squeeze(0))), pusher_pos_seq, scale, window_size, outfile, abs_pose)
 
-        plot(r_lo_agg, r_up_agg, X_preds, pusher_pos_seq, scale, window_size, outfile)
-    elif pred_mode == "pose":
-        assert abs_pose == True, "only support rel pose reach viz for now"
-        sample_r = r_lo_agg + (r_up_agg - r_lo_agg) * np.random.uniform(size=(n_samples, *r_lo_agg.shape[1:]))
-        outfile = os.path.join(out_dir, f"reach.png")
-        pusher_pos_reach = sample_r[:, :, -4:-2]  # [n_samples, T+1, 2]
-        plot_v2(np.array(transform_fn(jnp.array(sample_r))), pusher_pos_reach, scale, window_size, outfile, abs_pose=abs_pose)
-        
-        outfile = os.path.join(out_dir, f"sample.png")
-        plot_v2(np.array(transform_fn(jnp.array(X_preds_norm))), pusher_pos_preds, scale, window_size, outfile, abs_pose=abs_pose)
+            param_dict = {"stem_size": data_config["stem_size"], 
+                        "bar_size": data_config["bar_size"], 
+                        "pusher_size": data_config["pusher_size"],
+                        "save_img": True,
+                        "enable_vis": False,
+                        "window_size": data_config["window_size"],}
 
-        # param_dict = {"stem_size": data_config["stem_size"], 
-        #             "bar_size": data_config["bar_size"], 
-        #             "pusher_size": data_config["pusher_size"],
-        #             "save_img": True,
-        #             "enable_vis": False,
-        #             "window_size": data_config["window_size"],}
+            sample_env = []
+            sample_state_init = np.array(sample_state_init) * scale
+            sample_state_init[:, pose_dim-1] = sample_state_init[:, pose_dim-1] / scale  # angle back to normalized
+            pusher_pos_seq_denorm = np.array(pusher_pos_seq) * scale
+            for i in range(n_samples):
+                init_pose = sample_state_init[i, :pose_dim]
+                pusher_pos = pusher_pos_seq_denorm[0, 0, :]
+                if not abs_pose:
+                    init_pose[:2] = init_pose[:2] + pusher_pos[:2]
+                env = T_Sim(param_dict=param_dict, init_poses=[init_pose], pusher_pos=pusher_pos)
+                env_output = []
+                
+                for j in range(2):
+                    env_dict = env.update((pusher_pos[0], pusher_pos[1]), rel=not abs_pose)
+                env_output.append(np.concatenate([env_dict["com_pos"] / scale, env_dict["angle"]], axis=0))
+                for j in range(T_reach):
+                    pusher_pos = pusher_pos_seq_denorm[0, j+1, :]
+                    env_dict = env.update((pusher_pos[0], pusher_pos[1]), rel=not abs_pose)
+                    env_output.append(np.concatenate([env_dict["com_pos"] / scale, env_dict["angle"]], axis=0))
+                sample_env.append(np.array(env_output))
 
-        # sample_env = []
-        # sample_state_init = np.array(sample_state_init) * scale
-        # sample_state_init[:, pose_dim-1] = sample_state_init[:, pose_dim-1] / scale  # angle back to normalized
-        # pusher_pos_seq_denorm = np.array(pusher_pos_seq) * scale
-        # for i in range(n_samples):
-        #     init_pose = sample_state_init[i, :pose_dim]
-        #     pusher_pos = pusher_pos_seq_denorm[0, 0, :]
-        #     if not abs_pose:
-        #         init_pose[:2] = init_pose[:2] + pusher_pos[:2]
-        #     env = T_Sim(param_dict=param_dict, init_poses=[init_pose], pusher_pos=pusher_pos)
-        #     env_output = []
+            outfile = os.path.join(out_dir, f"env.png")
+            plot_v2(np.array(transform_fn(jnp.array(sample_env))), pusher_pos_seq, scale, window_size, outfile, abs_pose)
 
-        #     for j in range(2):
-        #         env_dict = env.update((pusher_pos[0], pusher_pos[1]), rel=not abs_pose)
-        #     env_output.append(np.concatenate([env_dict["com_pos"] / scale, env_dict["angle"]], axis=0))
-        #     for j in range(T_reach):
-        #         pusher_pos = pusher_pos_seq_denorm[0, j+1, :]
-        #         env_dict = env.update((pusher_pos[0], pusher_pos[1]), rel=not abs_pose)
-        #         env_output.append(np.concatenate([env_dict["com_pos"] / scale, env_dict["angle"]], axis=0))
-        #     sample_env.append(np.array(env_output))
+            # save npz
+            arch_file_name = os.path.join(out_dir, "reach_data.npz")
+            np.savez(arch_file_name, 
+                     r_lo=np.array(r_lo_agg), 
+                     r_up=np.array(r_up_agg),
+                     sample_r=np.array(sample_r),
+                     sample_rollout=np.array(sample_rollout).squeeze(0),
+                     sample_env=np.array(sample_env),
+                     pusher_pos_seq=np.array(pusher_pos_seq),
+                     pusher_pos_preds=np.array(pusher_pos_preds),
+            )
 
-        # outfile = os.path.join(out_dir, f"env.png")
-        # plot_v2(np.array(transform_fn(jnp.array(sample_env))), pusher_pos_seq, scale, window_size, outfile, abs_pose=abs_pose)
 
-        # norm_samples = (raw_samples * 2 - 1).reshape(-1, act_state_dim)  # [n_partitions * n_per_partition (1), Dx], in [-1, 1]
-        # norm_lo = norm_up = jnp.concatenate([jnp.zeros((norm_samples.shape[0], 1)), norm_samples, jnp.zeros((norm_samples.shape[0], action_dim))], axis=-1).repeat(T_reach+1, axis=0)  # [n_samples*(T_reach+1), 1+Dx+Du]
+            # norm_samples = (raw_samples * 2 - 1).reshape(-1, act_state_dim)  # [n_partitions * n_per_partition (1), Dx], in [-1, 1]
+            # norm_lo = norm_up = jnp.concatenate([jnp.zeros((norm_samples.shape[0], 1)), norm_samples, jnp.zeros((norm_samples.shape[0], action_dim))], axis=-1).repeat(T_reach+1, axis=0)  # [n_samples*(T_reach+1), 1+Dx+Du]
 
-        # taylor_range = x_nexts_all.eval_interval(norm_lo, norm_up)
-        # taylor_lo, taylor_up = taylor_range.lo[:, :act_state_dim], taylor_range.hi[:, :act_state_dim]
-        # taylor_lo = taylor_lo.reshape(-1, T_reach+1, act_state_dim)
-        # taylor_up = taylor_up.reshape(-1, T_reach+1, act_state_dim)
-        # print(f"max diff:{np.max(taylor_up - taylor_lo, axis=(0))}")
+            # taylor_range = x_nexts_all.eval_interval(norm_lo, norm_up)
+            # taylor_lo, taylor_up = taylor_range.lo[:, :act_state_dim], taylor_range.hi[:, :act_state_dim]
+            # taylor_lo = taylor_lo.reshape(-1, T_reach+1, act_state_dim)
+            # taylor_up = taylor_up.reshape(-1, T_reach+1, act_state_dim)
+            # print(f"max diff:{np.max(taylor_up - taylor_lo, axis=(0))}")
 
-        # outfile = os.path.join(out_dir, f"reach_sample.png")
-        # plot_v2(np.array(transform_fn((taylor_lo+taylor_up)/2)), pusher_pos_seq, scale, window_size, outfile, abs_pose=abs_pose)
+            # outfile = os.path.join(out_dir, f"reach_sample.png")
+            # plot_v2(np.array(transform_fn((taylor_lo+taylor_up)/2)), pusher_pos_seq, scale, window_size, outfile, abs_pose)
 
-    trajs = np.concatenate([X_preds, U_preds], axis=-1)  # [B, T+1, Dx+Du]
-
-    agg_L = np.max(r_lo_agg, axis=0)[None]  # [1, T+1, Dx+Du]
-    agg_U = np.min(r_up_agg, axis=0)[None]  # [1, T+1, Dx+Du]
-    tol = 1e-5
-    violations = jnp.logical_or(trajs < agg_L - tol, trajs > agg_U + tol)  # [B,T,D]
-    violations = violations[:, 1:, :]  # ignore t=0
-    for i in range(act_state_dim + action_dim):
-        n_viol = int(jnp.sum(violations[:, :, i]))
-        if n_viol > 0:
-            print(f"[warning] x{i}: {n_viol} violations from sampled trajectories.")
-
-    for idx in range(act_state_dim + action_dim):
-        outfile = os.path.join(out_dir, f"reach_{idx}.png")
-        visualize_flowpipe_time(
-            times=ts,
-            lowers=r_lo_agg,
-            uppers=r_up_agg,
-            trajs=trajs,
-            state_idx=idx,
-            file_name=outfile,
-            print_boxes=False,
-            draw_boxes=True,
-            aggregate_partitions=True,
-            stride=1,
-            draw_traj=True,
-        )
-
-    # with jax.disable_jit():
-    #     _, trajs = reach_analyzer.simulate(
-    #         z_init_lo_agg, z_init_up_agg, n_total_steps=T_reach,
-    #         n_samples=n_samples, reference_seq=reference_seq_per_ctl[0])
-
+    # action_seq = np.concatenate([np.zeros((n_reach_batch, 1, action_dim)), np.array(action_seq)], axis=1)  # [N, T+1, Du]
     # for idx in range(act_state_dim + action_dim):
-    #     outfile = os.path.join(out_dir, f"reach_t_{idx}.png")
+    #     outfile = os.path.join(out_dir, f"reach_{idx}.png")
     #     visualize_flowpipe_time(
     #         times=ts,
-    #         lowers=r_lo,
-    #         uppers=r_up,
-    #         trajs=trajs,
+    #         lowers=r_lo_agg,
+    #         uppers=r_up_agg,
+    #         trajs=np.concatenate([sample_rollout, action_seq.repeat(sample_rollout.shape[0], axis=0)], axis=-1),
     #         state_idx=idx,
     #         file_name=outfile,
     #         print_boxes=False,

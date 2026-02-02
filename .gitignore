@@ -6,3 +6,4 @@ outputs/
 wandb/
 *.sh
 experiments/
+exp_qual/

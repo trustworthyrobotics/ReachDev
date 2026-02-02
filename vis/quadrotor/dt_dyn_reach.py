@@ -13,6 +13,8 @@ from omegaconf import DictConfig, open_dict
 import yaml
 import time
 
+from envs.quadrotor.quad_sim import Quad_Sim_DT
+
 sys.path.append('CROWN_Reach')
 from CROWN_Reach.src.reachability import DT_Plan_Reach
 from CROWN_Reach.src.utils.box_set import calculate_volume, prepare_initial_set_v2
@@ -74,7 +76,7 @@ def main(config: DictConfig):
     # select_samples = [0, 1]
     # n_reach_batch = len(select_samples)
 
-    n_reach_batch = episodes.shape[0]
+    n_reach_batch = 10
     select_samples = np.arange(n_reach_batch).tolist()
 
     start_time_step = 50
@@ -161,27 +163,60 @@ def main(config: DictConfig):
     # print(f"X error: {jnp.abs(X_gt - X_preds).mean()}")
     # exit()
 
-    if n_reach_batch > 1:
-        exit()
+    # if n_reach_batch > 1:
+    #     exit()
 
     out_dir = os.path.join(model_dir, f"vis_reach")
     os.makedirs(out_dir, exist_ok=True)
 
-    for idx in range(model.Dx + action_dim):
-        outfile = os.path.join(out_dir, f"reach_{idx}.png")
-        visualize_flowpipe_time(
-            times=ts,
-            lowers=r_lo_agg,
-            uppers=r_up_agg,
-            trajs=np.concatenate([X_preds, U_gt], axis=-1),
-            state_idx=idx,
-            file_name=outfile,
-            print_boxes=False,
-            draw_boxes=True,
-            aggregate_partitions=True,
-            stride=1,
-            draw_traj=True,
-        )
+    env_class = Quad_Sim_DT  
+    data_config = config["data"]  
+    env = env_class(data_config=data_config, num_quads=X_curr.shape[0])
+    env.reset(init_poses=X_curr)
+
+    state_list = []
+    for step in range(horizon):
+        v_cmds = U_gt[:, step + 1, :]  # (num_quads, 3)
+        env_dict = env.update(v_cmds, n_sim_time=env.dt)
+        state_list.append(env_dict["state"])
+    X_gt_env = jnp.stack(state_list, axis=1)  # (num_quads, horizon, Dx)
+    X_gt_env = jnp.concatenate([X_curr[:, None, :], X_gt_env], axis=1)  # (num_quads, horizon+1, Dx)
+    X_gt_env = X_gt_env.reshape(n_reach_batch, -1, horizon + 1, state_dim)
+
+    
+
+    # for idx in range(model.Dx + action_dim):
+    #     outfile = os.path.join(out_dir, f"reach_{idx}.png")
+    #     visualize_flowpipe_time(
+    #         times=ts,
+    #         lowers=r_lo_agg,
+    #         uppers=r_up_agg,
+    #         trajs=np.concatenate([X_preds, U_gt], axis=-1),
+    #         state_idx=idx,
+    #         file_name=outfile,
+    #         print_boxes=False,
+    #         draw_boxes=True,
+    #         aggregate_partitions=True,
+    #         stride=1,
+    #         draw_traj=True,
+    #     )
+
+    # save pkl for further analysis
+    pkl_path = os.path.join(out_dir, f"reach_eval.pkl")
+    with open(pkl_path, "wb") as f:
+        pickle.dump({
+            "reach_vols": reach_vols,
+            "sample_vols": sample_vols,
+            "reach_r_lo": r_lo_agg,
+            "reach_r_up": r_up_agg,
+            "sample_r_lo": sample_r_lo,
+            "sample_r_up": sample_r_up,
+            "sample_rollout": sample_rollout,
+            "X_gt": X_gt_env,
+        }, f)
+    print(f"Saved reachability pkl to {pkl_path}")
+
+
 
     n_vis = min(1, len(select_samples))
     for i in range(n_vis):

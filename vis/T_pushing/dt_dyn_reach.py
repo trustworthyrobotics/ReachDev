@@ -242,12 +242,12 @@ def main(config: DictConfig):
     n_splits = n_split ** (state_dim if pred_mode == "state" else pose_dim)
     n_samples = 64 if n_splits == 1 else n_splits
 
-    # selected_eps_ids = [43, 44]
-    # n_reach_batch = len(selected_eps_ids)
+    selected_eps_ids = [43, 44]
+    n_reach_batch = len(selected_eps_ids)
 
-    n_reach_batch = eps_norm.shape[0]
-    # selected_eps_ids = np.random.choice(eps_norm.shape[0], n_reach_batch, replace=False).tolist()
-    selected_eps_ids = np.arange(n_reach_batch).tolist()
+    # n_reach_batch = eps_norm.shape[0]
+    # # selected_eps_ids = np.random.choice(eps_norm.shape[0], n_reach_batch, replace=False).tolist()
+    # selected_eps_ids = np.arange(n_reach_batch).tolist()
     # n_samples = n_samples * n_reach_batch
 
 
@@ -319,89 +319,111 @@ def main(config: DictConfig):
     print(f"Reachable set volume over {T_reach} steps: {reach_vols.mean(axis=0)}")
     print(f"Sampled rollout volume over {T_reach} steps: {sample_vols.mean(axis=0)}")
 
+    r_lo_agg_all = np.array(r_lo_agg)
+    r_up_agg_all = np.array(r_up_agg)
+    sample_rollout_all = np.array(sample_rollout)
+    pusher_pos_seq_all = np.array(pusher_pos_seq)
+    sample_state_init_all = np.array(sample_state_init)
 
-    if n_reach_batch > 1:
-        exit()
+    # if n_reach_batch > 1:
+    #     exit()
+    for i in range(n_reach_batch):
+        r_lo_agg = r_lo_agg_all[i:i+1, :, :act_state_dim]  # [1, T+1, Dx]
+        r_up_agg = r_up_agg_all[i:i+1, :, :act_state_dim]  # [1, T+1, Dx]
+        sample_rollout = sample_rollout_all[i:i+1, :, :, :act_state_dim]  # [1, n_per_partition, T+1, Dx]
+        pusher_pos_seq = pusher_pos_seq_all[i:i+1, :, :]  # [1, T+1, 2]
+        sample_state_init = sample_state_init_all[i * (n_samples):(i + 1) * (n_samples), :]  # [n_samples//N, Dx]
+        out_dir = os.path.join(model_dir, f"{selected_eps_ids[i]}_reach_eps{reach_eps}_steps{T_reach}_{n_split}_{pred_mode}")
+        os.makedirs(out_dir, exist_ok=True)
 
-    out_dir = os.path.join(model_dir, f"{selected_eps_ids[0]}_reach_eps{reach_eps}_steps{T_reach}_{n_split}_{pred_mode}")
-    os.makedirs(out_dir, exist_ok=True)
+        # # save r_lo, r_up, sample_rollout, pusher_pos_seq, scale, window_size
+        # arch_file_name = os.path.join(out_dir, "reach_data.npz")
+        # np.savez(arch_file_name, r_lo=np.array(r_lo_agg), r_up=np.array(r_up_agg), sample_rollout=np.array(sample_rollout), pusher_pos_seq=np.array(pusher_pos_seq), scale=scale, window_size=window_size)
+        # # exit()
+        # r_lo_agg, r_up_agg, sample_rollout, pusher_pos_seq, scale, window_size = np.load(arch_file_name).values()
 
-    # # save r_lo, r_up, sample_rollout, pusher_pos_seq, scale, window_size
-    # arch_file_name = os.path.join(out_dir, "reach_data.npz")
-    # np.savez(arch_file_name, r_lo=np.array(r_lo_agg), r_up=np.array(r_up_agg), sample_rollout=np.array(sample_rollout), pusher_pos_seq=np.array(pusher_pos_seq), scale=scale, window_size=window_size)
-    # # exit()
-    # r_lo_agg, r_up_agg, sample_rollout, pusher_pos_seq, scale, window_size = np.load(arch_file_name).values()
+        if pred_mode == "state":
+            outfile = os.path.join(out_dir, f"reach_pushing.png")
 
-    if pred_mode == "state":
-        outfile = os.path.join(out_dir, f"reach_pushing.png")
+            plot(r_lo_agg, r_up_agg, sample_rollout, pusher_pos_seq, scale, window_size, outfile)
+        elif pred_mode == "pose":
+            sample_r = r_lo_agg + (r_up_agg - r_lo_agg) * np.random.uniform(size=(n_samples, *r_lo_agg.shape[1:]))
+            outfile = os.path.join(out_dir, f"reach.png")
+            plot_v2(np.array(transform_fn(jnp.array(sample_r))), pusher_pos_seq, scale, window_size, outfile, abs_pose)
+            outfile = os.path.join(out_dir, f"sample.png")
+            plot_v2(np.array(transform_fn(jnp.array(sample_rollout).squeeze(0))), pusher_pos_seq, scale, window_size, outfile, abs_pose)
 
-        plot(r_lo_agg, r_up_agg, sample_rollout, pusher_pos_seq, scale, window_size, outfile)
-    elif pred_mode == "pose":
-        sample_r = r_lo_agg + (r_up_agg - r_lo_agg) * np.random.uniform(size=(n_samples, *r_lo_agg.shape[1:]))
-        outfile = os.path.join(out_dir, f"reach.png")
-        plot_v2(np.array(transform_fn(jnp.array(sample_r))), pusher_pos_seq, scale, window_size, outfile, abs_pose)
-        outfile = os.path.join(out_dir, f"sample.png")
-        plot_v2(np.array(transform_fn(jnp.array(sample_rollout))), pusher_pos_seq, scale, window_size, outfile, abs_pose)
+            param_dict = {"stem_size": data_config["stem_size"], 
+                        "bar_size": data_config["bar_size"], 
+                        "pusher_size": data_config["pusher_size"],
+                        "save_img": True,
+                        "enable_vis": False,
+                        "window_size": data_config["window_size"],}
 
-        param_dict = {"stem_size": data_config["stem_size"], 
-                    "bar_size": data_config["bar_size"], 
-                    "pusher_size": data_config["pusher_size"],
-                    "save_img": True,
-                    "enable_vis": False,
-                    "window_size": data_config["window_size"],}
-
-        sample_env = []
-        sample_state_init = np.array(sample_state_init) * scale
-        sample_state_init[:, pose_dim-1] = sample_state_init[:, pose_dim-1] / scale  # angle back to normalized
-        pusher_pos_seq_denorm = np.array(pusher_pos_seq) * scale
-        for i in range(n_samples):
-            init_pose = sample_state_init[i, :pose_dim]
-            pusher_pos = pusher_pos_seq_denorm[0, 0, :]
-            if not abs_pose:
-                init_pose[:2] = init_pose[:2] + pusher_pos[:2]
-            env = T_Sim(param_dict=param_dict, init_poses=[init_pose], pusher_pos=pusher_pos)
-            env_output = []
-            
-            for j in range(2):
-                env_dict = env.update((pusher_pos[0], pusher_pos[1]), rel=not abs_pose)
-            env_output.append(np.concatenate([env_dict["com_pos"] / scale, env_dict["angle"]], axis=0))
-            for j in range(T_reach):
-                pusher_pos = pusher_pos_seq_denorm[0, j+1, :]
-                env_dict = env.update((pusher_pos[0], pusher_pos[1]), rel=not abs_pose)
+            sample_env = []
+            sample_state_init = np.array(sample_state_init) * scale
+            sample_state_init[:, pose_dim-1] = sample_state_init[:, pose_dim-1] / scale  # angle back to normalized
+            pusher_pos_seq_denorm = np.array(pusher_pos_seq) * scale
+            for i in range(n_samples):
+                init_pose = sample_state_init[i, :pose_dim]
+                pusher_pos = pusher_pos_seq_denorm[0, 0, :]
+                if not abs_pose:
+                    init_pose[:2] = init_pose[:2] + pusher_pos[:2]
+                env = T_Sim(param_dict=param_dict, init_poses=[init_pose], pusher_pos=pusher_pos)
+                env_output = []
+                
+                for j in range(2):
+                    env_dict = env.update((pusher_pos[0], pusher_pos[1]), rel=not abs_pose)
                 env_output.append(np.concatenate([env_dict["com_pos"] / scale, env_dict["angle"]], axis=0))
-            sample_env.append(np.array(env_output))
+                for j in range(T_reach):
+                    pusher_pos = pusher_pos_seq_denorm[0, j+1, :]
+                    env_dict = env.update((pusher_pos[0], pusher_pos[1]), rel=not abs_pose)
+                    env_output.append(np.concatenate([env_dict["com_pos"] / scale, env_dict["angle"]], axis=0))
+                sample_env.append(np.array(env_output))
 
-        outfile = os.path.join(out_dir, f"env.png")
-        plot_v2(np.array(transform_fn(jnp.array(sample_env))), pusher_pos_seq, scale, window_size, outfile, abs_pose)
+            outfile = os.path.join(out_dir, f"env.png")
+            plot_v2(np.array(transform_fn(jnp.array(sample_env))), pusher_pos_seq, scale, window_size, outfile, abs_pose)
 
-        # norm_samples = (raw_samples * 2 - 1).reshape(-1, act_state_dim)  # [n_partitions * n_per_partition (1), Dx], in [-1, 1]
-        # norm_lo = norm_up = jnp.concatenate([jnp.zeros((norm_samples.shape[0], 1)), norm_samples, jnp.zeros((norm_samples.shape[0], action_dim))], axis=-1).repeat(T_reach+1, axis=0)  # [n_samples*(T_reach+1), 1+Dx+Du]
+            # save npz
+            arch_file_name = os.path.join(out_dir, "reach_data.npz")
+            np.savez(arch_file_name, 
+                     r_lo=np.array(r_lo_agg), 
+                     r_up=np.array(r_up_agg),
+                     sample_r=np.array(sample_r),
+                     sample_rollout=np.array(sample_rollout).squeeze(0),
+                     sample_env=np.array(sample_env),
+                     pusher_pos_seq=np.array(pusher_pos_seq),
+            )
 
-        # taylor_range = x_nexts_all.eval_interval(norm_lo, norm_up)
-        # taylor_lo, taylor_up = taylor_range.lo[:, :act_state_dim], taylor_range.hi[:, :act_state_dim]
-        # taylor_lo = taylor_lo.reshape(-1, T_reach+1, act_state_dim)
-        # taylor_up = taylor_up.reshape(-1, T_reach+1, act_state_dim)
-        # print(f"max diff:{np.max(taylor_up - taylor_lo, axis=(0))}")
 
-        # outfile = os.path.join(out_dir, f"reach_sample.png")
-        # plot_v2(np.array(transform_fn((taylor_lo+taylor_up)/2)), pusher_pos_seq, scale, window_size, outfile, abs_pose)
+            # norm_samples = (raw_samples * 2 - 1).reshape(-1, act_state_dim)  # [n_partitions * n_per_partition (1), Dx], in [-1, 1]
+            # norm_lo = norm_up = jnp.concatenate([jnp.zeros((norm_samples.shape[0], 1)), norm_samples, jnp.zeros((norm_samples.shape[0], action_dim))], axis=-1).repeat(T_reach+1, axis=0)  # [n_samples*(T_reach+1), 1+Dx+Du]
 
-    action_seq = np.concatenate([np.zeros((n_reach_batch, 1, action_dim)), np.array(action_seq)], axis=1)  # [N, T+1, Du]
-    for idx in range(act_state_dim + action_dim):
-        outfile = os.path.join(out_dir, f"reach_{idx}.png")
-        visualize_flowpipe_time(
-            times=ts,
-            lowers=r_lo_agg,
-            uppers=r_up_agg,
-            trajs=np.concatenate([sample_rollout, action_seq.repeat(sample_rollout.shape[0], axis=0)], axis=-1),
-            state_idx=idx,
-            file_name=outfile,
-            print_boxes=False,
-            draw_boxes=True,
-            aggregate_partitions=True,
-            stride=1,
-            draw_traj=True,
-        )
+            # taylor_range = x_nexts_all.eval_interval(norm_lo, norm_up)
+            # taylor_lo, taylor_up = taylor_range.lo[:, :act_state_dim], taylor_range.hi[:, :act_state_dim]
+            # taylor_lo = taylor_lo.reshape(-1, T_reach+1, act_state_dim)
+            # taylor_up = taylor_up.reshape(-1, T_reach+1, act_state_dim)
+            # print(f"max diff:{np.max(taylor_up - taylor_lo, axis=(0))}")
+
+            # outfile = os.path.join(out_dir, f"reach_sample.png")
+            # plot_v2(np.array(transform_fn((taylor_lo+taylor_up)/2)), pusher_pos_seq, scale, window_size, outfile, abs_pose)
+
+    # action_seq = np.concatenate([np.zeros((n_reach_batch, 1, action_dim)), np.array(action_seq)], axis=1)  # [N, T+1, Du]
+    # for idx in range(act_state_dim + action_dim):
+    #     outfile = os.path.join(out_dir, f"reach_{idx}.png")
+    #     visualize_flowpipe_time(
+    #         times=ts,
+    #         lowers=r_lo_agg,
+    #         uppers=r_up_agg,
+    #         trajs=np.concatenate([sample_rollout, action_seq.repeat(sample_rollout.shape[0], axis=0)], axis=-1),
+    #         state_idx=idx,
+    #         file_name=outfile,
+    #         print_boxes=False,
+    #         draw_boxes=True,
+    #         aggregate_partitions=True,
+    #         stride=1,
+    #         draw_traj=True,
+    #     )
 
 
 if __name__ == "__main__":

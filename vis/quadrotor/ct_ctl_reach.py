@@ -3,7 +3,7 @@ import numpy as np
 import os
 import pickle
 import jax
-# jax.config.update('jax_platforms', 'cpu')
+jax.config.update('jax_platforms', 'cpu')
 jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 import equinox as eqx
@@ -80,9 +80,9 @@ def main(config: DictConfig):
     select_samples = [0, 1]
     n_reach_batch = len(select_samples)
 
-    n_reach_batch = episodes.shape[0]
-    # n_reach_batch = 64
-    select_samples = np.arange(n_reach_batch).tolist()
+    # n_reach_batch = episodes.shape[0]
+    # # n_reach_batch = 64
+    # select_samples = np.arange(n_reach_batch).tolist()
 
     start_time_step = 350
     horizon = 10
@@ -207,9 +207,8 @@ def main(config: DictConfig):
     # print(f"X error: {jnp.abs(X_gt - X_preds).mean()}")
     # exit()
 
-    if n_reach_batch > 1:
-        exit()
-
+    # if n_reach_batch > 1:
+    #     exit()
 
     # print(f"X error: {jnp.abs(X_gt - X_preds).mean()}")
     # print(f"U error: {jnp.abs(U_gt - U_preds).mean()}")
@@ -219,23 +218,69 @@ def main(config: DictConfig):
     out_dir = os.path.join(model_dir, f"vis_reach_T{horizon}_eps{eps}_split{X_lo.shape[0]}")
     os.makedirs(out_dir, exist_ok=True)
 
-    for idx in range(model.Dx + action_dim):
-        outfile = os.path.join(out_dir, f"reach_{idx}.png")
-        visualize_flowpipe_time(
-            times=ts,
-            lowers=r_lo_agg,
-            uppers=r_up_agg,
-            trajs=np.concatenate([X_preds_full, U_preds_full], axis=-1),
-            state_idx=idx,
-            file_name=outfile,
-            print_boxes=False,
-            draw_boxes=True,
-            aggregate_partitions=True,
-            stride=1,
-            draw_traj=True,
-        )
+    # for idx in range(model.Dx + action_dim):
+    #     outfile = os.path.join(out_dir, f"reach_{idx}.png")
+    #     visualize_flowpipe_time(
+    #         times=ts,
+    #         lowers=r_lo_agg,
+    #         uppers=r_up_agg,
+    #         trajs=np.concatenate([X_preds_full, U_preds_full], axis=-1),
+    #         state_idx=idx,
+    #         file_name=outfile,
+    #         print_boxes=False,
+    #         draw_boxes=True,
+    #         aggregate_partitions=True,
+    #         stride=1,
+    #         draw_traj=True,
+    #     )
 
-    n_vis = min(1, len(select_samples))
+    model = PID_Controller(data_cfg)  # use PID for testing CT dynamics only
+
+    X_curr = sample_state_init # [B, Dx]
+    def one_step_ctl_dyn(carry, xs):
+        X_curr = carry  # [B, Dx]
+        v_cmd = xs  # [B, Dv]
+        U_pred = model.forward(X_curr, v_cmd)  # [B, Du]
+        X_next = ct_dyn.rollout(X_curr, U_pred[:, None].repeat(n_dyn_steps_per_ctl, axis=1))  # [B, n_dyn_steps_per_ctl, Dx]
+        # X_next = X_next[:, -1, :]  # take the last state after n_dyn_steps_per_ctl
+
+        # X_next = ct_dyn.forward(X_curr, U_pred, dt=model.dt)  # [B, Dx]
+
+        return X_next[:, -1, :], (X_next, U_pred)
+
+    v_cmds = v_cmds[:, :-1, :].repeat(max(n_samples // v_cmds.shape[0], 1), axis=0)  # [B, T, Dv]
+    _, (X_preds_full, U_preds) = jax.lax.scan(one_step_ctl_dyn, X_curr, v_cmds.transpose(1, 0, 2), length=horizon)
+    X_preds_full = X_preds_full.transpose(1,0,2,3).reshape(n_samples, T_reach, -1)  # [B, T, Dx]
+    X_preds_full = jnp.concatenate([X_curr[:, None, :], X_preds_full], axis=1)  # [B, T+1, Dx]
+    X_preds = X_preds_full[:, ::n_dyn_steps_per_ctl, :]  # [B, T+1, Dx]
+    U_preds_full = U_preds.transpose(1,0,2).repeat(n_dyn_steps_per_ctl, axis=1)  # [B, T, Du]
+    U_preds_full = jnp.concatenate([U_preds_full, U_preds_full[:, -1:, :]], axis=1)  # [B, T+1, Du]
+    U_preds = U_preds_full[:, ::n_dyn_steps_per_ctl, :]  # [B, T+1, Du]
+    v_cmds_preds = X_preds[:, 1:, v_cmd_dim: 2*v_cmd_dim]  # [B, T+1, Dv]
+    v_cmds_preds = jnp.concatenate([v_cmds_preds, v_cmds_preds[:, -1:, :]], axis=1)  # [B, T+1, Dv] for plotting
+    U_gt = U_gt.at[:, -1, :].set(U_gt[:, -2, :])  # for plotting
+    v_cmds = jnp.concatenate([v_cmds, v_cmds[:, -1:, :]], axis=1)  # [B, T+1, Dv] for plotting
+
+    sample_pid_rollout = X_preds_full.reshape(n_reach_batch, -1, T_reach + 1, state_dim)  # [N, n_per_partition, T+1, Dx]
+
+
+    # save pkl for further analysis
+    pkl_path = os.path.join(out_dir, f"reach_eval.pkl")
+    with open(pkl_path, "wb") as f:
+        pickle.dump({
+            "reach_vols": reach_vols,
+            "sample_vols": sample_vols,
+            "reach_r_lo": r_lo_agg,
+            "reach_r_up": r_up_agg,
+            "sample_r_lo": sample_r_lo,
+            "sample_r_up": sample_r_up,
+            "sample_rollout": sample_rollout,
+            "sample_pid_rollout": sample_pid_rollout,
+        }, f)
+    print(f"Saved reachability pkl to {pkl_path}")
+
+
+    n_vis = min(10, len(select_samples))
     for i in range(n_vis):
         plot_3d_trajectories(X_gt[i, :, :3][:, None], num_quads=1, dt=model.dt, out_path=os.path.join(out_dir, f"gt_trajectories_{i}.png"))
         plot_3d_trajectories(X_preds[i, :, :3][:, None], num_quads=1, dt=model.dt, out_path=os.path.join(out_dir, f"pred_trajectories_{i}.png"))
