@@ -7,3 +7,5 @@ wandb/
 *.sh
 experiments/
 exp_qual/
+*.scad
+*/dep/
