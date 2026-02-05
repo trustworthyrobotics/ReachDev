@@ -4,6 +4,7 @@ import pyrealsense2 as rs
 from pathlib import Path
 from collections import deque
 from pupil_apriltags import Detector
+
 from pydrake.all import (
     LeafSystem,
     RigidTransform,
@@ -11,74 +12,74 @@ from pydrake.all import (
 )
 
 
-class PlanarPositionDetector(LeafSystem):
-    def __init__(self, max_stored_images=999):
-        super().__init__()
+class PlanarPoseDetectorAPI:
+    """Camera + AprilTag planar pose detector (non-Drake API).
 
-        # RealSense Camera
-        w, h = 1280, 720
-        fps = 30
+    Returns planar pose (x, y, theta) in the *tag-defined frame* used by the
+    original implementation. In your real pipeline, you can interpret this as
+    already being in the workspace frame (as you requested for now).
+    """
 
-        pipeline = rs.pipeline()
+    def __init__(
+        self,
+        *,
+        w: int = 1280,
+        h: int = 720,
+        fps: int = 30,
+        max_stored_images: int = 999,
+        tag_sizes: dict[int, float] | None = None,
+        detector_families: str = "tagStandard41h12",
+    ):
+        # ---- RealSense stream ----
+        self._w, self._h, self._fps = int(w), int(h), int(fps)
+
+        self._pipeline = rs.pipeline()
         config = rs.config()
-        config.enable_stream(rs.stream.color, w, h, rs.format.bgr8, fps)
-        pipeline.start(config)
+        config.enable_stream(rs.stream.color, self._w, self._h, rs.format.bgr8, self._fps)
+        self._pipeline.start(config)
 
-        profile = pipeline.get_active_profile()
-        intr = profile.get_stream(
-            rs.stream.color).as_video_stream_profile().get_intrinsics()
+        profile = self._pipeline.get_active_profile()
+        intr = (
+            profile.get_stream(rs.stream.color)
+            .as_video_stream_profile()
+            .get_intrinsics()
+        )
         fx, fy = intr.fx, intr.fy
         cx, cy = intr.ppx, intr.ppy
-        camera_params = (fx, fy, cx, cy)
-        camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
-        distortion_coeffs = np.array(intr.coeffs)
 
-        self._pipeline = pipeline
-        self._camera_params = camera_params
-        self._camera_matrix = camera_matrix
-        self._distortion_coeffs = distortion_coeffs
+        self._camera_params = (fx, fy, cx, cy)
+        self._camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=float)
+        self._distortion_coeffs = np.array(intr.coeffs, dtype=float)
 
-        # Map of tag_id to tag_size (meters)
-        self._tag_sizes = {
+        # ---- AprilTags ----
+        self._tag_sizes = tag_sizes or {
             0: 0.06667,
             1: 0.06667,
             18: 0.0278,
         }
-        # AprilTag detector
-        self._detector = Detector(families="tagStandard41h12")
+        self._detector = Detector(families=detector_families)
 
-        # Pool camera frame
-        color_image = self._GetImage(blocking=True)
-        planar_pos = self._DetectPlanarPosition(color_image)
-        if planar_pos is None:
-            raise RuntimeError("Missing tags and thus cannot detect position")
+        # ---- Image storage (optional) ----
+        self._images = deque(maxlen=int(max_stored_images))
 
-        # Declare state
-        state_index = self.DeclareDiscreteState(planar_pos)
-        self.DeclareStateOutputPort("planar_position", state_index)
-        self.DeclarePeriodicDiscreteUpdateEvent(
-            period_sec=1/fps,
-            offset_sec=0.0,
-            update=self.DiscreteUpdate,
-        )
+        # Warm-up: make sure we can see required tags at least once.
+        img0 = self.get_color_image(blocking=True, store_image=False)
+        pose0 = None if img0 is None else self.detect_planar_pose(img0)
+        if pose0 is None:
+            raise RuntimeError("Missing required tags; cannot initialize planar pose detector.")
 
-        # Image storage queue
-        self._images = deque(maxlen=max_stored_images)
+    @property
+    def fps(self) -> int:
+        return self._fps
 
-    def Close(self):
-        self._pipeline.stop()
+    def close(self) -> None:
+        # Best-effort shutdown.
+        try:
+            self._pipeline.stop()
+        except Exception:
+            pass
 
-    def DiscreteUpdate(self, context, discrete_values):
-        color_image = self._GetImage()
-        if color_image is None:
-            return
-        self._images.append(color_image)
-
-        planar_pos = self._DetectPlanarPosition(color_image)
-        if planar_pos is not None:
-            discrete_values.set_value(planar_pos)
-
-    def SaveImages(self, filename):
+    def save_images(self, filename: str) -> None:
         dir_path = Path(filename).parent
         if str(dir_path) != ".":
             dir_path.mkdir(parents=True, exist_ok=True)
@@ -86,11 +87,30 @@ class PlanarPositionDetector(LeafSystem):
         for i, image in enumerate(self._images):
             cv2.imwrite(filename + f"_{i:03d}.png", image)
 
-    def _GetImage(self, blocking=False):
+    # ----------------------------
+    # Public "getters"
+    # ----------------------------
+    def get_planar_pose_in_world_mm(self, *, blocking: bool = False, store_image: bool = True) -> np.ndarray | None:
+        pose = self.get_planar_pose(blocking=blocking, store_image=store_image)
+        if pose is None:
+            return None
+        pose[:2] = pose[:2] * 1000  # m to mm
+        return pose
+
+    def get_planar_pose(self, *, blocking: bool = False, store_image: bool = True) -> np.ndarray | None:
+        """Returns np.array([x, y, theta]) or None if not detected."""
+        color_image = self.get_color_image(blocking=blocking, store_image=store_image)
+        if color_image is None:
+            return None
+        return self.detect_planar_pose(color_image)
+
+    def get_color_image(self, *, blocking: bool = False, store_image: bool = True) -> np.ndarray | None:
+        """Returns undistorted BGR image (H,W,3) or None."""
+        newest_frame = None
         if blocking:
             newest_frame = self._pipeline.wait_for_frames()
         else:
-            newest_frame = None
+            # Drain the queue and keep only the newest frame.
             while True:
                 frame = self._pipeline.poll_for_frames()
                 if not frame:
@@ -101,36 +121,40 @@ class PlanarPositionDetector(LeafSystem):
             return None
 
         color_frame = newest_frame.get_color_frame()
+        if color_frame is None:
+            return None
+
         color_image = np.asanyarray(color_frame.get_data())
-        color_image = cv2.undistort(
-            color_image,
-            self._camera_matrix,
-            self._distortion_coeffs,
-        )
+        color_image = cv2.undistort(color_image, self._camera_matrix, self._distortion_coeffs)
+
+        if store_image:
+            self._images.append(color_image)
         return color_image
 
-    def _DetectPlanarPosition(self, color_image) -> np.ndarray | None:
+    # ----------------------------
+    # Detection math (same as before)
+    # ----------------------------
+    def detect_planar_pose(self, color_image: np.ndarray) -> np.ndarray | None:
         gray_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY)
-        detections = self._DetectTags(gray_image)
-        planar_pos = self._CalcPlanarPosition(detections)
-        return planar_pos
+        detections = self._detect_tags(gray_image)
+        return self._calc_planar_position(detections)
 
-    def _DetectTags(self, gray_image):
+    def _detect_tags(self, gray_image: np.ndarray):
         all_detections = []
+        # Run detector once per distinct tag size so pose estimation uses the right size.
         for tag_size in set(self._tag_sizes.values()):
             detections = self._detector.detect(
                 gray_image,
                 estimate_tag_pose=True,
                 camera_params=self._camera_params,
-                tag_size=tag_size
+                tag_size=tag_size,
             )
-            current_ids = [tag_id for tag_id,
-                           size in self._tag_sizes.items() if size == tag_size]
+            current_ids = [tag_id for tag_id, size in self._tag_sizes.items() if size == tag_size]
             detections = [d for d in detections if d.tag_id in current_ids]
             all_detections.extend(detections)
         return all_detections
 
-    def _CalcPlanarPosition(self, detections):
+    def _calc_planar_position(self, detections) -> np.ndarray | None:
         X_CA, X_CB, X_CT = None, None, None
         for det in detections:
             pose = RigidTransform(RotationMatrix(det.pose_R), det.pose_t)
@@ -140,9 +164,11 @@ class PlanarPositionDetector(LeafSystem):
                 X_CB = pose
             elif det.tag_id == 18:
                 X_CT = pose
+
         if any([X_CA is None, X_CB is None, X_CT is None]):
             return None
 
+        # Express A and B in tag-T frame, then define object pose from them.
         p_TA = X_CT.inverse() @ X_CA.translation()
         p_TB = X_CT.inverse() @ X_CB.translation()
         p_TO = (p_TA + p_TB) / 2
@@ -158,6 +184,42 @@ class PlanarPositionDetector(LeafSystem):
         R_OT = X_OT.rotation().matrix()
         p_OT = X_OT.translation()
 
+        # NOTE: keeping original offset behavior for now.
         pos = p_OT[:2] - np.array([0.0, 0.04])
-        angle = np.atan2(R_OT[1, 0], R_OT[0, 0])
+        angle = np.arctan2(R_OT[1, 0], R_OT[0, 0])
         return np.concatenate((pos, [angle]))
+
+
+class PlanarPositionDetector(LeafSystem):
+    """Drake wrapper around PlanarPoseDetectorAPI (keeps existing behavior)."""
+
+    def __init__(self, max_stored_images: int = 999):
+        super().__init__()
+
+        self._api = PlanarPoseDetectorAPI(max_stored_images=max_stored_images)
+
+        # Initialize discrete state from the first successfully detected pose.
+        pose0 = self._api.get_planar_pose(blocking=True, store_image=False)
+        if pose0 is None:
+            raise RuntimeError("Missing tags and thus cannot detect position")
+
+        state_index = self.DeclareDiscreteState(pose0)
+        self.DeclareStateOutputPort("planar_position", state_index)
+
+        self.DeclarePeriodicDiscreteUpdateEvent(
+            period_sec=1.0 / float(self._api.fps),
+            offset_sec=0.0,
+            update=self.DiscreteUpdate,
+        )
+
+    def Close(self):
+        self._api.close()
+
+    def DiscreteUpdate(self, context, discrete_values):
+        # Non-blocking: update only if we got a new frame and tags are visible.
+        planar_pos = self._api.get_planar_pose(blocking=False, store_image=True)
+        if planar_pos is not None:
+            discrete_values.set_value(planar_pos)
+
+    def SaveImages(self, filename):
+        self._api.save_images(filename)

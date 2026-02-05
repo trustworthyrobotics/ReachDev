@@ -48,6 +48,14 @@ def generate_test_cases(seed, num_test, test_id=0):
         init_pusher_pos_list = _gen_pose_list(num_test, seed, (125, 125), (140, 140), None)
         init_pose_list = _gen_pose_list(num_test, seed, (180, 180), (140, 140), (90, 90))
         target_pose_list = _gen_pose_list(num_test, seed, (250, 250), (420, 420), (180, 180))
+    elif test_id == -1:
+        init_pusher_pos_list = _gen_pose_list(num_test, seed, (0, 0), (400, 400), None)
+        init_pose_list = _gen_pose_list(num_test, seed, (180, 180), (400, 400), (90, 90))
+        target_pose_list = _gen_pose_list(num_test, seed, (250, 250), (400, 400), (90, 90))
+    # elif test_id == -2:
+    #     init_pusher_pos_list = _gen_pose_list(num_test, seed, (125, 125), (140, 140), None)
+    #     init_pose_list = _gen_pose_list(num_test, seed, (180, 180), (140, 140), (90, 90))
+    #     target_pose_list = _gen_pose_list(num_test, seed, (250, 250), (420, 420), (180, 180))
     else:
         raise ValueError(f"Unknown test_id: {test_id}")
     init_pusher_pos_list = init_pusher_pos_list[shift:]

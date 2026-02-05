@@ -741,6 +741,16 @@ class IiwaHardwareEnv:
         qg = self.get_q_goal_ik()
         return self.get_tool_metrics_at_q(qg)
 
+    def get_tool_metrics_in_world_mm(self):
+        """Tool metrics [x,y,z,align] in world frame (rotated from robot frame)."""
+        tm = self.get_tool_metrics()
+        # robot frame rotates CCW 90 deg around z axis w.r.t. workspace frame
+        x_world = -tm[1] * 1000.0
+        y_world = tm[0] * 1000.0
+        z_world = tm[2] * 1000.0
+        align = tm[3]
+        return np.array([x_world, y_world, z_world, align], dtype=float)
+
     def get_tool_metrics(self):
         return np.asarray(self._port_tool.Eval(self.ctx), dtype=float)
 
@@ -817,6 +827,15 @@ class IiwaHardwareEnv:
             self._set_mode_joint()
         self._set_q_goal(q_home)
         return self.wait_until_joint_reached(q_home, timeout_sec=timeout_sec, **kwargs)
+
+    def move_to_target_xyz_in_world_mm(self, target_xyz_world_mm, timeout_sec=10.0, **kwargs):
+        # robot frame rotates CCW 90 deg around z axis w.r.t. workspace frame
+        target_xyz_robot = np.array([
+            target_xyz_world_mm[1] / 1000.0,
+            -target_xyz_world_mm[0] / 1000.0,
+            target_xyz_world_mm[2] / 1000.0,
+        ], dtype=float)
+        return self.move_to_target_xyz(target_xyz_robot, timeout_sec=timeout_sec, **kwargs)
 
     def move_to_target_xyz(self, target_xyz, timeout_sec=10.0, **kwargs):
         """IK move: set target, wait for IK to succeed, switch to IK mode, then wait until reached."""
