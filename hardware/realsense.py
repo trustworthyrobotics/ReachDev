@@ -1,3 +1,4 @@
+import os
 import cv2
 import numpy as np
 import pyrealsense2 as rs
@@ -10,6 +11,21 @@ from pydrake.all import (
     RigidTransform,
     RotationMatrix,
 )
+
+# tag_ids_required = [0, 1, 10]  # IDs of the tags we care about
+# tag_sizes_default = {
+#     0: 0.06667,  # meters
+#     1: 0.06667,
+#     10: 0.098,
+# }
+
+tag_ids_required = [0, 1, 18]  # IDs of the tags we care about
+tag_sizes_default = {
+    0: 0.06667,  # meters
+    1: 0.06667,
+    18: 0.0278
+}
+
 
 
 class PlanarPoseDetectorAPI:
@@ -52,12 +68,21 @@ class PlanarPoseDetectorAPI:
         self._distortion_coeffs = np.array(intr.coeffs, dtype=float)
 
         # ---- AprilTags ----
-        self._tag_sizes = tag_sizes or {
-            0: 0.06667,
-            1: 0.06667,
-            18: 0.0278,
-        }
-        self._detector = Detector(families=detector_families)
+        self._tag_sizes = tag_sizes or tag_sizes_default
+
+
+        self._detector = Detector(   
+                families=detector_families,
+                nthreads=1,
+                quad_decimate=1.0,
+                quad_sigma=0.8,
+                refine_edges=1,
+                decode_sharpening=0.25,
+                debug=0
+        )
+        self._last_detections = []
+        self._last_pose = None
+
 
         # ---- Image storage (optional) ----
         self._images = deque(maxlen=int(max_stored_images))
@@ -86,6 +111,7 @@ class PlanarPoseDetectorAPI:
 
         for i, image in enumerate(self._images):
             cv2.imwrite(filename + f"_{i:03d}.png", image)
+        print(f"Saved {len(self._images)} images to {filename}.")
 
     # ----------------------------
     # Public "getters"
@@ -136,41 +162,84 @@ class PlanarPoseDetectorAPI:
     # ----------------------------
     def detect_planar_pose(self, color_image: np.ndarray) -> np.ndarray | None:
         gray_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY)
+        # gray_image = cv2.GaussianBlur(cv2.equalizeHist(gray_image), (5,5), 0)
+        
         detections = self._detect_tags(gray_image)
         return self._calc_planar_position(detections)
 
+    # def _detect_tags(self, gray_image: np.ndarray):
+    #     all_detections = []
+    #     # Run detector once per distinct tag size so pose estimation uses the right size.
+    #     for tag_size in set(self._tag_sizes.values()):
+    #         detections = self._detector.detect(
+    #             gray_image,
+    #             estimate_tag_pose=True,
+    #             camera_params=self._camera_params,
+    #             tag_size=tag_size,
+    #         )
+    #         current_ids = [tag_id for tag_id, size in self._tag_sizes.items() if size == tag_size]
+    #         detections = [d for d in detections if d.tag_id in current_ids]
+    #         all_detections.extend(detections)
+    #     return all_detections
+
     def _detect_tags(self, gray_image: np.ndarray):
         all_detections = []
-        # Run detector once per distinct tag size so pose estimation uses the right size.
-        for tag_size in set(self._tag_sizes.values()):
-            detections = self._detector.detect(
-                gray_image,
-                estimate_tag_pose=True,
-                camera_params=self._camera_params,
-                tag_size=tag_size,
-            )
-            current_ids = [tag_id for tag_id, size in self._tag_sizes.items() if size == tag_size]
-            detections = [d for d in detections if d.tag_id in current_ids]
-            all_detections.extend(detections)
-        return all_detections
+        try:
+            # Run detector once per distinct tag size so pose estimation uses the right size.
+            for tag_size in set(self._tag_sizes.values()):
+                detections = self._detector.detect(
+                    gray_image,
+                    estimate_tag_pose=True,
+                    camera_params=self._camera_params,
+                    tag_size=tag_size,
+                )
+                current_ids = [tag_id for tag_id, size in self._tag_sizes.items()
+                            if size == tag_size]
+                detections = [d for d in detections if d.tag_id in current_ids]
+                all_detections.extend(detections)
+        except Exception as e:
+            # AprilTag can throw e.g. "more than one new minima found" during pose estimation.
+            # In that case, keep previous detections to avoid pose jumps.
+            # (Optionally log e once in a while.)
+            print(f"AprilTag detection error: {e}")
+            return self._last_detections
 
-    def _calc_planar_position(self, detections) -> np.ndarray | None:
+        # If we got all tags, update cache; otherwise keep last.
+        if len(all_detections) == 3:
+            self._last_detections = all_detections
+        else:
+            print(f"Warning: detected {len(all_detections)} tags; need 3. Keeping last detections.")
+        return self._last_detections
+
+
+    def _calc_planar_position_v1(self, detections) -> np.ndarray | None:
         X_CA, X_CB, X_CT = None, None, None
         for det in detections:
             pose = RigidTransform(RotationMatrix(det.pose_R), det.pose_t)
-            if det.tag_id == 0:
+            if det.tag_id == tag_ids_required[0]:
                 X_CA = pose
-            elif det.tag_id == 1:
+            elif det.tag_id == tag_ids_required[1]:
                 X_CB = pose
-            elif det.tag_id == 18:
+            elif det.tag_id == tag_ids_required[2]:
                 X_CT = pose
 
         if any([X_CA is None, X_CB is None, X_CT is None]):
             return None
 
+        # # offset the tag T to center of T object
+        # offset = np.array([0.0, -0.107, 0.0])  # meters
+        # X_CT = X_CT.multiply(RigidTransform(RotationMatrix.Identity(), offset))
+
         # Express A and B in tag-T frame, then define object pose from them.
         p_TA = X_CT.inverse() @ X_CA.translation()
         p_TB = X_CT.inverse() @ X_CB.translation()
+        # print(f'X_CA: {X_CA.GetAsMatrix4()[0,0]}')
+        # print(f'X_CB: {X_CB.GetAsMatrix4()[0,0]}')
+        # print(f"X_CT: {X_CT.GetAsMatrix4()[0,0]}")
+        # print(f"X_CT: {X_CT.GetAsMatrix4()}")
+        # print(f"X_CT.inverse(): {X_CT.inverse().GetAsMatrix4()}")
+        # print(f"p_TA: {p_TA}")
+        # print(f"p_TB: {p_TB}")
         p_TO = (p_TA + p_TB) / 2
 
         x_TO = p_TB - p_TA
@@ -181,13 +250,90 @@ class PlanarPoseDetectorAPI:
 
         X_TO = RigidTransform(R_TO, p_TO)
         X_OT = X_TO.inverse()
+        
+        R_OT = X_OT.rotation().matrix()
+        p_OT = X_OT.translation()
+        # print(f"p_OT: {p_OT}, R_OT: {R_OT}")
+
+        # NOTE: keeping original offset behavior for now.
+        pos = p_OT[:2] - np.array([-0.65, 0.04])
+        angle = np.arctan2(R_OT[1, 0], R_OT[0, 0])
+        return np.concatenate((pos, [angle]))
+
+
+    def _calc_planar_position(self, detections) -> np.ndarray | None:
+        X_CA, X_CB, X_CT = None, None, None
+        for det in detections:
+            pose = RigidTransform(RotationMatrix(det.pose_R), det.pose_t)
+            if det.tag_id == tag_ids_required[0]:
+                X_CA = pose
+            elif det.tag_id == tag_ids_required[1]:
+                X_CB = pose
+            elif det.tag_id == tag_ids_required[2]:
+                X_CT = pose
+
+        if any([X_CA is None, X_CB is None, X_CT is None]):
+            return None
+
+
+        # --- Build workspace frame O in camera frame C using fixed tags A,B ---
+        p_CA = X_CA.translation()
+        p_CB = X_CB.translation()
+        p_CO = (p_CA + p_CB) / 2.0
+
+        print(f'X_CA: {X_CA.GetAsMatrix4()[0,0]}')
+        print(f'X_CB: {X_CB.GetAsMatrix4()[0,0]}')
+        print(f"X_CT: {X_CT.GetAsMatrix4()[0,0]}")
+        # Table normal (gravity-up) from tag plane normals (A and B are parallel to table)
+        ez = np.array([0.0, 0.0, -1.0])
+        z_CA = X_CA.rotation().matrix() @ ez
+        z_CB = X_CB.rotation().matrix() @ ez
+        z_CO = z_CA + z_CB
+        z_CO = z_CO / np.linalg.norm(z_CO)
+
+        # print(f"z_CO: {z_CO}, z_CB: {z_CB}, z_CA: {z_CA}")
+
+        # z_CO = np.array([0.0, 0.0, -1.0])
+
+        # x-axis: A->B projected onto the table plane to remove any small tilt/noise
+        x_raw = p_CB - p_CA
+        x_CO = x_raw - np.dot(x_raw, z_CO) * z_CO
+        x_CO = x_CO / np.linalg.norm(x_CO)
+
+        # y-axis: right-handed
+        y_CO = np.cross(z_CO, x_CO)
+        y_CO = y_CO / np.linalg.norm(y_CO)
+
+        R_CO = RotationMatrix(np.column_stack([x_CO, y_CO, z_CO]))
+        X_CO = RigidTransform(R_CO, p_CO)
+        X_OC = X_CO.inverse()
+
+
+        # # offset the tag T to center of T object
+        # offset = np.array([0.0, -0.107, 0.0])  # meters
+        # X_CT = X_CT.multiply(RigidTransform(RotationMatrix.Identity(), offset))
+
+        # --- Object pose in workspace ---
+        X_OT = X_OC.multiply(X_CT)
         R_OT = X_OT.rotation().matrix()
         p_OT = X_OT.translation()
 
         # NOTE: keeping original offset behavior for now.
-        pos = p_OT[:2] - np.array([0.0, 0.04])
+        pos = p_OT[:2] - np.array([-0.65, 0.04])
         angle = np.arctan2(R_OT[1, 0], R_OT[0, 0])
-        return np.concatenate((pos, [angle]))
+        # normalize angle to [0, 2pi)
+        angle = (angle + 2 * np.pi) % (2 * np.pi)
+        pose = np.concatenate((pos, [angle]))
+
+        # if self._last_pose is not None:
+        #     pose_diff = pose - self._last_pose
+        #     diff_norm = np.linalg.norm(pose_diff)
+        #     print(f"Pose diff: {pose_diff}, norm: {diff_norm}")
+        #     if diff_norm > 0.05:
+        #         print(f"Warning: large jump in detected pose from {self._last_pose} to {pose}. Keeping last pose.")
+        #         return self._last_pose
+        self._last_pose = pose
+        return pose
 
 
 class PlanarPositionDetector(LeafSystem):
@@ -223,3 +369,20 @@ class PlanarPositionDetector(LeafSystem):
 
     def SaveImages(self, filename):
         self._api.save_images(filename)
+
+
+if __name__ == "__main__":
+    detector = PlanarPoseDetectorAPI(max_stored_images=10)
+    n_steps = 20
+    try:
+        for step in range(n_steps):
+            pose = detector.get_planar_pose(blocking=True, store_image=True)
+            if pose is not None:
+                print(f"[step {step}] Detected planar pose (m, m, rad): {pose}")
+            else:
+                print(f"[step {step}] No tags detected.")
+    finally:
+        out_dir = "output/test"
+        os.makedirs(out_dir, exist_ok=True)
+        detector.save_images(os.path.join(out_dir, "img"))
+        detector.close()

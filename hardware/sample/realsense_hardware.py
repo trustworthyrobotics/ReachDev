@@ -42,7 +42,7 @@ class PlanarPositionDetector(LeafSystem):
         self._tag_sizes = {
             0: 0.06667,
             1: 0.06667,
-            10: 0.099,
+            18: 0.0278,
         }
         # AprilTag detector
         self._detector = Detector(families="tagStandard41h12")
@@ -138,7 +138,7 @@ class PlanarPositionDetector(LeafSystem):
                 X_CA = pose
             elif det.tag_id == 1:
                 X_CB = pose
-            elif det.tag_id == 10:
+            elif det.tag_id == 18:
                 X_CT = pose
         if any([X_CA is None, X_CB is None, X_CT is None]):
             return None
@@ -158,6 +158,6 @@ class PlanarPositionDetector(LeafSystem):
         R_OT = X_OT.rotation().matrix()
         p_OT = X_OT.translation()
 
-        pos = p_OT[:2] - np.array([0.0, 0.04])
+        pos = p_OT[:2] - np.array([-0.65, 0.04])
         angle = np.atan2(R_OT[1, 0], R_OT[0, 0])
         return np.concatenate((pos, [angle]))

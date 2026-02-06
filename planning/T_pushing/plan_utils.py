@@ -50,8 +50,8 @@ def generate_test_cases(seed, num_test, test_id=0):
         target_pose_list = _gen_pose_list(num_test, seed, (250, 250), (420, 420), (180, 180))
     elif test_id == -1:
         init_pusher_pos_list = _gen_pose_list(num_test, seed, (0, 0), (400, 400), None)
-        init_pose_list = _gen_pose_list(num_test, seed, (180, 180), (400, 400), (90, 90))
-        target_pose_list = _gen_pose_list(num_test, seed, (250, 250), (400, 400), (90, 90))
+        init_pose_list = _gen_pose_list(num_test, seed, (130, 130), (400, 400), (90, 90))
+        target_pose_list = _gen_pose_list(num_test, seed, (280, 280), (400, 400), (90, 90))
     # elif test_id == -2:
     #     init_pusher_pos_list = _gen_pose_list(num_test, seed, (125, 125), (140, 140), None)
     #     init_pose_list = _gen_pose_list(num_test, seed, (180, 180), (140, 140), (90, 90))
@@ -148,6 +148,8 @@ def make_rollout_and_reward_fns(
     reach_refine_config = refine_config.get("reach_in_obj", {})
     enable_reach = reach_config.get("enable", False) or (refine_config.get('enable', False) and reach_refine_config.get("enable", False))
 
+    scale = data_config.get("scale", 1.0)
+
     if enable_reach:
         # reachability part
         def f_wrapper(x):
@@ -166,7 +168,7 @@ def make_rollout_and_reward_fns(
         assert pred_mode == "pose", "Hole interaction only implemented for pose prediction mode."
         stem_size = data_config["stem_size"]
         bar_size = data_config["bar_size"]
-        scale = data_config.get("scale", 1.0)
+
         h_T = jnp.array([[stem_size[0] / 2, stem_size[1] / 2],
                          [bar_size[0] / 2, bar_size[1] / 2]]) / scale  # [2,2]
         c_s, c_b = get_t_comp_centers_w_com(stem_size, bar_size)

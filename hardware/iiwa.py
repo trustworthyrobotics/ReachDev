@@ -1005,15 +1005,15 @@ def main_smoke():
     # env.home(q_nom, timeout_sec=10.0, verbose=True)
 
     # One-call IK move (will raise if IK is infeasible).
-    target = np.array([0.71, 0.0, 0.28], dtype=float)
+    target = np.array([0.4, 0.0, 0.38], dtype=float)
     env.move_to_target_xyz(target, timeout_sec=10.0, verbose=True, hold_count_required=5)
 
 
-    target = np.array([0.65, 0.0, 0.28], dtype=float)
+    target = np.array([0.4, 0.0, 0.28], dtype=float)
     env.move_to_target_xyz(target, timeout_sec=10.0, verbose=True, hold_count_required=5)
 
-    target = np.array([0.61, 0.0, 0.28], dtype=float)
-    env.move_to_target_xyz(target, timeout_sec=10.0, verbose=True, hold_count_required=5)
+    # target = np.array([0.61, 0.0, 0.28], dtype=float)
+    # env.move_to_target_xyz(target, timeout_sec=10.0, verbose=True, hold_count_required=5)
 
     # for _ in range(100):
     #     start_time = time.time()
@@ -1195,5 +1195,5 @@ def main():
 
 
 if __name__ == "__main__":
-    # main_smoke()
-    main()
+    main_smoke()
+    # main()

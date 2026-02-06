@@ -4,6 +4,12 @@ import hydra
 from omegaconf import DictConfig, OmegaConf, open_dict
 import jax
 
+import sys
+sys.path.append(os.getcwd())
+import matplotlib.pyplot as plt
+
+from matplotlib.patches import Polygon
+
 from hardware.iiwa import IiwaHardwareEnv
 from hardware.realsense import PlanarPoseDetectorAPI
 # jax.config.update('jax_platforms', 'cpu')
@@ -23,6 +29,68 @@ from planning.planner import MPPIPlanner, CEMPlanner
 from planning.T_pushing.plan_utils import generate_test_cases, get_abs_states, make_rollout_and_reward_fns, plot_cost_stat, plot_plan_from_poses
 from utils.T_pushing import hole_to_walls_aabbs
 from utils.misc import box_corners_nd
+
+from envs.T_pushing.t_sim import gen_vertices_from_poses
+from planning.T_pushing.plan_utils import merge_t_shape
+
+def visualize_initial_setup(detector: PlanarPoseDetectorAPI,
+                            i: int,
+                            init_pose: np.ndarray,
+                            target_pose: np.ndarray,
+                            stem_size: np.ndarray,
+                            bar_size: np.ndarray,
+                            window_size: int,
+                            out_dir: str,
+                            close_thresh: np.ndarray = np.array([5.0, 5.0, 0.1])):
+    plt.ion()  # interactive mode ON
+
+    fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+    ax0, ax1 = ax  # two axes
+
+    for a in (ax0, ax1):
+        a.set_xlim([0, window_size])
+        a.set_ylim([0, window_size])
+        a.set_aspect("equal")
+
+    ax0.set_title("Current (blue) and Init (green)")
+    ax1.set_title("Current (blue) and Target (red)")
+
+    # create empty patches once
+    cur0 = Polygon(np.zeros((3, 2)), closed=True, color="blue", alpha=0.5)
+    ini0 = Polygon(np.zeros((3, 2)), closed=True, color="green", alpha=0.5)
+    cur1 = Polygon(np.zeros((3, 2)), closed=True, color="blue", alpha=0.5)
+    tgt1 = Polygon(np.zeros((3, 2)), closed=True, color="red", alpha=0.5)
+
+    ax0.add_patch(cur0); ax0.add_patch(ini0)
+    ax1.add_patch(cur1); ax1.add_patch(tgt1)
+
+    plt.tight_layout()
+    fig.show()
+
+    while True:
+        state_cur = detector.get_planar_pose_in_world_mm(blocking=True, store_image=False)
+
+        curr_polys = merge_t_shape(*np.array(gen_vertices_from_poses(stem_size, bar_size, state_cur[:3])))
+        init_polys = merge_t_shape(*np.array(gen_vertices_from_poses(stem_size, bar_size, init_pose)))
+        tgt_polys  = merge_t_shape(*np.array(gen_vertices_from_poses(stem_size, bar_size, target_pose)))
+
+        # update patch vertices (Nx2)
+        cur0.set_xy(curr_polys)
+        ini0.set_xy(init_polys)
+        cur1.set_xy(curr_polys)
+        tgt1.set_xy(tgt_polys)
+
+        fig.canvas.draw_idle()
+        plt.pause(0.03)  # ~30 FPS-ish UI update
+
+        if (np.all(np.abs(state_cur[:3] - init_pose) < close_thresh)):
+            # save figure
+            fig_path = os.path.join(out_dir, f"initial_setup_{i:04d}.png")
+            fig.savefig(fig_path, dpi=200)
+            print(f"Saved initial setup figure to {fig_path}")
+            plt.ioff()
+            plt.close(fig)
+            break
 
 @hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing_real.yaml")
 def main(config: DictConfig):
@@ -134,17 +202,6 @@ def main(config: DictConfig):
     compile_time = time.time() - compile_start
     print(f"JIT compilation time: {compile_time} seconds")
 
-    def trans_fn(env_dict):
-        pusher_pos = jnp.array(env_dict["pusher_pos"]) / scale
-        if pred_mode == "pose":
-            state_cur = jnp.array(np.concatenate([env_dict["com_pos"] / scale, env_dict["angle"]], axis=0))
-            env_state = np.concatenate([np.array(env_dict["com_pos"]), np.array(env_dict["angle"]), env_dict["pusher_pos"]], axis=0)
-        else:
-            state_cur = jnp.array(env_dict["state"][:state_dim]) / scale
-            env_state = np.concatenate([env_dict["state"][:state_dim], env_dict["pusher_pos"]], axis=0)
-        state_cur = jnp.concatenate([state_cur, pusher_pos], axis=0)
-        return state_cur, env_state, pusher_pos
-
     num_test = planning_config["num_test"]
     test_id = planning_config.get("test_id", 0)
     init_pusher_pos_list, init_pose_list, target_pose_list = generate_test_cases(seed, num_test, test_id=test_id)
@@ -173,6 +230,22 @@ def main(config: DictConfig):
         scaled_target_state = jnp.array(scaled_target_state)
 
         # -------------- real --------------
+
+        detector = PlanarPoseDetectorAPI(w = 1280, h = 720, fps = 30, max_stored_images = 1000)
+
+        # visualize initial setup
+        visualize_initial_setup(
+            detector,
+            i,
+            init_pose,
+            target_pose,
+            stem_size,
+            bar_size,
+            window_size,
+            out_dir,
+            close_thresh=np.array([10.0, 10.0, 0.2])
+        )
+
         env = IiwaHardwareEnv(
             use_ik=True,
             period_sec=0.01,
@@ -183,15 +256,14 @@ def main(config: DictConfig):
         # One-call safe startup (holds current pose, then enables).
         env.start(timeout_sec=1.0)
 
-        z_hi = 0.38
-        z_lo = 0.28
+        z_hi = 330
+        z_lo = 280
         # move to init position (transformation from workspace to robot frame is inside the function)
         env.move_to_target_xyz_in_world_mm(np.array([init_pusher_pos[0], init_pusher_pos[1], z_hi], dtype=float), timeout_sec=10.0, verbose=False, hold_count_required=5)
 
         env.move_to_target_xyz_in_world_mm(np.array([init_pusher_pos[0], init_pusher_pos[1], z_lo], dtype=float), timeout_sec=10.0, verbose=False, hold_count_required=5)
 
-        # detector = PlanarPoseDetectorAPI(w = 1280, h = 720, fps = 30, max_stored_images = 1000)
-        detector = PlanarPoseDetectorAPI(w = 640, h = 360, fps = 30, max_stored_images = 1000)
+
 
         # mimic sim api
         def get_state():
@@ -206,12 +278,11 @@ def main(config: DictConfig):
             # in NN scale
             state_cur[:2] = state_cur[:2] / scale
             pusher_pos = pusher_pos / scale
-            state_cur = jnp.array(state_cur)
+            state_cur = jnp.concatenate([jnp.array(state_cur), jnp.array(pusher_pos)], axis=0)
             pusher_pos = jnp.array(pusher_pos)
             return state_cur, env_state, pusher_pos
 
         state_cur, env_state, pusher_pos = get_state()
-        # TODO: visualize initial setup
 
         # -------------- real --------------
 
@@ -293,12 +364,13 @@ def main(config: DictConfig):
                 #         #     print(f"   step_cost: {step_cost_fn(sub_target, state_cur[:-action_dim])}, init_follow: {init_follow}")
                 #         next_action = jit_ctl(state_cur, sub_target, ref_action)
                 #         if verbose:
-                #             print(f"   controller action: {next_action}")
+                #             print(f"   controller action: {next_action}, curr pusher pos: {pusher_pos}, curr state: {state_cur[:-action_dim]}")
                 #     else:
-                #         if verbose:
-                #             print("   skip controller")
                 #         next_action = ref_action
-                #     next_pusher_pos = (pusher_pos + next_action) * scale
+                #         if verbose:
+                #             print(f"   skip controller, action: {next_action}, curr pusher pos: {pusher_pos}, curr state: {state_cur[:-action_dim]}")
+                        
+                #     next_pusher_pos = (pusher_pos + next_action / 2) * scale
                 #     env.move_to_target_xyz_in_world_mm(np.array([next_pusher_pos[0], next_pusher_pos[1], z_lo], dtype=float), timeout_sec=5.0, verbose=False, hold_count_required=1)
                 #     state_cur, env_state, pusher_pos = get_state()
 
@@ -339,6 +411,17 @@ def main(config: DictConfig):
         cost_stat.append(step_cost_list)
         print(f"final cost: {step_cost_list[-1]}, total cost: {sum(step_cost_list)}")
 
+
+        # -------------- real --------------
+        env.move_to_target_xyz_in_world_mm(np.array([init_pusher_pos[0], init_pusher_pos[1], z_hi], dtype=float), timeout_sec=10.0, verbose=False, hold_count_required=5)
+        imgs_dir = os.path.join(out_dir, f"vis_{i:04d}")
+        os.makedirs(imgs_dir, exist_ok=True)
+        detector.save_images(os.path.join(out_dir, f"vis_{i:04d}", "img"))
+        detector.close()
+
+        # -------------- real --------------
+
+
         # save results
         # planning_res_path = os.path.join(out_dir, "planning_res.npy")
         # np.save(planning_res_path, planning_res_list)
@@ -350,14 +433,6 @@ def main(config: DictConfig):
         gt_states_path = os.path.join(out_dir, f"gt_states_{i:04d}.pkl")
         with open(gt_states_path, "wb") as f:
             pickle.dump(gt_states, f)
-
-        # -------------- real --------------
-        # imgs_dir = os.path.join(out_dir, f"vis_{i:04d}")
-        # os.makedirs(imgs_dir, exist_ok=True)
-        # detector.save_images(os.path.join(out_dir, f"vis_{i:04d}", "img"))
-
-        # -------------- real --------------
-
 
         if pred_mode == "pose":
             act_seqs = np.array([d["act_seq"] for d in planning_res_list])
@@ -413,10 +488,6 @@ def main(config: DictConfig):
                 )
         
 
-        # -------------- real --------------
-        env.move_to_target_xyz_in_world_mm(np.array([init_pusher_pos[0], init_pusher_pos[1], z_hi], dtype=float), timeout_sec=10.0, verbose=False, hold_count_required=5)
-        detector.close()
-        # -------------- real --------------
 
     cost_stat = np.array(cost_stat)  # (num_test, max_steps)
     avg_step_cost = np.mean(cost_stat, axis=0)

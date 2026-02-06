@@ -231,8 +231,8 @@ planning:
   num_test: 1
   test_id: -1
   action_dim: ${data.action_dim}
-  action_bound: ${data.action_bound}
-  verbose: False
+  action_bound: 10
+  verbose: True
   real_to_sim_scale: 1.0
 
   disturbance:
