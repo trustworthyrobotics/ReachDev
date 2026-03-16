@@ -140,10 +140,9 @@ def main(config: DictConfig):
         init_pose = init_pose_list[i]
         target_pose = target_pose_list[i]
         print(f"Test case {i}:")
-        # print(f"  Init pusher pos: {init_pusher_pos}")
-        # print(f"  Init pose: {init_pose}")
-        # print(f"  Target pusher pos: {target_pusher_pos}")
-        # print(f"  Target pose: {target_pose}")
+        print(f"  Init pusher pos: {init_pusher_pos}")
+        print(f"  Init pose: {init_pose}")
+        print(f"  Target pose: {target_pose}")
 
         if pred_mode == "pose":
             target_state = target_pose
@@ -217,6 +216,7 @@ def main(config: DictConfig):
                 "state_seq": abs_state_seq,
                 "pusher_pos_seq": pusher_pos_seq,
                 "planning_res": planning_res,
+                "target_state": target_state,
             }
             if verbose:
                 print(f"reach vol: {planning_res['aux']['eval_out']['reach_aux'].get('reach_vol', None)}")

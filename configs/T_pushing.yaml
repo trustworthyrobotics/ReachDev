@@ -221,10 +221,10 @@ planning:
   out_path: "output/rss/planning/${settings.task_name}/${planning.test_id}_${planning.disturbance.type}_${planning.disturbance.init}_${planning.disturbance.inter}_${planning.planner}_${planning.n_sample}_${planning.enable_ctl}_${planning.refinement.enable}_${planning.refinement.reach_in_obj.enable}_${planning.reach_in_obj.enable}"
   add_timestamp: true
   horizon: 10
-  max_steps: 25
+  max_steps: 30
   n_act_step: 1
-  num_test: 20
-  test_id: 1
+  num_test: 1
+  test_id: 5
   action_dim: ${data.action_dim}
   action_bound: ${data.action_bound}
   verbose: False
@@ -244,7 +244,7 @@ planning:
   enable_ctl: true
   init_follow_steps: 3
   reach_in_obj:
-    enable: true
+    enable: false
     eps: ${planning.disturbance.init}
     weight: 0.1
     loss_max: 10
@@ -252,7 +252,7 @@ planning:
     splits: {}
     collision_penalty: 0.5
   refinement:
-    enable: true
+    enable: false
     lr: 0.02
     n_iter: 10
     reach_in_obj:
@@ -261,7 +261,7 @@ planning:
       loss_max: 10
       clip: false
       splits: {0: 4, 1: 4, 2: 4}
-      collision_penalty: 5
+      collision_penalty: 1
   vis_reach_steps: ${planning.hole.enforce_reach_steps}
 
   cost_norm: 1

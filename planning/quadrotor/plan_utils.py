@@ -28,37 +28,96 @@ def _gen_pose_list(num_test, seed, lo, hi):
 def generate_test_cases(seed, num_test, test_id=0):
     if test_id == 0:
         mid = jnp.zeros((12,))
+        init_3d_pos = jnp.array([0, 0, 0])
+        mid = mid.at[:3].set(init_3d_pos)
         pos_eps = 1
         other_eps = 0.05
         lo = jnp.concatenate([mid[:3] - pos_eps, mid[3:] - other_eps])
         hi = jnp.concatenate([mid[:3] + pos_eps, mid[3:] + other_eps])
         init_pose_list = _gen_pose_list(num_test, seed, lo, hi)
-        target_mid = mid.at[:3].set(10)
+        target_mid = mid.at[:3].set(10 - init_3d_pos)
         target_lo = jnp.concatenate([target_mid[:3] - pos_eps, target_mid[3:] - other_eps])
         target_hi = jnp.concatenate([target_mid[:3] + pos_eps, target_mid[3:] + other_eps])
         target_pose_list = _gen_pose_list(num_test, seed, target_lo, target_hi)
     elif test_id == 1:
         mid = jnp.zeros((12,))
+        init_3d_pos = jnp.array([0, 0, 0])
+        mid = mid.at[:3].set(init_3d_pos)
         pos_eps = 1
         other_eps = 0.05
         lo = jnp.concatenate([mid[:3] - pos_eps, mid[3:] - other_eps])
         hi = jnp.concatenate([mid[:3] + pos_eps, mid[3:] + other_eps])
         init_pose_list = _gen_pose_list(num_test, seed, lo, hi)
-        target_mid = mid.at[:3].set(10)
+        target_mid = mid.at[:3].set(10 - init_3d_pos)
         target_lo = jnp.concatenate([target_mid[:3] - pos_eps, target_mid[3:] - other_eps])
         target_hi = jnp.concatenate([target_mid[:3] + pos_eps, target_mid[3:] + other_eps])
         target_pose_list = _gen_pose_list(num_test, seed, target_lo, target_hi)
     elif test_id == 2:
         mid = jnp.zeros((12,))
+        init_3d_pos = jnp.array([10, 0, 0])
+        mid = mid.at[:3].set(init_3d_pos)
         pos_eps = 1
         other_eps = 0.05
         lo = jnp.concatenate([mid[:3] - pos_eps, mid[3:] - other_eps])
         hi = jnp.concatenate([mid[:3] + pos_eps, mid[3:] + other_eps])
         init_pose_list = _gen_pose_list(num_test, seed, lo, hi)
-        target_mid = mid.at[:3].set(10)
+        target_mid = mid.at[:3].set(10 - init_3d_pos)
         target_lo = jnp.concatenate([target_mid[:3] - pos_eps, target_mid[3:] - other_eps])
         target_hi = jnp.concatenate([target_mid[:3] + pos_eps, target_mid[3:] + other_eps])
         target_pose_list = _gen_pose_list(num_test, seed, target_lo, target_hi)
+    elif test_id == 3:
+        mid = jnp.zeros((12,))
+        init_3d_pos = jnp.array([0, 0, 10])
+        mid = mid.at[:3].set(init_3d_pos)
+        pos_eps = 1
+        other_eps = 0.05
+        lo = jnp.concatenate([mid[:3] - pos_eps, mid[3:] - other_eps])
+        hi = jnp.concatenate([mid[:3] + pos_eps, mid[3:] + other_eps])
+        init_pose_list = _gen_pose_list(num_test, seed, lo, hi)
+        target_mid = mid.at[:3].set(10 - init_3d_pos)
+        target_lo = jnp.concatenate([target_mid[:3] - pos_eps, target_mid[3:] - other_eps])
+        target_hi = jnp.concatenate([target_mid[:3] + pos_eps, target_mid[3:] + other_eps])
+        target_pose_list = _gen_pose_list(num_test, seed, target_lo, target_hi)
+    elif test_id == 4:
+        mid = jnp.zeros((12,))
+        init_3d_pos = jnp.array([0, 10, 10])
+        mid = mid.at[:3].set(init_3d_pos)
+        pos_eps = 1
+        other_eps = 0.05
+        lo = jnp.concatenate([mid[:3] - pos_eps, mid[3:] - other_eps])
+        hi = jnp.concatenate([mid[:3] + pos_eps, mid[3:] + other_eps])
+        init_pose_list = _gen_pose_list(num_test, seed, lo, hi)
+        target_mid = mid.at[:3].set(10 - init_3d_pos)
+        target_lo = jnp.concatenate([target_mid[:3] - pos_eps, target_mid[3:] - other_eps])
+        target_hi = jnp.concatenate([target_mid[:3] + pos_eps, target_mid[3:] + other_eps])
+        target_pose_list = _gen_pose_list(num_test, seed, target_lo, target_hi)
+    elif test_id == 5:
+        mid = jnp.zeros((12,))
+        init_3d_pos = jnp.array([0, 10, 0])
+        mid = mid.at[:3].set(init_3d_pos)
+        pos_eps = 1
+        other_eps = 0.05
+        lo = jnp.concatenate([mid[:3] - pos_eps, mid[3:] - other_eps])
+        hi = jnp.concatenate([mid[:3] + pos_eps, mid[3:] + other_eps])
+        init_pose_list = _gen_pose_list(num_test, seed, lo, hi)
+        target_mid = mid.at[:3].set(10 - init_3d_pos)
+        target_lo = jnp.concatenate([target_mid[:3] - pos_eps, target_mid[3:] - other_eps])
+        target_hi = jnp.concatenate([target_mid[:3] + pos_eps, target_mid[3:] + other_eps])
+        target_pose_list = _gen_pose_list(num_test, seed, target_lo, target_hi)
+    elif test_id == 6:
+        mid = jnp.zeros((12,))
+        init_3d_pos = jnp.array([10, 10, 10])
+        mid = mid.at[:3].set(init_3d_pos)
+        pos_eps = 1
+        other_eps = 0.05
+        lo = jnp.concatenate([mid[:3] - pos_eps, mid[3:] - other_eps])
+        hi = jnp.concatenate([mid[:3] + pos_eps, mid[3:] + other_eps])
+        init_pose_list = _gen_pose_list(num_test, seed, lo, hi)
+        target_mid = mid.at[:3].set(10 - init_3d_pos)
+        target_lo = jnp.concatenate([target_mid[:3] - pos_eps, target_mid[3:] - other_eps])
+        target_hi = jnp.concatenate([target_mid[:3] + pos_eps, target_mid[3:] + other_eps])
+        target_pose_list = _gen_pose_list(num_test, seed, target_lo, target_hi)
+
     else:
         raise ValueError(f"Unknown test_id: {test_id}")
     return init_pose_list, target_pose_list
@@ -184,8 +243,9 @@ def make_rollout_and_reward_fns(
                 r_lo = reach_aux["r_lo"][:, :enforce_reach_steps, :dt_state_dim]  # [B,horizon, dt_state_dim]
                 r_up = reach_aux["r_up"][:, :enforce_reach_steps, :dt_state_dim]  # [B,horizon, dt_state_dim]
                 sample_states = box_corners_nd_jax(r_lo, r_up).reshape(-1, *r_lo.shape[1:])  # [n * B, horizon, dt_state_dim]
-                obs_costs = obstacle_cost_fn(sample_states).reshape(sample_states.shape[0], -1)  # [n, B]
+                obs_costs = obstacle_cost_fn(sample_states).reshape(-1, state_seqs.shape[0])  # [n, B]
                 obs_costs = jnp.max(obs_costs, axis=0) * reach_config.get("collision_penalty", 1.0)  # [B]
+                obs_costs = obs_costs + obstacle_cost_fn(state_seqs) * penalty_factor
             else:
                 obs_costs = obstacle_cost_fn(state_seqs) * penalty_factor
             costs = costs + obs_costs
@@ -197,7 +257,7 @@ def make_rollout_and_reward_fns(
     def step_cost_fn(state, target_state):
         return (jnp.linalg.norm(target_state - state, cost_norm)) ** cost_norm
 
-    return rollout_fn, reward_fn, step_cost_fn, step_cost_fn_np
+    return rollout_fn, reward_fn, step_cost_fn, step_cost_fn_np, obstacle_cost_fn if enable_obstacle else (lambda state_seqs: 0.0)
 
 import numpy as np
 import matplotlib.pyplot as plt

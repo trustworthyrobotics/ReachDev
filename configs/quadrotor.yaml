@@ -200,7 +200,7 @@ planning:
     loss_max: 10
     clip: true
     eps: ${planning.disturbance.init}
-    collision_penalty: 1.0
+    collision_penalty: 100.0
   refinement:
     enable: true
     lr: 0.01

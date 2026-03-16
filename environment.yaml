@@ -116,7 +116,7 @@ dependencies:
       - jax==0.8.1
       - jax-cuda12-pjrt==0.8.1
       - jax-cuda12-plugin==0.8.1
-      - git+https://github.com/keyis2/jax_verify.git #egg=jax_verify
+      - git+https://github.com/keyis2/jax_verify.git@same_slope #egg=jax_verify
       - jax2onnx==0.10.1
       - jaxlib==0.8.1
       - git+https://github.com/keyis2/jaxonnxruntime.git #egg=jaxonnxruntime

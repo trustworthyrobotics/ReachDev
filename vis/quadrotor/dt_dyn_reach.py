@@ -3,7 +3,7 @@ import numpy as np
 import os
 import pickle
 import jax
-jax.config.update('jax_platforms', 'cpu')
+# jax.config.update('jax_platforms', 'cpu')
 jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 import equinox as eqx
@@ -76,11 +76,12 @@ def main(config: DictConfig):
     # select_samples = [0, 1]
     # n_reach_batch = len(select_samples)
 
-    n_reach_batch = 10
+    # n_reach_batch = 10
+    n_reach_batch = len(episodes)
     select_samples = np.arange(n_reach_batch).tolist()
 
     start_time_step = 50
-    horizon = 10
+    horizon = 20
     episodes = episodes[select_samples, start_time_step:start_time_step + horizon + 1, :]  # [B, T+1, Dx+Du]
 
     X_gt = episodes[..., :state_dim]
@@ -166,7 +167,7 @@ def main(config: DictConfig):
     # if n_reach_batch > 1:
     #     exit()
 
-    out_dir = os.path.join(model_dir, f"vis_reach")
+    out_dir = os.path.join(model_dir, f"vis_reach_T{horizon}_eps{eps}")
     os.makedirs(out_dir, exist_ok=True)
 
     env_class = Quad_Sim_DT  
@@ -218,12 +219,12 @@ def main(config: DictConfig):
 
 
 
-    n_vis = min(1, len(select_samples))
-    for i in range(n_vis):
-        plot_3d_trajectories(X_gt[i, :, :3][:, None], num_quads=1, dt=model.dt, out_path=os.path.join(out_dir, f"gt_trajectories_{i}.png"))
-        plot_3d_trajectories(X_preds[i, :, :3][:, None], num_quads=1, dt=model.dt, out_path=os.path.join(out_dir, f"pred_trajectories_{i}.png"))
-        plot_quad_states_actions(X_gt[i, :, :6], U_gt[i], dt=model.dt, out_path=os.path.join(out_dir, f"gt_states_vcmd_{i}.png"))
-        plot_quad_states_actions(X_preds[i, :, :6], U_gt[i], dt=model.dt, out_path=os.path.join(out_dir, f"pred_states_vcmd_{i}.png"))
+    # n_vis = min(1, len(select_samples))
+    # for i in range(n_vis):
+    #     plot_3d_trajectories(X_gt[i, :, :3][:, None], num_quads=1, dt=model.dt, out_path=os.path.join(out_dir, f"gt_trajectories_{i}.png"))
+    #     plot_3d_trajectories(X_preds[i, :, :3][:, None], num_quads=1, dt=model.dt, out_path=os.path.join(out_dir, f"pred_trajectories_{i}.png"))
+    #     plot_quad_states_actions(X_gt[i, :, :6], U_gt[i], dt=model.dt, out_path=os.path.join(out_dir, f"gt_states_vcmd_{i}.png"))
+    #     plot_quad_states_actions(X_preds[i, :, :6], U_gt[i], dt=model.dt, out_path=os.path.join(out_dir, f"pred_states_vcmd_{i}.png"))
 
 if __name__ == "__main__":
     main()

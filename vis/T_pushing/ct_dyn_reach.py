@@ -7,7 +7,7 @@ import yaml
 import os
 import pickle
 import jax
-# jax.config.update('jax_platforms', 'cpu')
+jax.config.update('jax_platforms', 'cpu')
 jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 from jax import random as jrandom
@@ -217,7 +217,7 @@ def main(config: DictConfig):
     eps_arr = np.array(eval_data)  # [B, T, 15]
 
     T_reach = train_config["n_rollout_valid"]
-    T_reach = 20
+    T_reach = 30
     start_time_step = 50
 
     # Everything inside file is normalized by /scale → denormalize for visualization
@@ -237,6 +237,7 @@ def main(config: DictConfig):
         act_state_dim = act_state_dim + action_dim
 
     reach_eps = float(train_config["reach"]["eps_final"])
+    reach_eps = 0.03
     reach_splits = train_config["reach"].get("splits", None)
     n_split = 2 if pred_mode == "state" else 4
     reach_splits = {i: n_split for i in range(state_dim if pred_mode == "state" else pose_dim)}
@@ -253,10 +254,10 @@ def main(config: DictConfig):
     reach_analyzer = CT_Plan_Reach(f_wrapper, state_dim=model.Dx, action_dim=model.Du, nn_dyn=True, n_steps_per_plan=1, step_size=1/frequency, 
                                   init_remainder=init_remainder, frr_rounds=frr_rounds, frr_stop_ratio=frr_stop_ratio, sr_window_size=sr_window_size)
 
-    selected_eps_ids = [43, 44, 45, 46, 47, 48, 49, 50]
-    n_reach_batch = len(selected_eps_ids)
+    # selected_eps_ids = [43, 44, 45, 46, 47, 48, 49, 50]
+    # n_reach_batch = len(selected_eps_ids)
 
-    n_reach_batch = eps_norm.shape[0]
+    n_reach_batch = 100
     # n_reach_batch = 64
     # selected_eps_ids = np.random.choice(eps_norm.shape[0], n_reach_batch, replace=False).tolist()
     selected_eps_ids = np.arange(n_reach_batch).tolist()

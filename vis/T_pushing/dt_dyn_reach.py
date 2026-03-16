@@ -7,7 +7,7 @@ import yaml
 import os
 import pickle
 import jax
-# jax.config.update('jax_platforms', 'cpu')
+jax.config.update('jax_platforms', 'cpu')
 jax.config.update("jax_default_matmul_precision", "highest")
 import jax.numpy as jnp
 from jax import random as jrandom
@@ -242,12 +242,13 @@ def main(config: DictConfig):
     n_splits = n_split ** (state_dim if pred_mode == "state" else pose_dim)
     n_samples = 64 if n_splits == 1 else n_splits
 
-    selected_eps_ids = [43, 44]
-    n_reach_batch = len(selected_eps_ids)
+    # selected_eps_ids = [43, 44]
+    # n_reach_batch = len(selected_eps_ids)
 
     # n_reach_batch = eps_norm.shape[0]
-    # # selected_eps_ids = np.random.choice(eps_norm.shape[0], n_reach_batch, replace=False).tolist()
-    # selected_eps_ids = np.arange(n_reach_batch).tolist()
+    n_reach_batch = 100
+    # selected_eps_ids = np.random.choice(eps_norm.shape[0], n_reach_batch, replace=False).tolist()
+    selected_eps_ids = np.arange(n_reach_batch).tolist()
     # n_samples = n_samples * n_reach_batch
 
 

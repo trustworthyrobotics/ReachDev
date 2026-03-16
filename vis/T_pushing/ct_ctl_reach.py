@@ -260,6 +260,7 @@ def main(config: DictConfig):
         act_state_dim = act_state_dim + action_dim
 
     reach_eps = float(train_config["reach"]["eps_final"])
+    reach_eps = 0.03
     reach_splits = train_config["reach"].get("splits", None)
     n_split = 2 if pred_mode == "state" else 4
     reach_splits = {i: n_split for i in range(state_dim if pred_mode == "state" else pose_dim)}
@@ -280,7 +281,7 @@ def main(config: DictConfig):
     selected_eps_ids = [1]
     n_reach_batch = len(selected_eps_ids)
 
-    n_reach_batch = 16
+    n_reach_batch = 100
     # selected_eps_ids = np.random.choice(eps_norm.shape[0], n_reach_batch, replace=False).tolist()
     selected_eps_ids = np.arange(n_reach_batch).tolist()
     # n_samples = n_samples * n_reach_batch
@@ -295,7 +296,7 @@ def main(config: DictConfig):
         tgt_seq_all = tgt_seq_all.at[:, :, -1].set(tgt_seq_all[:, :, -1] * scale)  # denormalize angle
 
     action_seq_all = eps_norm[:, :T_reach, -action_dim:]  # [B, T, 2]
-    ref_act_seq_all = action_seq_all.reshape(n_reach_batch, n_track, -1, action_dim).mean(axis=2)  # [B, n_track, Du]
+    ref_act_seq_all = action_seq_all.reshape(-1, n_track, T_per_tgt, action_dim).mean(axis=2)  # [B, n_track, Du]
     if model.ref_act:
         reference_seq_all = jnp.concatenate([tgt_seq_all, ref_act_seq_all], axis=-1)  # [B, n_track, Dx+Du] 
     else:
@@ -312,7 +313,7 @@ def main(config: DictConfig):
     reference_seq_per_ctl = reference_seq.repeat(T_per_tgt, axis=1)  # [1, T, Dx(+Du)]
 
     start_time = time.time()
-    reach_eps = 0.03
+
     state_init_lo = state_init - reach_eps
     state_init_up = state_init + reach_eps
     if abs_pose:

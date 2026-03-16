@@ -90,7 +90,7 @@ def main(config: DictConfig):
     per_act = dist_config.get("per_act", False)
 
     # reward and planning part
-    rollout_fn, reward_fn, step_cost_fn, step_cost_fn_np = make_rollout_and_reward_fns(
+    rollout_fn, reward_fn, step_cost_fn, step_cost_fn_np, obstacle_cost_fn = make_rollout_and_reward_fns(
         dt_dyn,
         planning_config,
     )
@@ -120,10 +120,8 @@ def main(config: DictConfig):
         init_pose = init_pose_list[i]
         target_pose = target_pose_list[i]
         print(f"Test case {i}:")
-        # print(f"  Init pusher pos: {init_pusher_pos}")
-        # print(f"  Init pose: {init_pose}")
-        # print(f"  Target pusher pos: {target_pusher_pos}")
-        # print(f"  Target pose: {target_pose}")
+        print(f"  Init pose: {init_pose}")
+        print(f"  Target pose: {target_pose}")
 
         target_state = target_pose[:dt_state_dim]
         scaled_target_state = target_state / scale
@@ -162,7 +160,7 @@ def main(config: DictConfig):
             init_act_seq = jnp.zeros((horizon, dt_action_dim))
             key, subkey = jax.random.split(key)
             # with jax.disable_jit():
-            #     planning_res = eqx.filter_jit(planner.trajectory_optimization)(key, state_cur, init_act_seq, skip=succeed, target_state=scaled_target_state)
+            #     planning_res = planner.trajectory_optimization(subkey, state_cur, init_act_seq, skip=succeed, target_state=scaled_target_state)
             start_plan_time = time.time()
             planning_res = jit_trajopt(subkey, state_cur, init_act_seq, skip=succeed, target_state=scaled_target_state)
             plan_time_stat.append(time.time() - start_plan_time)
@@ -177,6 +175,7 @@ def main(config: DictConfig):
                 "act_seq": act_seq,
                 "state_seq": state_seq,
                 "planning_res": planning_res,
+                "target_state": target_state,
             }
             if verbose:
                 print(f"reach vol: {planning_res['aux']['eval_out']['reach_aux'].get('reach_vol', None)}")
@@ -221,6 +220,9 @@ def main(config: DictConfig):
                     # state_cur = jnp.array(env_dict["state"]).squeeze()[:dt_state_dim] / scale
                     env_state = np.concatenate([env_dict["state"], next_action, env_dict["action"]], axis=-1).squeeze()
 
+                    if obstacle_cost_fn(env_state[None, None, :dt_state_dim]) > 0:
+                        print(f"Collision detected at step {t}, ctl_step {ctl_step}")
+
                     sub_env_states.append(env_state)
                 env_state = np.array(sub_env_states)
                 step_cost = step_cost_fn_np(env_state[-1][:dt_state_dim], target_state)
@@ -263,7 +265,7 @@ def main(config: DictConfig):
 
         act_seqs = np.array([d["act_seq"] for d in planning_res_list])
         state_seqs = np.array([d["state_seq"] for d in planning_res_list])[..., :dt_state_dim]
-        plot_planning_animation(state_seqs[None, :, :, :3], dt_dyn.dt, "output/plan_vis.gif", targets=target_pose[None, :3], obs_config=planning_config.get("obstacle", None))
+        plot_planning_animation(state_seqs[None, :, :, :3], dt_dyn.dt, os.path.join(out_dir, "plan_vis.gif"), targets=target_pose[None, :3], obs_config=planning_config.get("obstacle", None))
         reach_config = planning_config.get("reach_in_obj", {})
         refine_config = planning_config.get("refinement", {})
         reach_refine_config = refine_config.get("reach_in_obj", {})
@@ -274,7 +276,7 @@ def main(config: DictConfig):
             r_up_seqs = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['r_up'] for d in planning_res_list]).reshape((*state_seqs.shape[:2], -1))[..., :dt_state_dim]
             reach_vols = np.array([d['planning_res']['aux']['eval_out']['reach_aux']['reach_vol'] for d in planning_res_list])
             print(f"Avg reach vol: {reach_vols.mean()}, max reach vol: {reach_vols.max()}")
-            plot_planning_animation(state_seqs[None, :, :, :3], dt_dyn.dt, "output/plan_reach_vis.gif", targets=target_pose[None, :3], r_lo_seqs=r_lo_seqs[None, :, :, :3], r_up_seqs=r_up_seqs[None, :, :, :3], obs_config=planning_config.get("obstacle", None))
+            plot_planning_animation(state_seqs[None, :, :, :3], dt_dyn.dt, os.path.join(out_dir, "plan_reach_vis.gif"), targets=target_pose[None, :3], r_lo_seqs=r_lo_seqs[None, :, :, :3], r_up_seqs=r_up_seqs[None, :, :, :3], obs_config=planning_config.get("obstacle", None))
 
 
     cost_stat = np.array(cost_stat)  # (num_test, max_steps)

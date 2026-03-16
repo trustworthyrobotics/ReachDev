@@ -48,6 +48,22 @@ def generate_test_cases(seed, num_test, test_id=0):
         init_pusher_pos_list = _gen_pose_list(num_test, seed, (125, 125), (140, 140), None)
         init_pose_list = _gen_pose_list(num_test, seed, (180, 180), (140, 140), (90, 90))
         target_pose_list = _gen_pose_list(num_test, seed, (250, 250), (420, 420), (180, 180))
+    elif test_id == 3:
+        init_pusher_pos_list = _gen_pose_list(num_test, seed, (330, 340), (160 + 80, 170 + 80), None)
+        init_pose_list = _gen_pose_list(num_test, seed, (340, 360), (130 + 80, 150 + 80), (180+45, 180+75))
+        target_pose_list = _gen_pose_list(num_test, seed, (250, 250), (420, 420), (180, 180))
+    elif test_id == 4:
+        init_pusher_pos_list = _gen_pose_list(num_test, seed, (180, 200), (220, 240), None)
+        init_pose_list = _gen_pose_list(num_test, seed, (180, 200), (180, 200), (60, 120))
+        target_pose_list = _gen_pose_list(num_test, seed, (300, 320), (330, 350), (150, 210))
+    elif test_id == 5:
+        init_pusher_pos_list = _gen_pose_list(num_test, seed, (200, 220), (220, 240), None)
+        init_pose_list = _gen_pose_list(num_test, seed, (180, 200), (240, 260), (100, 120))
+        target_pose_list = _gen_pose_list(num_test, seed, (250, 250), (80, 80), (0, 0))
+    elif test_id == 6:
+        init_pusher_pos_list = _gen_pose_list(num_test, seed, (180, 200), (170, 190), None)
+        init_pose_list = _gen_pose_list(num_test, seed, (240, 250), (130, 150), (30, 60))
+        target_pose_list = _gen_pose_list(num_test, seed, (210, 230), (280, 300), (90, 120))
     elif test_id == -1:
         init_pusher_pos_list = _gen_pose_list(num_test, seed, (0, 0), (400, 400), None)
         init_pose_list = _gen_pose_list(num_test, seed, (130, 130), (400, 400), (90, 90))

@@ -77,7 +77,7 @@ class Continuous_Quad_Dynamics(eqx.Module):
     def dx(self, t, x, args):
         # State:
         # x1,x2,x3: world position
-        # x4,x5,x6: world velocity   <-- DIFFERENT from the benchmark model
+        # x4,x5,x6: world velocity
         x1,x2,x3,x4,x5,x6,x7,x8,x9,x10,x11,x12 = x
 
         # Input:
