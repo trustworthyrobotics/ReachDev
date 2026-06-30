@@ -1,4 +1,4 @@
 [submodule "CROWN_Reach"]
 	path = CROWN_Reach
-	url = git@github.com:keyis2/CROWN-Reach-dev.git
+	url = git@github.com:trustworthyrobotics/CROWN_Reach.git
 	branch = nn_dyn
